@@ -6,9 +6,19 @@ import (
 	"time"
 )
 
+var nodeInstance *Node
+
+func init() {
+	// todo: for now, we just create a node with a fixed ID
+	nodeInstance = NewNode(1)
+	nodeInstance.Start(context.Background())
+}
+
+// maki: I don't know how to test it actually
 const LEADER_HEARTBEAT_PERIOD_IN_MS = 100
 const ELECTION_TIMEOUT_MIN_IN_MS = 150
 const ELECTION_TIMEOUT_MAX_IN_MS = 350
+const REUQEST_TIMEOUT_IN_MS = 200
 
 func getRandomElectionTimeout() time.Duration {
 	diff := ELECTION_TIMEOUT_MAX_IN_MS - ELECTION_TIMEOUT_MIN_IN_MS
@@ -42,12 +52,13 @@ type Node struct {
 	NodeID      int // maki: nodeID uuid or number or something else?
 	CurrentTerm int
 	State       NodeState
-	VotedFor    map[int]bool
+
+	VotedFor    int // candidateID
+	VoteGranted bool
 
 	// todo: does candidate wait for heartbeat?
 	appendEntryChannel   chan AppendEntriesRequest // for follower: can come from leader's append rpc or candidate's vote rpc
 	clientRequestChannel chan string               // for leader: shall add batching
-	voteChannel          chan bool                 // for candidate: if vote succeeds
 }
 
 func NewNode(nodeID int) *Node {
@@ -55,7 +66,6 @@ func NewNode(nodeID int) *Node {
 		State:                StateFollower, // servers start up as followers
 		appendEntryChannel:   make(chan AppendEntriesRequest),
 		clientRequestChannel: make(chan string),
-		voteChannel:          make(chan bool),
 		NodeID:               nodeID,
 	}
 }
@@ -84,61 +94,76 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 			// paper:
 			// election timeout, assumes no leader exists and starts a new election
 			// increment term, vote for self, send request to all other nodes
-			node.CurrentTerm++
 			node.State = StateCandidate
-			node.VotedFor = make(map[int]bool) // maki: here we need to reset the map
-			node.VotedFor[node.NodeID] = true
-
-			req := RequestVoteRequest{
-				Term:        node.CurrentTerm,
-				CandidateID: node.NodeID,
-			}
-			_ = ClientSendRequestVoteToAll(ctx, req)
-
-			// todo: add error handling
-			// send request to all other nodes
 			go node.RunAsCandidate(ctx)
 			return
 		}
 	}
 }
 
+// maki: key question, the timeout and cancel of context
 func (node *Node) RunAsCandidate(ctx context.Context) {
 	if node.State != StateCandidate {
 		panic("node is not in CANDIDATE state")
 	}
+	// start for election
+	// todo: add error handling
+	// send request to all other nodes
 	for {
+		node.CurrentTerm++
+		node.VotedFor = node.NodeID
+		node.VoteGranted = false
+		req := RequestVoteRequest{
+			Term:        node.CurrentTerm,
+			CandidateID: node.NodeID,
+		}
+		// todo: how to add timeout
+		// ctx = ctx.WithTimeout(ctx, time.Duration(REUQEST_TIMEOUT_IN_MS)*time.Millisecond)
+		// should start with future?
+		responseChannel := make(chan RequestVoteResponse)
+		ctxTimeout, cancel := context.WithTimeout(
+			ctx, time.Duration(REUQEST_TIMEOUT_IN_MS)*time.Millisecond)
+		go ClientSendRequestVoteToAll(ctxTimeout, req, responseChannel)
+
 		timer := time.NewTimer(getRandomElectionTimeout())
 		select {
-		case <-node.voteChannel:
-			// todo: havent implemented yet
-			// paper: if it wins an election, it becomes a leader
-			node.State = StateLeader
-			timer.Stop()
-			go node.RunAsLeader(ctx)
-			return
 		case request := <-node.appendEntryChannel:
 			if request.Term >= node.CurrentTerm {
 				node.State = StateFollower
 				node.CurrentTerm = request.Term
 				timer.Stop()
+				cancel()
 				go node.RunAsFollower(ctx)
 			} else {
 				// Should be rejected directly by the server handler
 				// Shouldn't reach here
+				cancel()
 				panic("node received a heartbeat from a node with a lower term")
 			}
-		case <-timer.C:
-			// paper: no winner, so it starts a new election
-			node.CurrentTerm++
-			node.VotedFor = make(map[int]bool)
-			node.VotedFor[node.NodeID] = true
-			request := RequestVoteRequest{
-				Term:        node.CurrentTerm,
-				CandidateID: node.NodeID,
+		case response := <-responseChannel:
+			cancel()
+			if response.Term > node.CurrentTerm {
+				// paper: if a candidate receives a request vote from a higher term,
+				// it becomes a follower
+				node.State = StateFollower
+				node.CurrentTerm = response.Term
+				timer.Stop()
+				go node.RunAsFollower(ctx)
+				return
+			} else if response.VoteGranted {
+				node.VoteGranted = true
+				timer.Stop()
+				node.State = StateLeader
+				go node.RunAsLeader(ctx)
+				return
+			} else {
+				// could be term = current term and vote granted = false
+				// start another round of election
+				continue
 			}
-			_ = ClientSendRequestVoteToAll(ctx, request)
-			// todo: add error handling
+		case <-ctxTimeout.Done():
+			// timeout, start another round of election
+			cancel()
 		}
 	}
 }
@@ -154,33 +179,19 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 		// todo: here we need to wait for their response synchronously or continue for the next batch?
 		case request := <-node.clientRequestChannel:
 			timerForHeartbeat.Stop()
-			SendAppendEntriesToAll()
-
+			// todo: to be implemented
+			_ = ClientSendAppendEntriesToAll(ctx, AppendEntriesRequest{})
 			appendLog(request)
-			// todo: consensesus, not sure if not reached
-			consensusReached := node.AppendEntries(request, getCurrentCommitID())
-			if consensusReached {
-				_ = commitLog(request)
-			} else {
-				resetLog()
-			}
 		case <-timerForHeartbeat.C:
 			// leaders send periodic heartbeats to all the followers to maintain
 			// their authority
-			node.AppendEntries("", getCurrentCommitID())
+			// todo: to be implemented
+			ClientSendAppendEntriesToAll(ctx, AppendEntriesRequest{
+				Term:     node.CurrentTerm,
+				LeaderID: node.NodeID,
+			})
 		}
 	}
-}
-
-func (node *Node) ReceiveHeartbeat() {
-	node.appendEntryChannel <- true
-}
-
-// together with heartbeat
-func (node *Node) AppendEntries(data string, lastCommitID int) bool {
-	// maki: send heartbeat to all the others
-	// maki: how to handle error in this case?
-	return true
 }
 
 // gracefully stop the node
