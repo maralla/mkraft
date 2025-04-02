@@ -45,15 +45,15 @@ type Node struct {
 	VotedFor    map[int]bool
 
 	// todo: does candidate wait for heartbeat?
-	heartbeatChannel     chan bool   // for follower: can come from leader's append rpc or candidate's vote rpc
-	clientRequestChannel chan string // for leader: shall add batching
-	voteChannel          chan bool   // for candidate: if vote succeeds
+	appendEntryChannel   chan AppendEntriesRequest // for follower: can come from leader's append rpc or candidate's vote rpc
+	clientRequestChannel chan string               // for leader: shall add batching
+	voteChannel          chan bool                 // for candidate: if vote succeeds
 }
 
 func NewNode(nodeID int) *Node {
 	return &Node{
 		State:                StateFollower, // servers start up as followers
-		heartbeatChannel:     make(chan bool),
+		appendEntryChannel:   make(chan AppendEntriesRequest),
 		clientRequestChannel: make(chan string),
 		voteChannel:          make(chan bool),
 		NodeID:               nodeID,
@@ -76,11 +76,10 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 	for {
 		timerForElection := time.NewTimer(getRandomElectionTimeout())
 		select {
-		case <-node.heartbeatChannel:
+		case <-node.appendEntryChannel:
 			// paper: a server remains as a follower as long as it receives heartbeats
 			// from a leader or candidate
 			timerForElection.Stop()
-
 		case <-timerForElection.C:
 			// paper:
 			// election timeout, assumes no leader exists and starts a new election
@@ -89,7 +88,14 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 			node.State = StateCandidate
 			node.VotedFor = make(map[int]bool) // maki: here we need to reset the map
 			node.VotedFor[node.NodeID] = true
-			SendRequestVoteToAll(ctx, node.NodeID, node.CurrentTerm)
+
+			req := RequestVoteRequest{
+				Term:        node.CurrentTerm,
+				CandidateID: node.NodeID,
+			}
+			_ = ClientSendRequestVoteToAll(ctx, req)
+
+			// todo: add error handling
 			// send request to all other nodes
 			go node.RunAsCandidate(ctx)
 			return
@@ -97,7 +103,6 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 	}
 }
 
-// maki: should we
 func (node *Node) RunAsCandidate(ctx context.Context) {
 	if node.State != StateCandidate {
 		panic("node is not in CANDIDATE state")
@@ -106,24 +111,34 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 		timer := time.NewTimer(getRandomElectionTimeout())
 		select {
 		case <-node.voteChannel:
+			// todo: havent implemented yet
 			// paper: if it wins an election, it becomes a leader
 			node.State = StateLeader
 			timer.Stop()
 			go node.RunAsLeader(ctx)
 			return
-		case <-node.heartbeatChannel:
-			// paper: another leader has been elected
-			node.State = StateFollower
-			theNewTerm := 10
-			node.CurrentTerm = theNewTerm // should get the term from the req
-			timer.Stop()
-			go node.RunAsFollower(ctx)
+		case request := <-node.appendEntryChannel:
+			if request.Term >= node.CurrentTerm {
+				node.State = StateFollower
+				node.CurrentTerm = request.Term
+				timer.Stop()
+				go node.RunAsFollower(ctx)
+			} else {
+				// Should be rejected directly by the server handler
+				// Shouldn't reach here
+				panic("node received a heartbeat from a node with a lower term")
+			}
 		case <-timer.C:
 			// paper: no winner, so it starts a new election
 			node.CurrentTerm++
 			node.VotedFor = make(map[int]bool)
 			node.VotedFor[node.NodeID] = true
-			SendRequestVoteToAll(ctx, node.NodeID, node.CurrentTerm)
+			request := RequestVoteRequest{
+				Term:        node.CurrentTerm,
+				CandidateID: node.NodeID,
+			}
+			_ = ClientSendRequestVoteToAll(ctx, request)
+			// todo: add error handling
 		}
 	}
 }
@@ -136,10 +151,11 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 		// maki: here we need to send heartbeats to all the followers
 		timerForHeartbeat := time.NewTimer(time.Duration(LEADER_HEARTBEAT_PERIOD_IN_MS) * time.Millisecond)
 		select {
+		// todo: here we need to wait for their response synchronously or continue for the next batch?
 		case request := <-node.clientRequestChannel:
 			timerForHeartbeat.Stop()
-			// send the request to all the followers,
-			// and wait for the majority of them to respond
+			SendAppendEntriesToAll()
+
 			appendLog(request)
 			// todo: consensesus, not sure if not reached
 			consensusReached := node.AppendEntries(request, getCurrentCommitID())
@@ -157,7 +173,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 }
 
 func (node *Node) ReceiveHeartbeat() {
-	node.heartbeatChannel <- true
+	node.appendEntryChannel <- true
 }
 
 // together with heartbeat
@@ -169,6 +185,6 @@ func (node *Node) AppendEntries(data string, lastCommitID int) bool {
 
 // gracefully stop the node
 func (node *Node) Stop() {
-	close(node.heartbeatChannel)
+	close(node.appendEntryChannel)
 	close(node.clientRequestChannel)
 }
