@@ -1,13 +1,19 @@
 
-## TODO
+## Planning and Progress
 
 ### Module1: Leade Election
 - [ ] leader election
-- [ ] testing of basic functions in normal env
-- [ ] testing of all corner cases in async env: fuzzy, simulaiton, chaos, AI? seems to be a hard topic
+- [ ] testing: basic features
+- [ ] testing: simulate adversial cases in async network env (clock drifting, delay, partition)
 
 ### Module2: Consensus
+- [ ] algorithm
 
 ### Module3: Log
+- [ ] replication
+- [ ] persistence
+- [ ] compaction
 
 ### Module4: StateMachine
+
+### Module5: Membership Changes 
