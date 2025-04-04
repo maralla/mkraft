@@ -14,6 +14,12 @@ type AppendEntriesResponse struct {
 	Success bool
 }
 
+type MajorityAppendEntriesResp struct {
+	Term            int
+	Success         bool
+	SingleResponses []AppendEntriesResponse
+}
+
 type RequestVoteRequest struct {
 	Term         int
 	CandidateID  int
@@ -24,6 +30,12 @@ type RequestVoteRequest struct {
 type RequestVoteResponse struct {
 	Term        int
 	VoteGranted bool
+}
+
+type MajorityRequestVoteResp struct {
+	Term            int
+	VoteGranted     bool
+	SingleResponses []RequestVoteResponse
 }
 
 type LogEntry struct {

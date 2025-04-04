@@ -9,16 +9,18 @@ import (
 var nodeInstance *Node
 
 func init() {
+	// maki: some design details to be documented
 	// todo: for now, we just create a node with a fixed ID
 	nodeInstance = NewNode(1)
 	nodeInstance.Start(context.Background())
 }
 
-// maki: I don't know how to test it actually
 const LEADER_HEARTBEAT_PERIOD_IN_MS = 100
+const REUQEST_TIMEOUT_IN_MS = 200
+
+// design of randomness in election to minimize the possiblity of contention of leader and split vote
 const ELECTION_TIMEOUT_MIN_IN_MS = 150
 const ELECTION_TIMEOUT_MAX_IN_MS = 350
-const REUQEST_TIMEOUT_IN_MS = 200
 
 func getRandomElectionTimeout() time.Duration {
 	diff := ELECTION_TIMEOUT_MAX_IN_MS - ELECTION_TIMEOUT_MIN_IN_MS
@@ -120,10 +122,10 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 		// todo: how to add timeout
 		// ctx = ctx.WithTimeout(ctx, time.Duration(REUQEST_TIMEOUT_IN_MS)*time.Millisecond)
 		// should start with future?
-		responseChannel := make(chan RequestVoteResponse)
+		resChan := make(chan MajorityRequestVoteResp)
 		ctxTimeout, cancel := context.WithTimeout(
 			ctx, time.Duration(REUQEST_TIMEOUT_IN_MS)*time.Millisecond)
-		go ClientSendRequestVoteToAll(ctxTimeout, req, responseChannel)
+		go ClientSendRequestVoteToAll(ctxTimeout, req, resChan)
 
 		timer := time.NewTimer(getRandomElectionTimeout())
 		select {
@@ -140,7 +142,7 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 				cancel()
 				panic("node received a heartbeat from a node with a lower term")
 			}
-		case response := <-responseChannel:
+		case response := <-resChan:
 			cancel()
 			if response.Term > node.CurrentTerm {
 				// paper: if a candidate receives a request vote from a higher term,
@@ -173,15 +175,15 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 		panic("node is not in LEADER state")
 	}
 	for {
-		// maki: here we need to send heartbeats to all the followers
 		timerForHeartbeat := time.NewTimer(time.Duration(LEADER_HEARTBEAT_PERIOD_IN_MS) * time.Millisecond)
 		select {
+		// todo: we hide the request from client to make the leader easier now
 		// todo: here we need to wait for their response synchronously or continue for the next batch?
 		case request := <-node.clientRequestChannel:
 			timerForHeartbeat.Stop()
-			// todo: to be implemented
+			// todo: need to get result if the request is successful
+			// possibillty the leader is stale itself
 			_ = ClientSendAppendEntriesToAll(ctx, AppendEntriesRequest{})
-			appendLog(request)
 		case <-timerForHeartbeat.C:
 			// leaders send periodic heartbeats to all the followers to maintain
 			// their authority
@@ -194,7 +196,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	}
 }
 
-// gracefully stop the node
+// gracefully stop the node and cleanup
 func (node *Node) Stop() {
 	close(node.appendEntryChannel)
 	close(node.clientRequestChannel)

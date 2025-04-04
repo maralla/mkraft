@@ -1,22 +1,43 @@
 package main
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
-// to be implemented
-func appendLog(data string) {
-	// todo: implement the append log function
+// todo: this is a mock, we need to find the membership
+func getMembership() []int {
+	membership := []int{1, 2, 3, 4, 5}
+	return membership
 }
 
-// return the commitID
-func commitLog(data string) int {
-	fmt.Println("Committing log:", data)
-	return 1
+// here the pattern is there are K nodes in the membership found by the client
+// and the client sends the request to all other nodes and waits for the majority with a response
+
+// todo: the naming with client and server right now is to distinguish different functions
+// should be both a rpc server and a rpc client
+// send and receive shall be async so that we don't need to wait for all resposes
+func ClientSendRequestVoteToAll(ctx context.Context, request RequestVoteRequest, resultChannel chan MajorityRequestVoteResp) error {
+
+	// send to all other nodes
+	fmt.Println("need to find all other nodes")
+	fmt.Println("in parallel, send request vote to all other nodes of term, nodeID", request.Term, request.CandidateID)
+
+	// if we use synchronous ?
+	fmt.Println("future wait for majority of votes with a timeout")
+
+	// todo: to be implemented, so we plan to add the majority here?
+	// assumes majority comes back
+	// assumes timeout happens -> the ctx requires a timeout
+	// what happens if the ctx timeouts and the reponse came back? who handles it
+	return nil
 }
 
-func resetLog() {
-	// to be implemented
-}
-
-func getCurrentCommitID() int {
-	return 1
+func ClientSendAppendEntriesToAll(ctx context.Context, request AppendEntriesRequest, respChan chan MajorityAppendEntriesResp) error {
+	// maki: some implementation level design details to be documented
+	// SEND TO ALL OTHER NODES
+	// todo: implementation problem
+	// synchronous OR asynchronous call
+	fmt.Println("send heartbeat to all other nodes")
+	return nil
 }
