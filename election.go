@@ -2,11 +2,7 @@ package main
 
 import (
 	"context"
-	"math/rand"
 	"time"
-
-	"github.com/DataDog/appsec-internal-go/log"
-	"github.com/google/martian/log"
 )
 
 var nodeInstance *Node
@@ -16,19 +12,6 @@ func init() {
 	// todo: for now, we just create a node with a fixed ID
 	nodeInstance = NewNode(1)
 	nodeInstance.Start(context.Background())
-}
-
-const LEADER_HEARTBEAT_PERIOD_IN_MS = 100
-const REUQEST_TIMEOUT_IN_MS = 200
-
-// design of randomness in election to minimize the possiblity of contention of leader and split vote
-const ELECTION_TIMEOUT_MIN_IN_MS = 150
-const ELECTION_TIMEOUT_MAX_IN_MS = 350
-
-func getRandomElectionTimeout() time.Duration {
-	diff := ELECTION_TIMEOUT_MAX_IN_MS - ELECTION_TIMEOUT_MIN_IN_MS
-	randomMs := rand.Intn(diff) + ELECTION_TIMEOUT_MIN_IN_MS
-	return time.Duration(randomMs) * time.Millisecond
 }
 
 type NodeState int
@@ -191,20 +174,20 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
-				log.Info("context done")
+				sugarLogger.Info("context done")
 			case response := <-resChan:
 				if response.Term > node.CurrentTerm {
 					recedeChan <- response.Term
 				} else if response.Success {
-					log.Info("majority of append entries response received")
-					log.Info("handle corresponding client request")
+					sugarLogger.Info("majority of append entries response received")
+					sugarLogger.Info("handle corresponding client request")
 					// todo: handle the client request
 				} else {
-					log.Info("majority of append entries response not received")
+					sugarLogger.Info("majority of append entries response not received")
 					// todo: handle the client request
 				}
 			case err := <-errChan:
-				log.Info("error in sending append entries", err)
+				sugarLogger.Info("error in sending append entries", err)
 			}
 		}
 	}(ctx)

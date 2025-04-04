@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
 )
 
 // todo: this is a mock, we need to find the membership
@@ -18,6 +19,26 @@ func getMembership() []int {
 // should be both a rpc server and a rpc client
 // send and receive shall be async so that we don't need to wait for all resposes
 func ClientSendRequestVoteToAll(ctx context.Context, request RequestVoteRequest, resultChannel chan MajorityRequestVoteResp) error {
+	members := getMembership()
+	var wg sync.WaitGroup
+	var resChan = make(chan RequestVoteResponse, len(members))
+	var errChan = make(chan error, len(members))
+	ctxTimeout, cancel := context.WithTimeout(ctx, REUQEST_TIMEOUT_IN_MS)
+	defer cancel()
+
+	majority := len(members)/2 + 1
+	for i := 0; i < majority; i++ {
+		wg.Add(1)
+	}
+
+	// the fan-in fan-out pattern
+	for _, member := range members {
+		go RPCSendRequestVote(ctxTimeout, request, resChan, errChan, &wg)
+		if member == request.CandidateID {
+			continue
+		}
+		fmt.Println("send request vote to node", member)
+	}
 
 	// send to all other nodes
 	fmt.Println("need to find all other nodes")
