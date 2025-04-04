@@ -4,6 +4,9 @@ import (
 	"context"
 	"math/rand"
 	"time"
+
+	"github.com/DataDog/appsec-internal-go/log"
+	"github.com/google/martian/log"
 )
 
 var nodeInstance *Node
@@ -170,28 +173,74 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 	}
 }
 
+// (1) the raft leader sends heartbeats to all other nodes
+// (2) the raft heartbeats are triggered by timeouts and by clients
+// (3) the raft leader waits for response from all other nodes
+// but when the raft leader waits for response of appendEntries, should it send it again?
+// to simplify the leader for now, we start sending and wait for a shorter timeout then the 2 timeouts get coupled
 func (node *Node) RunAsLeader(ctx context.Context) {
+
 	if node.State != StateLeader {
 		panic("node is not in LEADER state")
 	}
+
+	errChan := make(chan error, 1)
+	resChan := make(chan MajorityAppendEntriesResp, 1)
+	recedeChan := make(chan int)
+	go func(ctx context.Context) {
+		for {
+			select {
+			case <-ctx.Done():
+				log.Info("context done")
+			case response := <-resChan:
+				if response.Term > node.CurrentTerm {
+					recedeChan <- response.Term
+				} else if response.Success {
+					log.Info("majority of append entries response received")
+					log.Info("handle corresponding client request")
+					// todo: handle the client request
+				} else {
+					log.Info("majority of append entries response not received")
+					// todo: handle the client request
+				}
+			case err := <-errChan:
+				log.Info("error in sending append entries", err)
+			}
+		}
+	}(ctx)
+
 	for {
 		timerForHeartbeat := time.NewTimer(time.Duration(LEADER_HEARTBEAT_PERIOD_IN_MS) * time.Millisecond)
 		select {
-		// todo: we hide the request from client to make the leader easier now
-		// todo: here we need to wait for their response synchronously or continue for the next batch?
-		case request := <-node.clientRequestChannel:
+		case newTerm := <-recedeChan:
+			// paper: if a leader receives a heartbeat from a node with a higher term,
+			// it becomes a follower
+			node.State = StateFollower
+			node.CurrentTerm = newTerm
+			timerForHeartbeat.Stop()
+			go node.RunAsFollower(ctx)
+		case <-timerForHeartbeat.C:
+			heartbeatReq := AppendEntriesRequest{
+				Term:     node.CurrentTerm,
+				LeaderID: node.NodeID,
+			}
+			go ClientSendAppendEntriesToAll(ctx, heartbeatReq, resChan, errChan)
+		case req := <-node.clientRequestChannel:
 			timerForHeartbeat.Stop()
 			// todo: need to get result if the request is successful
 			// possibillty the leader is stale itself
-			_ = ClientSendAppendEntriesToAll(ctx, AppendEntriesRequest{})
-		case <-timerForHeartbeat.C:
-			// leaders send periodic heartbeats to all the followers to maintain
-			// their authority
-			// todo: to be implemented
-			ClientSendAppendEntriesToAll(ctx, AppendEntriesRequest{
+			appendEntryReq := AppendEntriesRequest{
 				Term:     node.CurrentTerm,
 				LeaderID: node.NodeID,
-			})
+				Entries: []LogEntry{
+					{
+						Term:  node.CurrentTerm,
+						Index: 0, // todo: dummy log data
+						Data:  req,
+					},
+				},
+			}
+			go ClientSendAppendEntriesToAll(ctx, appendEntryReq, resChan, errChan)
 		}
 	}
 }

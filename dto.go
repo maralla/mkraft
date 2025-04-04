@@ -18,6 +18,7 @@ type MajorityAppendEntriesResp struct {
 	Term            int
 	Success         bool
 	SingleResponses []AppendEntriesResponse
+	OriginalRequest AppendEntriesRequest
 }
 
 type RequestVoteRequest struct {
@@ -36,6 +37,7 @@ type MajorityRequestVoteResp struct {
 	Term            int
 	VoteGranted     bool
 	SingleResponses []RequestVoteResponse
+	OriginalRequest RequestVoteRequest
 }
 
 type LogEntry struct {

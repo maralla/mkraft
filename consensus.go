@@ -33,11 +33,11 @@ func ClientSendRequestVoteToAll(ctx context.Context, request RequestVoteRequest,
 	return nil
 }
 
-func ClientSendAppendEntriesToAll(ctx context.Context, request AppendEntriesRequest, respChan chan MajorityAppendEntriesResp) error {
+func ClientSendAppendEntriesToAll(
+	ctx context.Context, request AppendEntriesRequest, respChan chan MajorityAppendEntriesResp, errChan chan error) {
 	// maki: some implementation level design details to be documented
 	// SEND TO ALL OTHER NODES
 	// todo: implementation problem
 	// synchronous OR asynchronous call
 	fmt.Println("send heartbeat to all other nodes")
-	return nil
 }
