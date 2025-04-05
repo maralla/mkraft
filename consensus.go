@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+// CONSENSUS MODULE combines the rpc clients with consensus
+
 // todo: this is a mock, we need to find the membership
 func getMembership() []int {
 	membership := []int{1, 2, 3, 4, 5}
