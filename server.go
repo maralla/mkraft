@@ -274,6 +274,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 			node.CurrentTerm = newTerm
 			timerForHeartbeat.Stop()
 			go node.RunAsFollower(ctx)
+			return
 		case <-timerForHeartbeat.C:
 			heartbeatReq := AppendEntriesRequest{
 				Term:     node.CurrentTerm,
