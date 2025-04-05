@@ -38,10 +38,16 @@ type MajorityRequestVoteResp struct {
 	VoteGranted     bool
 	SingleResponses []RequestVoteResponse
 	OriginalRequest RequestVoteRequest
+	Error           error
 }
 
 type LogEntry struct {
 	Term  int
 	Index int
 	Data  string
+}
+
+type ResWrapper struct {
+	Err  error
+	Resp interface{}
 }

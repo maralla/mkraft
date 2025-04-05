@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"sync"
 )
 
 // todo: this is a mock, we need to find the membership
@@ -12,49 +11,93 @@ func getMembership() []int {
 	return membership
 }
 
-// here the pattern is there are K nodes in the membership found by the client
-// and the client sends the request to all other nodes and waits for the majority with a response
-
-// todo: the naming with client and server right now is to distinguish different functions
-// should be both a rpc server and a rpc client
-// send and receive shall be async so that we don't need to wait for all resposes
-func ClientSendRequestVoteToAll(ctx context.Context, request RequestVoteRequest, resultChannel chan MajorityRequestVoteResp) error {
+// The node calling this shall be in the CANDIDATE state
+func RequestVote(ctx context.Context, request RequestVoteRequest, resultChannel chan MajorityRequestVoteResp) {
 	members := getMembership()
-	var wg sync.WaitGroup
-	var resChan = make(chan RequestVoteResponse, len(members))
-	var errChan = make(chan error, len(members))
-	ctxTimeout, cancel := context.WithTimeout(ctx, REUQEST_TIMEOUT_IN_MS)
-	defer cancel()
 
-	majority := len(members)/2 + 1
-	for i := 0; i < majority; i++ {
-		wg.Add(1)
+	// maki: important for testing
+	// todo: if the ctx is canceled by the fan-out not returned, will
+	// the goroutine write to the channel?
+	var resChan = make(chan ResWrapper, len(members))
+	rpcCall := func(membershipID int) {
+		resp, err := RPCClientSendRequestVote(ctx, membershipID, request)
+		wrapper := ResWrapper{
+			Err:  err,
+			Resp: resp,
+		}
+		resChan <- wrapper
 	}
 
-	// the fan-in fan-out pattern
+	// FAN-OUT
 	for _, member := range members {
-		go RPCSendRequestVote(ctxTimeout, request, resChan, errChan, &wg)
-		if member == request.CandidateID {
-			continue
-		}
+		go rpcCall(member)
 		fmt.Println("send request vote to node", member)
 	}
 
-	// send to all other nodes
-	fmt.Println("need to find all other nodes")
-	fmt.Println("in parallel, send request vote to all other nodes of term, nodeID", request.Term, request.CandidateID)
-
-	// if we use synchronous ?
-	fmt.Println("future wait for majority of votes with a timeout")
-
-	// todo: to be implemented, so we plan to add the majority here?
-	// assumes majority comes back
-	// assumes timeout happens -> the ctx requires a timeout
-	// what happens if the ctx timeouts and the reponse came back? who handles it
-	return nil
+	// FAN-IN WITH STOPPING SHORT
+	total := len(members)
+	majority := len(members)/2 + 1
+	voteAccumulated := 0
+	voteFailed := 0
+	for i := 0; i < len(members); i++ {
+		select {
+		case res := <-resChan:
+			if err := res.Err; err != nil {
+				// todo: further analysis what happens in error -> lost one vote/heartbeat
+				sugarLogger.Info("error in sending request vote", err)
+				continue
+			} else {
+				term := res.Resp.(RequestVoteResponse).Term
+				// if someone responds with a term greater than the current term
+				if term > request.Term {
+					sugarLogger.Info("term is greater than current term")
+					resultChannel <- MajorityRequestVoteResp{
+						Term:        term,
+						VoteGranted: false,
+					}
+					return
+				}
+				if term == request.Term {
+					if res.Resp.(RequestVoteResponse).VoteGranted {
+						// won the election
+						voteAccumulated++
+						if voteAccumulated >= majority {
+							resultChannel <- MajorityRequestVoteResp{
+								Term:        request.Term,
+								VoteGranted: true,
+							}
+							return
+						}
+					} else {
+						// a fail or draw in the election
+						voteFailed++
+						if voteFailed > total-majority {
+							resultChannel <- MajorityRequestVoteResp{
+								Term:        request.Term,
+								VoteGranted: false,
+							}
+							return
+						}
+					}
+				}
+				if term < request.Term {
+					// todo: how to handle somecase that should never happen, should it panic?
+					sugarLogger.Error("term is less than current term, this should not happen")
+				}
+			}
+		case <-ctx.Done():
+			sugarLogger.Info("context canceled")
+			resultChannel <- MajorityRequestVoteResp{
+				Term:        request.Term,
+				VoteGranted: false,
+				Error:       fmt.Errorf("context canceled without majority"),
+			}
+			return
+		}
+	}
 }
 
-func ClientSendAppendEntriesToAll(
+func AppendEntries(
 	ctx context.Context, request AppendEntriesRequest, respChan chan MajorityAppendEntriesResp, errChan chan error) {
 	// maki: some implementation level design details to be documented
 	// SEND TO ALL OTHER NODES

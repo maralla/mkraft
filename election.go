@@ -105,13 +105,11 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 			Term:        node.CurrentTerm,
 			CandidateID: node.NodeID,
 		}
-		// todo: how to add timeout
-		// ctx = ctx.WithTimeout(ctx, time.Duration(REUQEST_TIMEOUT_IN_MS)*time.Millisecond)
-		// should start with future?
+
 		resChan := make(chan MajorityRequestVoteResp)
 		ctxTimeout, cancel := context.WithTimeout(
 			ctx, time.Duration(REUQEST_TIMEOUT_IN_MS)*time.Millisecond)
-		go ClientSendRequestVoteToAll(ctxTimeout, req, resChan)
+		go RequestVote(ctxTimeout, req, resChan)
 
 		timer := time.NewTimer(getRandomElectionTimeout())
 		select {
@@ -207,7 +205,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 				Term:     node.CurrentTerm,
 				LeaderID: node.NodeID,
 			}
-			go ClientSendAppendEntriesToAll(ctx, heartbeatReq, resChan, errChan)
+			go AppendEntries(ctx, heartbeatReq, resChan, errChan)
 		case req := <-node.clientRequestChannel:
 			timerForHeartbeat.Stop()
 			// todo: need to get result if the request is successful
@@ -223,7 +221,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 					},
 				},
 			}
-			go ClientSendAppendEntriesToAll(ctx, appendEntryReq, resChan, errChan)
+			go AppendEntries(ctx, appendEntryReq, resChan, errChan)
 		}
 	}
 }
