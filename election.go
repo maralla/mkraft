@@ -109,7 +109,7 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 		resChan := make(chan MajorityRequestVoteResp)
 		ctxTimeout, cancel := context.WithTimeout(
 			ctx, time.Duration(REUQEST_TIMEOUT_IN_MS)*time.Millisecond)
-		go RequestVote(ctxTimeout, req, resChan)
+		go RequestVoteSend(ctxTimeout, req, resChan)
 
 		timer := time.NewTimer(getRandomElectionTimeout())
 		select {
@@ -205,7 +205,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 				Term:     node.CurrentTerm,
 				LeaderID: node.NodeID,
 			}
-			go AppendEntries(ctx, heartbeatReq, resChan, errChan)
+			go AppendEntriesSend(ctx, heartbeatReq, resChan, errChan)
 		case req := <-node.clientRequestChannel:
 			timerForHeartbeat.Stop()
 			// todo: need to get result if the request is successful
@@ -221,7 +221,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 					},
 				},
 			}
-			go AppendEntries(ctx, appendEntryReq, resChan, errChan)
+			go AppendEntriesSend(ctx, appendEntryReq, resChan, errChan)
 		}
 	}
 }

@@ -12,7 +12,7 @@ func getMembership() []int {
 }
 
 // The node calling this shall be in the CANDIDATE state
-func RequestVote(ctx context.Context, request RequestVoteRequest, resultChannel chan MajorityRequestVoteResp) {
+func RequestVoteSend(ctx context.Context, request RequestVoteRequest, resultChannel chan MajorityRequestVoteResp) {
 	members := getMembership()
 
 	// maki: important for testing
@@ -97,7 +97,7 @@ func RequestVote(ctx context.Context, request RequestVoteRequest, resultChannel 
 	}
 }
 
-func AppendEntries(
+func AppendEntriesSend(
 	ctx context.Context, request AppendEntriesRequest, respChan chan MajorityAppendEntriesResp, errChan chan error) {
 	// maki: some implementation level design details to be documented
 	// SEND TO ALL OTHER NODES
