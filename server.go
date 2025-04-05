@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/maki3cat/mkraft/conf"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -90,6 +91,7 @@ func (node *Node) Stop() {
 	close(node.clientCommandChan)
 }
 
+// # todo: should this be replaced with ticker
 /*
 PAPER quote: RULEs for Servers
 Respond to RPCs from candidates and leaders
@@ -107,7 +109,7 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 	defer node.sem.Release(1)
 
 	for {
-		timerForElection := time.NewTimer(getRandomElectionTimeout())
+		timerForElection := time.NewTimer(conf.GetRandomElectionTimeout())
 		select {
 		case <-ctx.Done():
 			sugarLogger.Info("context done")
@@ -164,11 +166,11 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 		CandidateID: node.NodeID,
 	}
 	ctxTimeout, voteCancel = context.WithTimeout(
-		ctx, time.Duration(REUQEST_TIMEOUT_IN_MS)*time.Millisecond)
+		ctx, time.Duration(conf.REUQEST_TIMEOUT_IN_MS)*time.Millisecond)
 	go RequestVoteSend(ctxTimeout, req, changeStateChan)
 
 	for {
-		timer := time.NewTimer(getRandomElectionTimeout())
+		timer := time.NewTimer(conf.GetRandomElectionTimeout())
 		select {
 		case <-timer.C:
 			voteCancel()                                          // cancel previous trial of election if not finished
@@ -181,7 +183,7 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 				CandidateID: node.NodeID,
 			}
 			ctxTimeout, voteCancel = context.WithTimeout(
-				ctx, time.Duration(REUQEST_TIMEOUT_IN_MS)*time.Millisecond)
+				ctx, time.Duration(conf.REUQEST_TIMEOUT_IN_MS)*time.Millisecond)
 			go RequestVoteSend(ctxTimeout, req, changeStateChan)
 		case request := <-node.appendEntryChan:
 			voteCancel() // cancel previous trial of election if not finished
@@ -265,7 +267,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	}(ctx)
 
 	for {
-		timerForHeartbeat := time.NewTimer(time.Duration(LEADER_HEARTBEAT_PERIOD_IN_MS) * time.Millisecond)
+		timerForHeartbeat := time.NewTimer(time.Duration(conf.LEADER_HEARTBEAT_PERIOD_IN_MS) * time.Millisecond)
 		select {
 		case newTerm := <-recedeChan:
 			// paper: if a leader receives a heartbeat from a node with a higher term,
@@ -299,4 +301,34 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 			go AppendEntriesSend(ctx, appendEntryReq, resChan, errChan)
 		}
 	}
+}
+
+func (node *Node) voting(req RequestVoteRequest, response RequestVoteResponse) RequestVoteResponse {
+	if req.Term > node.CurrentTerm {
+		node.VotedFor = req.CandidateID
+		node.CurrentTerm = req.Term
+		response = RequestVoteResponse{
+			Term:        node.CurrentTerm,
+			VoteGranted: true,
+		}
+	} else if req.Term < node.CurrentTerm {
+		response = RequestVoteResponse{
+			Term:        node.CurrentTerm,
+			VoteGranted: false,
+		}
+	} else {
+		if node.VotedFor == -1 || node.VotedFor == req.CandidateID {
+			node.VotedFor = req.CandidateID
+			response = RequestVoteResponse{
+				Term:        node.CurrentTerm,
+				VoteGranted: true,
+			}
+		} else {
+			response = RequestVoteResponse{
+				Term:        node.CurrentTerm,
+				VoteGranted: false,
+			}
+		}
+	}
+	return response
 }
