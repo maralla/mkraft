@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"time"
+
+	"golang.org/x/sync/semaphore"
 )
 
 var nodeInstance *Node
@@ -36,6 +38,7 @@ func (state NodeState) String() string {
 }
 
 type Node struct {
+	sem         semaphore.Weighted
 	LeaderID    int
 	NodeID      int // maki: nodeID uuid or number or something else?
 	CurrentTerm int
@@ -97,6 +100,12 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 	if node.State != StateFollower {
 		panic("node is not in FOLLOWER state")
 	}
+
+	sugarLogger.Info("node acquires to run in FOLLOWER state")
+	node.sem.Acquire(ctx, 1)
+	sugarLogger.Info("acquired semaphore in FOLLOWER state")
+	defer node.sem.Release(1)
+
 	for {
 		timerForElection := time.NewTimer(getRandomElectionTimeout())
 		select {
@@ -137,6 +146,11 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 		panic("node is not in CANDIDATE state")
 	}
 
+	sugarLogger.Info("node acquires to run in CANDIDATE state")
+	node.sem.Acquire(ctx, 1)
+	sugarLogger.Info("acquired semaphore in CANDIDATE state")
+	defer node.sem.Release(1)
+
 	changeStateChan := make(chan MajorityRequestVoteResp)
 	var voteCancel context.CancelFunc
 	var ctxTimeout context.Context
@@ -176,6 +190,7 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 				node.CurrentTerm = request.Term
 				timer.Stop()
 				go node.RunAsFollower(ctx)
+				return
 			} else {
 				// todo: check the error handling strategy is correct or not
 				// Should be rejected directly by the server handler
@@ -218,6 +233,11 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	if node.State != StateLeader {
 		panic("node is not in LEADER state")
 	}
+
+	sugarLogger.Info("node acquires to run in LEADER state")
+	node.sem.Acquire(ctx, 1)
+	sugarLogger.Info("acquired semaphore in LEADER state")
+	defer node.sem.Release(1)
 
 	errChan := make(chan error, 1)
 	resChan := make(chan MajorityAppendEntriesResp, 1)
