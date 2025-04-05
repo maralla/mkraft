@@ -11,8 +11,10 @@ func getMembership() []int {
 	return membership
 }
 
-// The node calling this shall be in the CANDIDATE state
+// todo: should use next layer RPC keep calling the unreturned nodes until the context is canceled
+// only send to the channel when majority is reached OR current candidate shall end
 func RequestVoteSend(ctx context.Context, request RequestVoteRequest, resultChannel chan MajorityRequestVoteResp) {
+	// todo: should add a wrapper to retry until cancel
 	members := getMembership()
 
 	// maki: important for testing
@@ -70,12 +72,9 @@ func RequestVoteSend(ctx context.Context, request RequestVoteRequest, resultChan
 						}
 					} else {
 						// a fail or draw in the election
+						// no need to return anything
 						voteFailed++
 						if voteFailed > total-majority {
-							resultChannel <- MajorityRequestVoteResp{
-								Term:        request.Term,
-								VoteGranted: false,
-							}
 							return
 						}
 					}
@@ -87,11 +86,7 @@ func RequestVoteSend(ctx context.Context, request RequestVoteRequest, resultChan
 			}
 		case <-ctx.Done():
 			sugarLogger.Info("context canceled")
-			resultChannel <- MajorityRequestVoteResp{
-				Term:        request.Term,
-				VoteGranted: false,
-				Error:       fmt.Errorf("context canceled without majority"),
-			}
+			// right now we don't send to the result channel when timeout
 			return
 		}
 	}

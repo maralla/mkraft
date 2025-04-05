@@ -28,6 +28,11 @@ type RequestVoteRequest struct {
 	LastLogTerm  int
 }
 
+type RequestVoteInternal struct {
+	request RequestVoteRequest
+	resChan chan RequestVoteResponse // which shall be a buffer of 1
+}
+
 type RequestVoteResponse struct {
 	Term        int
 	VoteGranted bool

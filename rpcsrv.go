@@ -1,11 +1,8 @@
 package main
 
 func RPCServerSendRequestVote(request RequestVoteRequest) RequestVoteResponse {
-	voteGranted, term := RequestVoteRecv(request.Term, request.CandidateID)
-	return RequestVoteResponse{
-		Term:        term,
-		VoteGranted: voteGranted,
-	}
+	res := <-nodeInstance.VoteRequest(request)
+	return res
 }
 
 func RPCServerAppendEntries(request AppendEntriesRequest) AppendEntriesResponse {
@@ -17,7 +14,7 @@ func RPCServerAppendEntries(request AppendEntriesRequest) AppendEntriesResponse 
 		return response
 	} else {
 		// todo: check if the log is consistent?
-		nodeInstance.appendEntryChannel <- request
+		nodeInstance.appendEntryChan <- request
 		response := AppendEntriesResponse{
 			Term:    request.Term,
 			Success: true,
