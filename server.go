@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/maki3cat/mkraft/conf"
+	"github.com/maki3cat/mkraft/rpc"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -48,16 +48,16 @@ type Node struct {
 	VotedFor    int // candidateID
 	VoteGranted bool
 
-	appendEntryChan   chan AppendEntriesRequest // for follower: can come from leader's append rpc or candidate's vote rpc
-	clientCommandChan chan string               // todo: to be implemented
+	appendEntryChan   chan rpc.AppendEntriesRequest // for follower: can come from leader's append rpc or candidate's vote rpc
+	clientCommandChan chan string                   // todo: to be implemented
 	// todo: does leader and candidate need to answer this channel
-	requestVoteChan chan RequestVoteInternal
+	requestVoteChan chan rpc.RequestVoteInternal
 }
 
 // todo: this channel doesn't contain error
 // todo: the paper doesn't mention it but the voting shalle be handled by all candidates/follower/leader
-func (node *Node) VoteRequest(req RequestVoteRequest) chan RequestVoteResponse {
-	dto := RequestVoteInternal{
+func (node *Node) VoteRequest(req rpc.RequestVoteRequest) chan RequestVoteResponse {
+	dto := rpc.RequestVoteInternal{
 		request: req,
 		resChan: make(chan RequestVoteResponse),
 	}

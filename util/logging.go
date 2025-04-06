@@ -1,4 +1,4 @@
-package main
+package util
 
 import zap "go.uber.org/zap"
 
@@ -14,6 +14,13 @@ func init() {
 	}
 	sugarLogger = logger.Sugar()
 	defer logger.Sync() // flushes buffer, if any
+}
+
+func GetLogger() *zap.Logger {
+	return logger
+}
+func GetSugarLogger() *zap.SugaredLogger {
+	return sugarLogger
 }
 
 // example usage of the logger

@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/maki3cat/mkraft/conf"
+	util "github.com/maki3cat/mkraft/util"
 )
 
 // the real RPC iface witch will handle cancel/timeout with network solutions
@@ -85,14 +85,14 @@ func retriedRPCFunc[TReq any, TRes RPCResponse](
 	asyncFunc AsyncRPCFunc[TReq, TRes], ctx context.Context, req TReq, wrappedResChan chan RPCResWrapper[TRes]) {
 	defer close(wrappedResChan)
 
-	retryTicker := time.NewTicker(time.Millisecond * conf.RPC_REUQEST_TIMEOUT_IN_MS)
+	retryTicker := time.NewTicker(time.Millisecond * util.RPC_REUQEST_TIMEOUT_IN_MS)
 	defer retryTicker.Stop()
 
 	var singleResChan chan RPCResWrapper[TRes]
 	var singleCallCtx context.Context
 	var singleCallCancel context.CancelFunc
 
-	singleCallCtx, singleCallCancel = context.WithTimeout(ctx, time.Millisecond*(conf.RPC_REUQEST_TIMEOUT_IN_MS-10))
+	singleCallCtx, singleCallCancel = context.WithTimeout(ctx, time.Millisecond*(util.RPC_REUQEST_TIMEOUT_IN_MS-10))
 	singleResChan = asyncFunc(singleCallCtx, req)
 
 	for {
@@ -105,7 +105,7 @@ func retriedRPCFunc[TReq any, TRes RPCResponse](
 		case <-retryTicker.C:
 			// No response within timeout, retry
 			singleCallCancel()
-			singleCallCtx, singleCallCancel = context.WithTimeout(ctx, time.Millisecond*conf.RPC_REUQEST_TIMEOUT_IN_MS)
+			singleCallCtx, singleCallCancel = context.WithTimeout(ctx, time.Millisecond*util.RPC_REUQEST_TIMEOUT_IN_MS)
 			singleResChan = asyncFunc(singleCallCtx, req)
 		case response := <-singleResChan:
 			// Got a response

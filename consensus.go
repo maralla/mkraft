@@ -4,7 +4,10 @@ import (
 	"context"
 
 	"github.com/maki3cat/mkraft/rpc"
+	"github.com/maki3cat/mkraft/util"
 )
+
+var sugarLogger = util.GetSugarLogger()
 
 type MajorityAppendEntriesResp struct {
 	Term            int
