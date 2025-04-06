@@ -10,6 +10,8 @@ https://raft.github.io/
 - [ ] rpc-real protocol grpc?
 - [ ] rpc-server framework
 - [ ] configuration management
+- [x] logging
+- [ ] metrics
 
 ### Module1: Leade Election
 - [x] leader election
@@ -17,9 +19,10 @@ https://raft.github.io/
 - [ ] testing: simulate adversial cases in async network env (clock drifting, delay, partition)
 
 ### Module2: Consensus
-- [ ] framework: rpcs
-- [ ] framework: membership
-- [ ] algo: based on term
+- [ ] framework: sending framework, based on term
+- [ ] framework: receiving framework, based on term
+- [ ] framework: sending framework, based on log and commit index
+- [ ] framework: receiving framework, based on log and commmit index
 
 ### Module3: Log
 - [ ] replication
@@ -44,4 +47,6 @@ https://raft.github.io/
 - [ ] plummer and channels
 
 ### Module7: Extreme Engineering for performance
-- [ ] I don't know yet
+- [ ] add batching to handling ClientCommands, and send AppendLogEntries
+- [ ] check prof Yang's improvements of paxos for ideas
+- [ ] check architecture classes of caching and memory hierarchy for ideas

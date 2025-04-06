@@ -14,6 +14,7 @@ type MajorityAppendEntriesResp struct {
 	Success         bool
 	SingleResponses []rpc.AppendEntriesResponse
 	OriginalRequest rpc.AppendEntriesRequest
+	Error           error
 }
 
 type MajorityRequestVoteResp struct {
@@ -94,7 +95,7 @@ func RequestVoteSend(ctx context.Context, request rpc.RequestVoteRequest, result
 }
 
 func AppendEntriesSend(
-	ctx context.Context, request rpc.AppendEntriesRequest, respChan chan MajorityAppendEntriesResp, errChan chan error) {
+	ctx context.Context, request rpc.AppendEntriesRequest, respChan chan MajorityAppendEntriesResp) {
 	members := getClientOfAllMembers()
 	resChan := make(chan rpc.RPCResWrapper[rpc.AppendEntriesResponse], len(members)) // buffered with len(members) to prevent goroutine leak
 	// FAN-OUT

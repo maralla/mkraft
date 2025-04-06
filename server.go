@@ -212,7 +212,9 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 
 	// leverage closure
 	tryElection := func() {
-		consensusChan = make(chan MajorityRequestVoteResp)
+		// buffer == 1 so that the goroutine can return immediately
+		// we only handle one out-going election at a time
+		consensusChan = make(chan MajorityRequestVoteResp, 1)
 		node.CurrentTerm++
 		node.VotedFor = node.NodeID
 		req := rpc.RequestVoteRequest{
@@ -304,7 +306,6 @@ If successful: update nextIndex and matchIndex for follower
 If AppendEntries fails because of log inconsistency: decrement nextIndex and retry
 (4) If there exists and N such that N > committedIndex, a majority of matchIndex[i] ≥ N, ... (5.3/5.4)
 maki: this paper doesn't mention how a stale leader catches up and becomes a follower
-todo: check this point
 */
 func (node *Node) RunAsLeader(ctx context.Context) {
 
@@ -318,8 +319,23 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	defer node.sem.Release(1)
 
 	errChan := make(chan error, 1)
+
+	// THE COMPLEXITY OF THE LEADER IS MUCH HIGHER THAN THE CANDIDATE
+	// unlike the candidate which issues one request at a time
+	// the leader is more complex
+	// (1)
+	// because it shall send multiple AppendEntries requests at the same time
+	// and if any of them gets a response with a higher term
+	// the leader shall become a follower
+	// (2) (3)
+	// at the same time, it shall send heartbeats to all the followers
+	// at the same time, it shall handle the voting requests from other candidates
+
 	resChan := make(chan MajorityAppendEntriesResp, 1)
 	recedeChan := make(chan int)
+
+	tickerForHeartbeat := time.NewTicker(time.Duration(util.LEADER_HEARTBEAT_PERIOD_IN_MS) * time.Millisecond)
+
 	go func(ctx context.Context) {
 		for {
 			select {
@@ -343,30 +359,30 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	}(ctx)
 
 	for {
-		timerForHeartbeat := time.NewTimer(time.Duration(util.LEADER_HEARTBEAT_PERIOD_IN_MS) * time.Millisecond)
 		select {
 		case newTerm := <-recedeChan:
 			// paper: if a leader receives a heartbeat from a node with a higher term,
 			// it becomes a follower
 			node.State = StateFollower
 			node.CurrentTerm = newTerm
-			timerForHeartbeat.Stop()
+			tickerForHeartbeat.Stop()
 			go node.RunAsFollower(ctx)
 			return
-		case <-timerForHeartbeat.C:
-			heartbeatReq := AppendEntriesRequest{
+		case <-tickerForHeartbeat.C:
+			heartbeatReq := rpc.AppendEntriesRequest{
 				Term:     node.CurrentTerm,
 				LeaderID: node.NodeID,
 			}
-			go AppendEntriesSend(ctx, heartbeatReq, resChan, errChan)
+			// empty log entries as heartbeat
+			go AppendEntriesSend(ctx, heartbeatReq, resChan)
 		case req := <-node.clientCommandChan:
-			timerForHeartbeat.Stop()
+			tickerForHeartbeat.Stop()
 			// todo: need to get result if the request is successful
 			// possibillty the leader is stale itself
-			appendEntryReq := AppendEntriesRequest{
+			appendEntryReq := rpc.AppendEntriesRequest{
 				Term:     node.CurrentTerm,
 				LeaderID: node.NodeID,
-				Entries: []LogEntry{
+				Entries: []rpc.LogEntry{
 					{
 						Term:  node.CurrentTerm,
 						Index: 0, // todo: dummy log data
