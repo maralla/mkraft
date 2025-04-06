@@ -120,36 +120,39 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 	node.sem.Acquire(ctx, 1)
 	sugarLogger.Info("acquired semaphore in FOLLOWER state")
 	defer node.sem.Release(1)
-	timerForElection := time.NewTicker(util.GetRandomElectionTimeout())
+
+	electionTicker := time.NewTicker(util.GetRandomElectionTimeout())
+	defer electionTicker.Stop()
 
 	for {
 		select {
 
 		case <-ctx.Done():
 			sugarLogger.Warn("context done")
-			timerForElection.Stop()
 			return
 
-		case <-timerForElection.C:
+		case <-electionTicker.C:
 			node.State = StateCandidate
 			go node.RunAsCandidate(ctx)
 			return
 
 		case requestVoteInternal := <-node.requestVoteChan:
-			timerForElection.Stop()
+			electionTicker.Stop()
+
 			req := requestVoteInternal.request
-			var response RequestVoteResponse
-			// todo: grant vote has more complicated logic with log
-			response = node.voting(req, response)
+			response := node.voting(req)
 			requestVoteInternal.resChan <- response
-			timerForElection.Reset(util.GetRandomElectionTimeout())
 
-		case <-node.appendEntryChan:
+			electionTicker.Reset(util.GetRandomElectionTimeout())
+
+		case appendEntriesInternal := <-node.appendEntryChan:
 			// todo: the logic of the append entry is not implemented yet
-			timerForElection.Stop()
-			timerForElection.Reset(util.GetRandomElectionTimeout())
-		}
+			req := appendEntriesInternal.request
+			resChan := appendEntriesInternal.resChan
 
+			electionTicker.Reset(util.GetRandomElectionTimeout())
+
+		}
 	}
 }
 
@@ -287,7 +290,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	}(ctx)
 
 	for {
-		timerForHeartbeat := time.NewTimer(time.Duration(conf.LEADER_HEARTBEAT_PERIOD_IN_MS) * time.Millisecond)
+		timerForHeartbeat := time.NewTimer(time.Duration(util.LEADER_HEARTBEAT_PERIOD_IN_MS) * time.Millisecond)
 		select {
 		case newTerm := <-recedeChan:
 			// paper: if a leader receives a heartbeat from a node with a higher term,
@@ -323,31 +326,62 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	}
 }
 
-func (node *Node) voting(req RequestVoteRequest, response RequestVoteResponse) RequestVoteResponse {
+// maki: jthis method should be a part of the consensus algorithm
+// todo: right now this method doesn't check the current state of the node
+func (node *Node) voting(req rpc.RequestVoteRequest) rpc.RequestVoteResponse {
+	var response rpc.RequestVoteResponse
 	if req.Term > node.CurrentTerm {
 		node.VotedFor = req.CandidateID
 		node.CurrentTerm = req.Term
-		response = RequestVoteResponse{
+		response = rpc.RequestVoteResponse{
 			Term:        node.CurrentTerm,
 			VoteGranted: true,
 		}
 	} else if req.Term < node.CurrentTerm {
-		response = RequestVoteResponse{
+		response = rpc.RequestVoteResponse{
 			Term:        node.CurrentTerm,
 			VoteGranted: false,
 		}
 	} else {
 		if node.VotedFor == -1 || node.VotedFor == req.CandidateID {
 			node.VotedFor = req.CandidateID
-			response = RequestVoteResponse{
+			response = rpc.RequestVoteResponse{
 				Term:        node.CurrentTerm,
 				VoteGranted: true,
 			}
 		} else {
-			response = RequestVoteResponse{
+			response = rpc.RequestVoteResponse{
 				Term:        node.CurrentTerm,
 				VoteGranted: false,
 			}
+		}
+	}
+	return response
+}
+
+// maki: jthis method should be a part of the consensus algorithm
+// todo: right now this method doesn't check the current state of the node
+func (node *Node) appendEntries(req rpc.AppendEntriesRequest) rpc.AppendEntriesResponse {
+	var response rpc.AppendEntriesResponse
+	if req.Term > node.CurrentTerm {
+		node.CurrentTerm = req.Term
+		node.VotedFor = req.LeaderID
+		node.State = StateFollower
+		// todo: tell the leader/candidate to change the state to follower
+		response = rpc.AppendEntriesResponse{
+			Term:    node.CurrentTerm,
+			Success: true,
+		}
+	} else if req.Term < node.CurrentTerm {
+		response = rpc.AppendEntriesResponse{
+			Term:    node.CurrentTerm,
+			Success: false,
+		}
+	} else {
+		// should accecpet it directly?
+		response = rpc.AppendEntriesResponse{
+			Term:    node.CurrentTerm,
+			Success: true,
 		}
 	}
 	return response
