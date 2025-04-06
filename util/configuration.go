@@ -20,3 +20,41 @@ func GetRandomElectionTimeout() time.Duration {
 	randomMs := rand.Intn(diff) + ELECTION_TIMEOUT_MIN_IN_MS
 	return time.Duration(randomMs) * time.Millisecond
 }
+
+const HANDLE_CLIENT_COMMAND_BATCH = 10
+const HANDLE_CLIENT_COMMAND_BUFFER = 1000
+
+type Configuration struct {
+	RPCRequestTimeout     time.Duration `json:"rpc_request_timeout"`
+	RPCRequestTimeoutInMs int           `json:"rpc_request_timeout_in_ms"`
+	// Election
+	ElectionTimeout     time.Duration `json:"election_timeout"`
+	ElectionTimeoutInMs int           `json:"election_timeout_in_ms"`
+	// Leader
+	LeaderHeartbeatPeriod     time.Duration `json:"leader_heartbeat_period"`
+	LeaderHeartbeatPeriodInMs int           `json:"leader_heartbeat_period_in_ms"`
+	// Client
+	ClientCommandBufferSize int `json:"client_command_buffer_size"`
+}
+
+var (
+	defaultConfig Configuration
+	Config        Configuration
+)
+
+func init() {
+	// todo: add configuration loading from env
+	defaultConfig = Configuration{
+		RPCRequestTimeout:         time.Duration(RPC_REUQEST_TIMEOUT_IN_MS) * time.Millisecond,
+		RPCRequestTimeoutInMs:     RPC_REUQEST_TIMEOUT_IN_MS,
+		ElectionTimeoutInMs:       ELECTION_TIMEOUT_MIN_IN_MS,
+		LeaderHeartbeatPeriod:     time.Duration(LEADER_HEARTBEAT_PERIOD_IN_MS) * time.Millisecond,
+		LeaderHeartbeatPeriodInMs: LEADER_HEARTBEAT_PERIOD_IN_MS,
+		ClientCommandBufferSize:   HANDLE_CLIENT_COMMAND_BUFFER,
+	}
+	Config = defaultConfig
+}
+
+func GetConfig() Configuration {
+	return Config
+}

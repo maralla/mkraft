@@ -39,7 +39,7 @@ func (state NodeState) String() string {
 	return "Unknown State"
 }
 
-// the data structure to req/respond to the raft-server
+// the data structure used by the Raft-server
 type RequestVoteInternal struct {
 	request rpc.RequestVoteRequest
 	resChan chan rpc.RequestVoteResponse
@@ -55,6 +55,7 @@ type ClientCommandInternal struct {
 	resChan chan []byte
 }
 
+// the Raft Server Node
 type Node struct {
 	sem *semaphore.Weighted
 
@@ -121,10 +122,10 @@ PAPER (quote):
 Shared Rule: if any RPC request or response is received from a server with a higher term,
 convert to follower
 How the Shared Rule works for Followers:
-(2) AppendEntries RPC from a server with a higher term
-(3) requestVote RPC from a server with a higher term
+(1) handle request of AppendEntriesRPC initiated by another server
+(2) handle reuqest of RequestVoteRPC initiated by another server
 
-PAPER quote: RULEs for Servers
+Speicial Rules for Followers
 Respond to RPCs from candidates and leaders
 If election timeout elapses without receiving AppendEntries RPC from current leader
 or granting vote to candidate: convert to candidate
@@ -181,9 +182,9 @@ PAPER (quote):
 Shared Rule: if any RPC request or response is received from a server with a higher term,
 convert to follower
 How the Shared Rule works for Candidates:
-(1) response of RequestVote RPC from a server with a higher term
-(2) AppendEntries RPC from a server with a higher term
-(3) requestVote RPC from a server with a higher term
+(1) handle the response of RequestVoteRPC initiated by itself
+(2) handle request of AppendEntriesRPC initiated by another server
+(3) handle reuqest of RequestVoteRPC initiated by another server
 
 Specifical Rule for Candidates:
 On conversion to a candidate, start election:
@@ -287,7 +288,15 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 }
 
 /*
-PAPER quote: RULEs for Servers
+PAPER (quote):
+Shared Rule: if any RPC request or response is received from a server with a higher term,
+convert to follower
+How the Shared Rule works for Leaders:
+(1) response of AppendEntries RPC sent by itself
+(2) receive request of AppendEntries RPC from a server with a higher term
+(3) receive request of requestVote RPC from a server with a higher term
+
+Specifical Rule for Leaders:
 (1) Upon election: send initial empty AppendEntries (heartbeat) RPCs to each reserver; repeat during idle periods to prevent election timeouts; (5.2)
 (2) If command received from client: append entry to local log, respond after entry applied to state machine; (5.3)
 (3) If last log index ≥ nextIndex for a follower: send AppendEntries RPC with log entries starting at nextIndex for the follower;
