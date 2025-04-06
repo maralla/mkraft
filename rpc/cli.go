@@ -26,6 +26,10 @@ type RPCClientIface interface {
 	AsyncSendAppendEntries(ctx context.Context, req AppendEntriesRequest) chan RPCResWrapper[AppendEntriesResponse]
 }
 
+func NewRPCClient() RPCClientIface {
+	return &MockSimpleRPCClientImpl{}
+}
+
 type MockSimpleRPCClientImpl struct {
 	// dummy, mock
 }
@@ -77,9 +81,16 @@ func (mock *MockSimpleRPCClientImpl) AsyncSendAppendEntries(ctx context.Context,
 }
 
 // the complicated RPC client used directly for the server
+// TODO: shall merge the iface of the simple client and the retried client
 type RetriedClientIface interface {
 	RetriedSendAppendEntries(ctx context.Context, req AppendEntriesRequest) chan RPCResWrapper[AppendEntriesResponse]
 	RetriedSendRequestVote(ctx context.Context, req RequestVoteRequest) chan RPCResWrapper[RequestVoteResponse]
+}
+
+func NewRetriedClient(simpleClient RPCClientIface) RetriedClientIface {
+	return &RetriedClientImpl{
+		simpleClient: simpleClient,
+	}
 }
 
 type RetriedClientImpl struct {

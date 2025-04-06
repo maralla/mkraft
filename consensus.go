@@ -7,12 +7,6 @@ import (
 
 // CONSENSUS MODULE combines the rpc clients with consensus
 
-// todo: this is a mock, we need to find the membership
-func getMembership() []int {
-	membership := []int{1, 2, 3, 4, 5}
-	return membership
-}
-
 // todo: should use next layer RPC keep calling the unreturned nodes until the context is canceled
 // only send to the channel when majority is reached OR current candidate shall end
 func RequestVoteSend(ctx context.Context, request RequestVoteRequest, resultChannel chan MajorityRequestVoteResp) {
