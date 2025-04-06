@@ -91,58 +91,50 @@ type AsyncRPCFunc[TReq any, TRes RPCResponse] func(ctx context.Context, req TReq
 
 // Using the template to create the specific RPC functions
 func (rc *RetriedClientImpl) RetriedSendAppendEntries(ctx context.Context, req AppendEntriesRequest) chan RPCResWrapper[AppendEntriesResponse] {
-	retrySendFunc := createRetriedRPCFunc[AppendEntriesRequest, AppendEntriesResponse](
-		rc.simpleClient.AsyncSendAppendEntries,
-	)
-	return retrySendFunc(ctx, req)
+	return retriedRPCFunc(rc.simpleClient.AsyncSendAppendEntries, ctx, req)
 }
 
 func (rc *RetriedClientImpl) RetriedSendRequestVote(ctx context.Context, req RequestVoteRequest) chan RPCResWrapper[RequestVoteResponse] {
-	retrySendFunc := createRetriedRPCFunc[RequestVoteRequest, RequestVoteResponse](
-		rc.simpleClient.AsyncSendRequestVote,
-	)
-	return retrySendFunc(ctx, req)
+	return retriedRPCFunc(rc.simpleClient.AsyncSendRequestVote, ctx, req)
 }
 
 // CreateRetriedRPCFunc creates a retry function for AppendEntries or RequestVote RPCs
-func createRetriedRPCFunc[TReq any, TRes RPCResponse](
-	asyncFunc AsyncRPCFunc[TReq, TRes],
-) RetriedRPCFunc[TReq, TRes] {
+func retriedRPCFunc[TReq any, TRes RPCResponse](
+	asyncFunc AsyncRPCFunc[TReq, TRes], ctx context.Context, req TReq,
+) chan RPCResWrapper[TRes] {
 
-	return func(ctx context.Context, req TReq) chan RPCResWrapper[TRes] {
-		wrappedResChan := make(chan RPCResWrapper[TRes])
-		go func() {
-			defer close(wrappedResChan)
+	wrappedResChan := make(chan RPCResWrapper[TRes])
+	go func() {
+		defer close(wrappedResChan)
 
-			retryTicker := time.NewTicker(time.Millisecond * conf.RPC_REUQEST_TIMEOUT_IN_MS)
-			defer retryTicker.Stop()
+		retryTicker := time.NewTicker(time.Millisecond * conf.RPC_REUQEST_TIMEOUT_IN_MS)
+		defer retryTicker.Stop()
 
-			var singleResChan chan RPCResWrapper[TRes]
-			var singleCallCtx context.Context
-			var singleCallCancel context.CancelFunc
-			singleCallCtx, singleCallCancel = context.WithTimeout(ctx, time.Millisecond*(conf.RPC_REUQEST_TIMEOUT_IN_MS-10))
-			singleResChan = asyncFunc(singleCallCtx, req)
+		var singleResChan chan RPCResWrapper[TRes]
+		var singleCallCtx context.Context
+		var singleCallCancel context.CancelFunc
+		singleCallCtx, singleCallCancel = context.WithTimeout(ctx, time.Millisecond*(conf.RPC_REUQEST_TIMEOUT_IN_MS-10))
+		singleResChan = asyncFunc(singleCallCtx, req)
 
-			for {
-				select {
-				case <-ctx.Done():
-					// Parent context canceled or timed out
-					singleCallCancel()
-					wrappedResChan <- RPCResWrapper[TRes]{Err: fmt.Errorf("context done")}
-					return
-				case <-retryTicker.C:
-					// No response within timeout, retry
-					singleCallCancel()
-					singleCallCtx, singleCallCancel = context.WithTimeout(ctx, time.Millisecond*conf.RPC_REUQEST_TIMEOUT_IN_MS)
-					singleResChan = asyncFunc(singleCallCtx, req)
-				case response := <-singleResChan:
-					// Got a response
-					singleCallCancel()
-					wrappedResChan <- response
-					return
-				}
+		for {
+			select {
+			case <-ctx.Done():
+				// Parent context canceled or timed out
+				singleCallCancel()
+				wrappedResChan <- RPCResWrapper[TRes]{Err: fmt.Errorf("context done")}
+				return
+			case <-retryTicker.C:
+				// No response within timeout, retry
+				singleCallCancel()
+				singleCallCtx, singleCallCancel = context.WithTimeout(ctx, time.Millisecond*conf.RPC_REUQEST_TIMEOUT_IN_MS)
+				singleResChan = asyncFunc(singleCallCtx, req)
+			case response := <-singleResChan:
+				// Got a response
+				singleCallCancel()
+				wrappedResChan <- response
+				return
 			}
-		}()
-		return wrappedResChan
-	}
+		}
+	}()
+	return wrappedResChan
 }
