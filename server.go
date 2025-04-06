@@ -252,51 +252,35 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 					)
 				}
 			}
+
 		case <-ticker.C: // last election timeout withno response
 			voteCancel()
 			tryElection()
-		case requestVote := <-node.requestVoteChan: // from another candidate
+
+		case requestVote := <-node.requestVoteChan: // commonRule: handling voteRequest from another candidate
 			req := requestVote.request
 			resChan := requestVote.resChan
-			// from another candidate
-			if req.Term > node.CurrentTerm {
-				voteCancel()
+			resp := node.voting(req)
+			resChan <- resp
+			// this means other candiate has a higher term
+			if resp.VoteGranted {
 				node.State = StateFollower
-				node.CurrentTerm = req.Term
-				node.VotedFor = req.CandidateID
-				resChan <- rpc.RequestVoteResponse{
-					Term:        node.CurrentTerm,
-					VoteGranted: true,
-				}
 				go node.RunAsFollower(ctx)
 				return
-			} else {
-				resChan <- rpc.RequestVoteResponse{
-					Term:        node.CurrentTerm,
-					VoteGranted: false,
-				}
 			}
-		case request := <-node.appendEntryChan: // from a leader which can be stale or new
+		case request := <-node.appendEntryChan: // commonRule: handling appendEntry from a leader which can be stale or new
 			req := request.request
 			resChan := request.resChan
-			voteCancel() // cancel previous trial of election if not finished
-			if req.Term >= node.CurrentTerm {
-				// some one has become a leader
-				voteCancel()
+
+			resp := node.appendEntries(req)
+			resChan <- resp
+
+			if resp.Success {
+				// this means there is a leader there
 				node.State = StateFollower
 				node.CurrentTerm = req.Term
-				resChan <- rpc.AppendEntriesResponse{
-					Term:    node.CurrentTerm,
-					Success: true,
-				}
 				go node.RunAsFollower(ctx)
 				return
-			} else {
-				// some old leader comes back to life
-				resChan <- rpc.AppendEntriesResponse{
-					Term:    node.CurrentTerm,
-					Success: false,
-				}
 			}
 		}
 	}
@@ -384,65 +368,4 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 			go AppendEntriesSend(ctx, appendEntryReq, resChan, errChan)
 		}
 	}
-}
-
-// maki: jthis method should be a part of the consensus algorithm
-// todo: right now this method doesn't check the current state of the node
-func (node *Node) voting(req rpc.RequestVoteRequest) rpc.RequestVoteResponse {
-	var response rpc.RequestVoteResponse
-	if req.Term > node.CurrentTerm {
-		node.VotedFor = req.CandidateID
-		node.CurrentTerm = req.Term
-		response = rpc.RequestVoteResponse{
-			Term:        node.CurrentTerm,
-			VoteGranted: true,
-		}
-	} else if req.Term < node.CurrentTerm {
-		response = rpc.RequestVoteResponse{
-			Term:        node.CurrentTerm,
-			VoteGranted: false,
-		}
-	} else {
-		if node.VotedFor == -1 || node.VotedFor == req.CandidateID {
-			node.VotedFor = req.CandidateID
-			response = rpc.RequestVoteResponse{
-				Term:        node.CurrentTerm,
-				VoteGranted: true,
-			}
-		} else {
-			response = rpc.RequestVoteResponse{
-				Term:        node.CurrentTerm,
-				VoteGranted: false,
-			}
-		}
-	}
-	return response
-}
-
-// maki: jthis method should be a part of the consensus algorithm
-// todo: right now this method doesn't check the current state of the node
-func (node *Node) appendEntries(req rpc.AppendEntriesRequest) rpc.AppendEntriesResponse {
-	var response rpc.AppendEntriesResponse
-	if req.Term > node.CurrentTerm {
-		node.CurrentTerm = req.Term
-		node.VotedFor = req.LeaderID
-		node.State = StateFollower
-		// todo: tell the leader/candidate to change the state to follower
-		response = rpc.AppendEntriesResponse{
-			Term:    node.CurrentTerm,
-			Success: true,
-		}
-	} else if req.Term < node.CurrentTerm {
-		response = rpc.AppendEntriesResponse{
-			Term:    node.CurrentTerm,
-			Success: false,
-		}
-	} else {
-		// should accecpet it directly?
-		response = rpc.AppendEntriesResponse{
-			Term:    node.CurrentTerm,
-			Success: true,
-		}
-	}
-	return response
 }
