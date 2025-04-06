@@ -56,18 +56,31 @@ type ClientCommandInternal struct {
 }
 
 type Node struct {
-	sem         *semaphore.Weighted
-	LeaderID    int
-	NodeID      int // maki: nodeID uuid or number or something else?
-	CurrentTerm int
-	State       NodeState
+	sem *semaphore.Weighted
 
-	VotedFor    int // candidateID
-	VoteGranted bool
+	LeaderID int
+	NodeID   int // maki: nodeID uuid or number or something else?
+	State    NodeState
 
 	clientCommandChan chan ClientCommandInternal
 	requestVoteChan   chan RequestVoteInternal
 	appendEntryChan   chan AppendEntriesInternal
+
+	// Persistent state on all servers
+	// todo: how/why to make it persistent? (embedded db?)
+	CurrentTerm int
+	VotedFor    int // candidateID
+	// LogEntries
+
+	// Volatile state on all servers
+	// todo: in the logging part
+	commitIndex int
+	lastApplied int
+
+	// Volatile state on leaders only
+	// todo: in the logging part
+	nextIndex  []int
+	matchIndex []int
 }
 
 func (node *Node) VoteRequest(req RequestVoteInternal) {
@@ -85,7 +98,6 @@ func NewNode(nodeID int) *Node {
 		sem:               semaphore.NewWeighted(1),
 		CurrentTerm:       0,
 		VotedFor:          -1,
-		VoteGranted:       false,
 		clientCommandChan: make(chan ClientCommandInternal),
 		requestVoteChan:   make(chan RequestVoteInternal),
 		appendEntryChan:   make(chan AppendEntriesInternal),
@@ -104,8 +116,14 @@ func (node *Node) Stop() {
 	close(node.clientCommandChan)
 }
 
-// # todo: should this be replaced with ticker
 /*
+PAPER (quote):
+Shared Rule: if any RPC request or response is received from a server with a higher term,
+convert to follower
+How the Shared Rule works for Followers:
+(2) AppendEntries RPC from a server with a higher term
+(3) requestVote RPC from a server with a higher term
+
 PAPER quote: RULEs for Servers
 Respond to RPCs from candidates and leaders
 If election timeout elapses without receiving AppendEntries RPC from current leader
@@ -126,7 +144,6 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 
 	for {
 		select {
-
 		case <-ctx.Done():
 			sugarLogger.Warn("context done")
 			return
@@ -139,6 +156,7 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 		case requestVoteInternal := <-node.requestVoteChan:
 			electionTicker.Stop()
 
+			// for the follower, the node state has no reason to change because of the request
 			req := requestVoteInternal.request
 			response := node.voting(req)
 			requestVoteInternal.resChan <- response
@@ -146,18 +164,28 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 			electionTicker.Reset(util.GetRandomElectionTimeout())
 
 		case appendEntriesInternal := <-node.appendEntryChan:
-			// todo: the logic of the append entry is not implemented yet
+			electionTicker.Stop()
+
+			// for the follower, the node state has no reason to change because of the request
 			req := appendEntriesInternal.request
 			resChan := appendEntriesInternal.resChan
+			resChan <- node.appendEntries(req)
 
 			electionTicker.Reset(util.GetRandomElectionTimeout())
-
 		}
 	}
 }
 
 /*
-PAPER(5.2) quote:
+PAPER (quote):
+Shared Rule: if any RPC request or response is received from a server with a higher term,
+convert to follower
+How the Shared Rule works for Candidates:
+(1) response of RequestVote RPC from a server with a higher term
+(2) AppendEntries RPC from a server with a higher term
+(3) requestVote RPC from a server with a higher term
+
+Specifical Rule for Candidates:
 On conversion to a candidate, start election:
 (1) increment currentTerm
 (2) vote for self
@@ -176,73 +204,105 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 	sugarLogger.Info("acquired semaphore in CANDIDATE state")
 	defer node.sem.Release(1)
 
-	changeStateChan := make(chan MajorityRequestVoteResp)
+	var consensusChan chan MajorityRequestVoteResp
 	var voteCancel context.CancelFunc
+	defer voteCancel()
 	var ctxTimeout context.Context
 
-	// the first trial of election
-	node.CurrentTerm++
-	node.VotedFor = node.NodeID
-	node.VoteGranted = false
-	req := RequestVoteRequest{
-		Term:        node.CurrentTerm,
-		CandidateID: node.NodeID,
+	// leverage closure
+	tryElection := func() {
+		consensusChan = make(chan MajorityRequestVoteResp)
+		node.CurrentTerm++
+		node.VotedFor = node.NodeID
+		req := rpc.RequestVoteRequest{
+			Term:        node.CurrentTerm,
+			CandidateID: node.NodeID,
+		}
+		ctxTimeout, voteCancel = context.WithTimeout(
+			ctx, time.Duration(util.GetRandomElectionTimeout())*time.Millisecond)
+		go RequestVoteSend(ctxTimeout, req, consensusChan)
 	}
-	ctxTimeout, voteCancel = context.WithTimeout(
-		ctx, time.Duration(conf.REUQEST_TIMEOUT_IN_MS)*time.Millisecond)
-	go RequestVoteSend(ctxTimeout, req, changeStateChan)
 
+	// the first trial of election
+	tryElection()
+
+	ticker := time.NewTicker(util.GetRandomElectionTimeout())
 	for {
-		timer := time.NewTimer(conf.GetRandomElectionTimeout())
 		select {
-		case <-timer.C:
-			voteCancel()                                          // cancel previous trial of election if not finished
-			changeStateChan := make(chan MajorityRequestVoteResp) // reset the channel
-			node.CurrentTerm++
-			node.VotedFor = node.NodeID
-			node.VoteGranted = false
-			req := RequestVoteRequest{
-				Term:        node.CurrentTerm,
-				CandidateID: node.NodeID,
-			}
-			ctxTimeout, voteCancel = context.WithTimeout(
-				ctx, time.Duration(conf.REUQEST_TIMEOUT_IN_MS)*time.Millisecond)
-			go RequestVoteSend(ctxTimeout, req, changeStateChan)
-		case request := <-node.appendEntryChan:
-			voteCancel() // cancel previous trial of election if not finished
-			if request.Term >= node.CurrentTerm {
-				node.State = StateFollower
-				node.CurrentTerm = request.Term
-				timer.Stop()
-				go node.RunAsFollower(ctx)
-				return
-			} else {
-				// todo: check the error handling strategy is correct or not
-				// Should be rejected directly by the server handler
-				// Shouldn't reach here
-				panic("node received a heartbeat from a node with a lower term")
-			}
-		case response := <-changeStateChan:
-			voteCancel()
+		case response := <-consensusChan: // some response from last election
+			// I don't think we need to reset the ticker here
+			voteCancel() // cancel the rest
 			if response.VoteGranted {
-				node.VoteGranted = true
-				timer.Stop()
 				node.State = StateLeader
 				go node.RunAsLeader(ctx)
 				return
 			} else {
+				if response.Term > node.CurrentTerm {
+					// some one has become a leader
+					voteCancel()
+					node.CurrentTerm = response.Term
+					node.VotedFor = -1
+					node.State = StateFollower
+					go node.RunAsFollower(ctx)
+					return
+				} else {
+					sugarLogger.Infof(
+						"not enough votes, re-elect again, current term: %d, candidateID: %d",
+						node.CurrentTerm, node.NodeID,
+					)
+				}
+			}
+		case <-ticker.C: // last election timeout withno response
+			voteCancel()
+			tryElection()
+		case requestVote := <-node.requestVoteChan: // from another candidate
+			req := requestVote.request
+			resChan := requestVote.resChan
+			// from another candidate
+			if req.Term > node.CurrentTerm {
+				voteCancel()
 				node.State = StateFollower
-				node.CurrentTerm = response.Term
-				timer.Stop()
+				node.CurrentTerm = req.Term
+				node.VotedFor = req.CandidateID
+				resChan <- rpc.RequestVoteResponse{
+					Term:        node.CurrentTerm,
+					VoteGranted: true,
+				}
 				go node.RunAsFollower(ctx)
 				return
+			} else {
+				resChan <- rpc.RequestVoteResponse{
+					Term:        node.CurrentTerm,
+					VoteGranted: false,
+				}
+			}
+		case request := <-node.appendEntryChan: // from a leader which can be stale or new
+			req := request.request
+			resChan := request.resChan
+			voteCancel() // cancel previous trial of election if not finished
+			if req.Term >= node.CurrentTerm {
+				// some one has become a leader
+				voteCancel()
+				node.State = StateFollower
+				node.CurrentTerm = req.Term
+				resChan <- rpc.AppendEntriesResponse{
+					Term:    node.CurrentTerm,
+					Success: true,
+				}
+				go node.RunAsFollower(ctx)
+				return
+			} else {
+				// some old leader comes back to life
+				resChan <- rpc.AppendEntriesResponse{
+					Term:    node.CurrentTerm,
+					Success: false,
+				}
 			}
 		}
 	}
 }
 
 /*
-WIP: maki - this is not implemented yet
 PAPER quote: RULEs for Servers
 (1) Upon election: send initial empty AppendEntries (heartbeat) RPCs to each reserver; repeat during idle periods to prevent election timeouts; (5.2)
 (2) If command received from client: append entry to local log, respond after entry applied to state machine; (5.3)
