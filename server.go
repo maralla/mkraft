@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/maki3cat/mkraft/rpc"
+	"github.com/maki3cat/mkraft/util"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -38,8 +39,24 @@ func (state NodeState) String() string {
 	return "Unknown State"
 }
 
+// the data structure to req/respond to the raft-server
+type RequestVoteInternal struct {
+	request rpc.RequestVoteRequest
+	resChan chan rpc.RequestVoteResponse
+}
+
+type AppendEntriesInternal struct {
+	request rpc.AppendEntriesRequest
+	resChan chan rpc.AppendEntriesResponse
+}
+
+type ClientCommandInternal struct {
+	request []byte
+	resChan chan []byte
+}
+
 type Node struct {
-	sem         semaphore.Weighted
+	sem         *semaphore.Weighted
 	LeaderID    int
 	NodeID      int // maki: nodeID uuid or number or something else?
 	CurrentTerm int
@@ -48,39 +65,35 @@ type Node struct {
 	VotedFor    int // candidateID
 	VoteGranted bool
 
-	appendEntryChan   chan rpc.AppendEntriesRequest // for follower: can come from leader's append rpc or candidate's vote rpc
-	clientCommandChan chan string                   // todo: to be implemented
-	// todo: does leader and candidate need to answer this channel
-	requestVoteChan chan rpc.RequestVoteInternal
+	clientCommandChan chan ClientCommandInternal
+	requestVoteChan   chan RequestVoteInternal
+	appendEntryChan   chan AppendEntriesInternal
 }
 
-// todo: this channel doesn't contain error
-// todo: the paper doesn't mention it but the voting shalle be handled by all candidates/follower/leader
-func (node *Node) VoteRequest(req rpc.RequestVoteRequest) chan RequestVoteResponse {
-	dto := rpc.RequestVoteInternal{
-		request: req,
-		resChan: make(chan RequestVoteResponse),
-	}
-	node.requestVoteChan <- dto
-	return dto.resChan
+func (node *Node) VoteRequest(req RequestVoteInternal) {
+	node.requestVoteChan <- req
 }
 
-func (node *Node) AppendEntryRequest(req AppendEntriesRequest) chan AppendEntriesResponse {
-	// todo: this is not implemented yet
-	return nil
+func (node *Node) AppendEntryRequest(req AppendEntriesInternal) {
+	node.appendEntryChan <- req
 }
 
 func NewNode(nodeID int) *Node {
 	return &Node{
 		State:             StateFollower, // servers start up as followers
-		appendEntryChan:   make(chan AppendEntriesRequest),
-		clientCommandChan: make(chan string),
 		NodeID:            nodeID,
+		sem:               semaphore.NewWeighted(1),
+		CurrentTerm:       0,
+		VotedFor:          -1,
+		VoteGranted:       false,
+		clientCommandChan: make(chan ClientCommandInternal),
+		requestVoteChan:   make(chan RequestVoteInternal),
+		appendEntryChan:   make(chan AppendEntriesInternal),
+		LeaderID:          -1,
 	}
 }
 
 // servers start up as followers
-// TODO: is should there be a daemon pattern so that the main thread doesn't exit
 func (node *Node) Start(ctx context.Context) {
 	go node.RunAsFollower(ctx)
 }
@@ -107,18 +120,21 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 	node.sem.Acquire(ctx, 1)
 	sugarLogger.Info("acquired semaphore in FOLLOWER state")
 	defer node.sem.Release(1)
+	timerForElection := time.NewTicker(util.GetRandomElectionTimeout())
 
 	for {
-		timerForElection := time.NewTimer(conf.GetRandomElectionTimeout())
 		select {
+
 		case <-ctx.Done():
-			sugarLogger.Info("context done")
+			sugarLogger.Warn("context done")
 			timerForElection.Stop()
 			return
+
 		case <-timerForElection.C:
 			node.State = StateCandidate
 			go node.RunAsCandidate(ctx)
 			return
+
 		case requestVoteInternal := <-node.requestVoteChan:
 			timerForElection.Stop()
 			req := requestVoteInternal.request
@@ -126,10 +142,14 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 			// todo: grant vote has more complicated logic with log
 			response = node.voting(req, response)
 			requestVoteInternal.resChan <- response
+			timerForElection.Reset(util.GetRandomElectionTimeout())
+
 		case <-node.appendEntryChan:
+			// todo: the logic of the append entry is not implemented yet
 			timerForElection.Stop()
-			// todo: shall handle and return the append entry response
+			timerForElection.Reset(util.GetRandomElectionTimeout())
 		}
+
 	}
 }
 

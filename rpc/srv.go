@@ -1,5 +1,6 @@
 package rpc
 
+// THE RPC SERVER, which is different from the RAFT SERVER
 // server interface
 // shall be implemented by a grpc server and try to make an abstract interface
 type RPCServerIface interface {
