@@ -226,7 +226,7 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 		}
 		ctxTimeout, voteCancel = context.WithTimeout(
 			ctx, time.Duration(util.GetRandomElectionTimeout())*time.Millisecond)
-		go RequestVoteSend(ctxTimeout, req, consensusChan)
+		go RequestVoteSendForConsensus(ctxTimeout, req, consensusChan)
 	}
 
 	// the first trial of election
@@ -400,7 +400,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	callAppendEntries := func(req rpc.AppendEntriesRequest) {
 		ctxTimeout, cancel := context.WithTimeout(ctx, util.Config.RPCRequestTimeout)
 		defer cancel()
-		AppendEntriesSend(ctxTimeout, req, appendEntriesRespChan)
+		AppendEntriesSendForConsensus(ctxTimeout, req, appendEntriesRespChan)
 	}
 
 	for {

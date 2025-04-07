@@ -27,7 +27,7 @@ type MajorityRequestVoteResp struct {
 
 // CONSENSUS MODULE
 // todo: currently the result channel only retruns when there is win/fail for sure
-func RequestVoteSend(ctx context.Context, request rpc.RequestVoteRequest, resultChannel chan MajorityRequestVoteResp) {
+func RequestVoteSendForConsensus(ctx context.Context, request rpc.RequestVoteRequest, resultChannel chan MajorityRequestVoteResp) {
 
 	members := getClientOfAllMembers()
 	resChan := make(chan rpc.RPCResWrapper[rpc.RequestVoteResponse], len(members)) // buffered with len(members) to prevent goroutine leak
@@ -102,7 +102,7 @@ func RequestVoteSend(ctx context.Context, request rpc.RequestVoteRequest, result
 
 // todo: don't need to retry the entire election
 // need revamped
-func AppendEntriesSend(
+func AppendEntriesSendForConsensus(
 	ctx context.Context, request rpc.AppendEntriesRequest, respChan chan MajorityAppendEntriesResp) {
 	members := getClientOfAllMembers()
 	resChan := make(chan rpc.RPCResWrapper[rpc.AppendEntriesResponse], len(members)) // buffered with len(members) to prevent goroutine leak
