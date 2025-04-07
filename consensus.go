@@ -34,7 +34,7 @@ func RequestVoteSend(ctx context.Context, request rpc.RequestVoteRequest, result
 
 	// FAN-OUT
 	for _, member := range members {
-		go member.RetriedSendRequestVote(ctx, request, resChan)
+		go member.SendRequestVoteWithRetry(ctx, request, resChan)
 	}
 
 	// FAN-IN WITH STOPPING SHORT
