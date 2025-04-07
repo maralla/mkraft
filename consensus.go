@@ -94,14 +94,25 @@ func RequestVoteSend(ctx context.Context, request rpc.RequestVoteRequest, result
 	}
 }
 
+// todo: don't need to retry the entire election
+// need revamped
 func AppendEntriesSend(
 	ctx context.Context, request rpc.AppendEntriesRequest, respChan chan MajorityAppendEntriesResp) {
 	members := getClientOfAllMembers()
 	resChan := make(chan rpc.RPCResWrapper[rpc.AppendEntriesResponse], len(members)) // buffered with len(members) to prevent goroutine leak
+
 	// FAN-OUT
-	for _, member := range members {
+	// todo: shall be a pattern
+	rpcSingleCall := func(member rpc.RetriedClientIface) {
+		ctx, cancel := context.WithTimeout(ctx, util.Config.RPCRequestTimeout)
+		defer cancel()
 		go member.RetriedSendAppendEntries(ctx, request, resChan)
 	}
+
+	for _, member := range members {
+		rpcSingleCall(member)
+	}
+
 	// FAN-IN WITH STOPPING SHORT
 	total := len(members)
 	majority := len(members)/2 + 1

@@ -395,6 +395,14 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	heartbeatDuration := time.Duration(util.Config.LeaderHeartbeatPeriodInMs) * time.Millisecond
 	tickerForHeartbeat := time.NewTicker(heartbeatDuration)
 	defer tickerForHeartbeat.Stop()
+
+	// this timeout is one consensus timeout, the internal should be one rpc request timeout
+	callAppendEntries := func(req rpc.AppendEntriesRequest) {
+		ctxTimeout, cancel := context.WithTimeout(ctx, heartbeatDuration)
+		defer cancel()
+		AppendEntriesSend(ctxTimeout, req, appendEntriesRespChan)
+	}
+
 	for {
 		select {
 
@@ -420,9 +428,8 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 				Term:     node.CurrentTerm,
 				LeaderID: node.NodeID,
 			}
-			// empty log entries as heartbeat
-			ctxTimeout, _ := context.WithTimeout(ctx, heartbeatDuration)
-			go AppendEntriesSend(ctxTimeout, heartbeatReq, appendEntriesRespChan)
+			// this timeout is one consensus timeout, the internal should be one rpc request timeout
+			go callAppendEntries(heartbeatReq)
 
 		case clientCmdReq := <-node.clientCommandChan:
 			// todo: should add rate limit the client command
@@ -440,8 +447,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 					},
 				},
 			}
-			ctxTimeout, _ := context.WithTimeout(ctx, heartbeatDuration)
-			go AppendEntriesSend(ctxTimeout, appendEntryReq, appendEntriesRespChan)
+			go callAppendEntries(appendEntryReq)
 			tickerForHeartbeat.Reset(heartbeatDuration)
 
 		case requestVote := <-node.requestVoteChan: // commonRule: same with candidate
