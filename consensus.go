@@ -33,8 +33,14 @@ func RequestVoteSend(ctx context.Context, request rpc.RequestVoteRequest, result
 	resChan := make(chan rpc.RPCResWrapper[rpc.RequestVoteResponse], len(members)) // buffered with len(members) to prevent goroutine leak
 
 	// FAN-OUT
+	rpcCall := func(member rpc.InternalClientIface) {
+		// the retry can last as long as the election timeout
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, util.Config.ElectionTimeout)
+		defer cancel()
+		member.SendRequestVoteWithRetry(ctxWithTimeout, request, resChan)
+	}
 	for _, member := range members {
-		go member.SendRequestVoteWithRetry(ctx, request, resChan)
+		go rpcCall(member)
 	}
 
 	// FAN-IN WITH STOPPING SHORT
