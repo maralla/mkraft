@@ -3,7 +3,11 @@
 
 https://raft.github.io/
 
-## Planning and Progress
+## TODO List
+- [ ] current rpc layers are unncessarily complicated, design what are really needed for appendEntries/heartbeat in consensus, the two are different (record designs)
+- [ ] add network of RPC and static Membership (record designs)
+
+## Modular Progress Checks
 
 ### Module0: Engineering Basics
 - [ ] rpc-client framework

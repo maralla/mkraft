@@ -103,6 +103,7 @@ func AppendEntriesSend(
 
 	// FAN-OUT
 	// todo: shall be a pattern
+	// todo: should be a retried timeout
 	rpcSingleCall := func(member rpc.RetriedClientIface) {
 		ctx, cancel := context.WithTimeout(ctx, util.Config.RPCRequestTimeout)
 		defer cancel()
