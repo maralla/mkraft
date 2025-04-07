@@ -52,7 +52,7 @@ type AppendEntriesInternal struct {
 
 type ClientCommandInternal struct {
 	request []byte
-	resChan chan []byte
+	// resChan chan []byte
 }
 
 type TermRank int
@@ -294,24 +294,30 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 
 /*
 PAPER (quote):
-Shared Rule: if any RPC request or response is received from a server with a higher term,
+COMMON RULE
+If any RPC request or response is received from a server with a higher term,
 convert to follower
-How the Shared Rule works for Leaders:
+MAKI comprehension-How the Shared Rule works for Leaders with 3 scenarios:
 (1) response of AppendEntries RPC sent by itself (OK)
 (2) receive request of AppendEntries RPC from a server with a higher term (OK)
-(3) receive request of requestVote RPC from a server with a higher term (OK)
+(3) receive request of RequestVote RPC from a server with a higher term (OK)
 
-Specifical Rule for Leaders:
-(1) Upon election: send initial empty AppendEntries (heartbeat) RPCs to each reserver;
+SPECIFICAL RULE FOR LEADERS:
+(1) Upon election:
 
-	repeat during idle periods to prevent election timeouts; (5.2) (OK)
+	send initial empty AppendEntries (heartbeat) RPCs to each reserver; repeat during idle periods to prevent election timeouts; (5.2) (OK)
 
-(2) If command received from client: append entry to local log, respond after entry applied to state machine; (5.3) (OK)
+(2) If command received from client:
+
+	append entry to local log, respond after entry applied to state machine; (5.3) (OK)
+
+	--todo: not implemented yet
+
 (3) If last log index ≥ nextIndex for a follower: send AppendEntries RPC with log entries starting at nextIndex for the follower;
 If successful: update nextIndex and matchIndex for follower
 If AppendEntries fails because of log inconsistency: decrement nextIndex and retry
 (4) If there exists and N such that N > committedIndex, a majority of matchIndex[i] ≥ N, ... (5.3/5.4)
-maki: this paper doesn't mention how a stale leader catches up and becomes a follower
+todo: this paper doesn't mention how a stale leader catches up and becomes a follower
 */
 func (node *Node) RunAsLeader(ctx context.Context) {
 
@@ -327,8 +333,6 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	node.clientCommandChan = make(chan ClientCommandInternal, util.Config.ClientCommandBufferSize)
 	defer close(node.clientCommandChan) // todo: not sure if this is the best way to cleanup
 
-	leaderRecedeToFollowerChan := make(chan TermRank) // the term
-
 	// THE COMPLEXITY OF THE LEADER IS MUCH HIGHER THAN THE CANDIDATE
 	// unlike the candidate which issues one request at a time
 	// the leader is more complex
@@ -341,9 +345,12 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	// at the same time, it shall handle the voting requests from other candidates
 
 	// RESPONSE READER FOR THE APPENDENTRIES RESPONSES
+	leaderRecedeToFollowerChan := make(chan TermRank) // the term
+
 	respReaderCtx, respCancel := context.WithCancel(ctx)
 	defer respCancel()
 	appendEntriesRespChan := make(chan MajorityAppendEntriesResp, util.Config.LeaderBufferSize)
+	defer close(appendEntriesRespChan) // todo: gorouting writing to it may panic the entire program
 
 	go func(ctx context.Context) {
 		for {
@@ -357,7 +364,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 
 			case response := <-appendEntriesRespChan:
 
-				// batching, batching takes all in buffer now, we'll see if we need a batch-size config
+				// BATCHING, BATCHING takes all in buffer now, we'll see if we need a batch-size config
 				remainingSize := len(appendEntriesRespChan)
 				responseBatch := make([]MajorityAppendEntriesResp, remainingSize+1)
 				responseBatch[0] = response
@@ -414,10 +421,13 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 				LeaderID: node.NodeID,
 			}
 			// empty log entries as heartbeat
-			go AppendEntriesSend(ctx, heartbeatReq, appendEntriesRespChan)
+			ctxTimeout, _ := context.WithTimeout(ctx, heartbeatDuration)
+			go AppendEntriesSend(ctxTimeout, heartbeatReq, appendEntriesRespChan)
 
 		case clientCmdReq := <-node.clientCommandChan:
+			// todo: should add rate limit the client command
 			// todo: add batching to appendEntries when we do logging
+			// todo: we don't handle single client command
 			tickerForHeartbeat.Stop()
 			appendEntryReq := rpc.AppendEntriesRequest{
 				Term:     node.CurrentTerm,
@@ -430,7 +440,8 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 					},
 				},
 			}
-			go AppendEntriesSend(ctx, appendEntryReq, appendEntriesRespChan)
+			ctxTimeout, _ := context.WithTimeout(ctx, heartbeatDuration)
+			go AppendEntriesSend(ctxTimeout, appendEntryReq, appendEntriesRespChan)
 			tickerForHeartbeat.Reset(heartbeatDuration)
 
 		case requestVote := <-node.requestVoteChan: // commonRule: same with candidate
