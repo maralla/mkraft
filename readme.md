@@ -1,6 +1,8 @@
 
 ## Paper and Learning Web
 
+<img src="pic/logo2.jpg" alt="My Image" align="right" width="350">
+
 https://raft.github.io/
 
 ## TODO List
