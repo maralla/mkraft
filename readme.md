@@ -4,8 +4,11 @@
 https://raft.github.io/
 
 ## TODO List
+### Week April 7-12 2025
 - [x] current rpc layers are unncessarily complicated, design what are really needed for appendEntries/heartbeat in consensus, the two are different (record designs)
-- [ ] add network of RPC and static Membership (record designs)
+- [ ] add network of RPC (server and client)
+- [ ] static membership
+- [ ] read go blogs and concurrency pattern -> refine and summarize current patterns to gogymnastics
 
 ## Modular Progress Checks
 
