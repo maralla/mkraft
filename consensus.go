@@ -102,24 +102,17 @@ func AppendEntriesSend(
 	resChan := make(chan rpc.RPCResWrapper[rpc.AppendEntriesResponse], len(members)) // buffered with len(members) to prevent goroutine leak
 
 	// FAN-OUT
-	// todo: shall be a pattern
-	// todo: should be a retried timeout
-	rpcSingleCall := func(member rpc.RetriedClientIface) {
-		ctx, cancel := context.WithTimeout(ctx, util.Config.RPCRequestTimeout)
-		defer cancel()
-		go member.RetriedSendAppendEntries(ctx, request, resChan)
-	}
-
 	for _, member := range members {
-		rpcSingleCall(member)
+		go member.SendAppendEntries(ctx, request, resChan)
 	}
 
 	// FAN-IN WITH STOPPING SHORT
 	total := len(members)
-	majority := len(members)/2 + 1
+	responseNeeded := len(members)/2 + 1 - 1 // -1 because the leader doesn't need to send to itself
 	successAccumulated := 0
-	successFailed := 0
-	for i := 0; i < len(members); i++ {
+	failAccumulated := 0
+
+	for range members {
 		select {
 		case res := <-resChan:
 			if err := res.Err; err != nil {
@@ -138,7 +131,7 @@ func AppendEntriesSend(
 				if resp.Term == request.Term {
 					if resp.Success {
 						successAccumulated++
-						if successAccumulated >= majority {
+						if successAccumulated >= responseNeeded {
 							respChan <- MajorityAppendEntriesResp{
 								Term:    request.Term,
 								Success: true,
@@ -146,8 +139,8 @@ func AppendEntriesSend(
 							return
 						}
 					} else {
-						successFailed++
-						if successFailed > total-majority {
+						failAccumulated++
+						if failAccumulated > total-responseNeeded {
 							sugarLogger.Error("invairant failed, one same term has different leader?")
 							panic("this should not happen, the consensus algorithm is not implmented correctly")
 						}

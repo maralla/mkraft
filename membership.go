@@ -9,11 +9,11 @@ func getMembership() []int {
 	return membership
 }
 
-func getClientOfAllMembers() []rpc.RetriedClientIface {
+func getClientOfAllMembers() []rpc.InternalClientIface {
 	members := getMembership()
-	clients := make([]rpc.RetriedClientIface, len(members))
+	clients := make([]rpc.InternalClientIface, len(members))
 	for i, _ := range members {
-		clients[i] = rpc.NewRetriedClient(rpc.NewRPCClient())
+		clients[i] = rpc.NewInternalClient(rpc.NewRPCClient())
 	}
 	return clients
 }

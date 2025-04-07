@@ -398,7 +398,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 
 	// this timeout is one consensus timeout, the internal should be one rpc request timeout
 	callAppendEntries := func(req rpc.AppendEntriesRequest) {
-		ctxTimeout, cancel := context.WithTimeout(ctx, heartbeatDuration)
+		ctxTimeout, cancel := context.WithTimeout(ctx, util.Config.RPCRequestTimeout)
 		defer cancel()
 		AppendEntriesSend(ctxTimeout, req, appendEntriesRespChan)
 	}

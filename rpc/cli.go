@@ -51,14 +51,13 @@ func (mock *MockSimpleRPCClientImpl) SyncSendAppendEntries(ctx context.Context, 
 }
 
 // the real RPC wrapper used directly for the server
-type RetriedClientIface interface {
-	RetriedSendAppendEntries(ctx context.Context, req AppendEntriesRequest, wrappedResChan chan RPCResWrapper[AppendEntriesResponse])
+type InternalClientIface interface {
 	RetriedSendRequestVote(ctx context.Context, req RequestVoteRequest, wrappedResChan chan RPCResWrapper[RequestVoteResponse])
 	AsyncSendRequestVote(ctx context.Context, req RequestVoteRequest) chan RPCResWrapper[RequestVoteResponse]
-	AsyncSendAppendEntries(ctx context.Context, req AppendEntriesRequest) chan RPCResWrapper[AppendEntriesResponse]
+	SendAppendEntries(ctx context.Context, req AppendEntriesRequest, resChan chan RPCResWrapper[AppendEntriesResponse])
 }
 
-func NewRetriedClient(simpleClient RPCClientIface) RetriedClientIface {
+func NewInternalClient(simpleClient RPCClientIface) InternalClientIface {
 	return &RetriedClientImpl{
 		simpleClient: simpleClient,
 	}
@@ -70,11 +69,6 @@ type RetriedClientImpl struct {
 
 type RetriedRPCFunc[TReq any, TRes RPCResponse] func(ctx context.Context, req TReq) chan RPCResWrapper[TRes]
 type AsyncRPCFunc[TReq any, TRes RPCResponse] func(ctx context.Context, req TReq) chan RPCResWrapper[TRes]
-
-// Using the template to create the specific RPC functions
-func (rc *RetriedClientImpl) RetriedSendAppendEntries(ctx context.Context, req AppendEntriesRequest, wrappedResChan chan RPCResWrapper[AppendEntriesResponse]) {
-	retriedRPCFunc(rc.AsyncSendAppendEntries, ctx, req, wrappedResChan)
-}
 
 func (rc *RetriedClientImpl) RetriedSendRequestVote(ctx context.Context, req RequestVoteRequest, wrappedResChan chan RPCResWrapper[RequestVoteResponse]) {
 	retriedRPCFunc(rc.AsyncSendRequestVote, ctx, req, wrappedResChan)
@@ -130,15 +124,16 @@ func (rc *RetriedClientImpl) AsyncSendRequestVote(ctx context.Context, req Reque
 	return res
 }
 
-func (rc *RetriedClientImpl) AsyncSendAppendEntries(ctx context.Context, req AppendEntriesRequest) chan RPCResWrapper[AppendEntriesResponse] {
-	res := make(chan RPCResWrapper[AppendEntriesResponse], 1)
-	go func() {
-		response, err := rc.simpleClient.SyncSendAppendEntries(ctx, req)
-		wrapper := RPCResWrapper[AppendEntriesResponse]{
-			Resp: response,
-			Err:  err,
-		}
-		res <- wrapper
-	}()
-	return res
+func (rc *RetriedClientImpl) SendAppendEntries(
+	ctx context.Context, req AppendEntriesRequest, resChan chan RPCResWrapper[AppendEntriesResponse]) {
+	// currently no retries for AppendEntries, if timeout, the err shall be timeout
+	ctx, cancel := context.WithTimeout(ctx, util.Config.RPCRequestTimeout)
+	defer cancel()
+	// the ctx with timeout should be handled by the network in the sync call
+	response, err := rc.simpleClient.SyncSendAppendEntries(ctx, req)
+	wrapper := RPCResWrapper[AppendEntriesResponse]{
+		Resp: response,
+		Err:  err,
+	}
+	resChan <- wrapper
 }
