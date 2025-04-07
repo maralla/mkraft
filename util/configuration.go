@@ -24,6 +24,9 @@ func GetRandomElectionTimeout() time.Duration {
 const HANDLE_CLIENT_COMMAND_BATCH = 10
 const HANDLE_CLIENT_COMMAND_BUFFER = 1000
 
+// leader configuration
+const LEADER_BUFFER_SIZE = 1000
+
 type Configuration struct {
 	RPCRequestTimeout     time.Duration `json:"rpc_request_timeout"`
 	RPCRequestTimeoutInMs int           `json:"rpc_request_timeout_in_ms"`
@@ -33,6 +36,7 @@ type Configuration struct {
 	// Leader
 	LeaderHeartbeatPeriod     time.Duration `json:"leader_heartbeat_period"`
 	LeaderHeartbeatPeriodInMs int           `json:"leader_heartbeat_period_in_ms"`
+	LeaderBufferSize          int           `json:"leader_buffer_size"`
 	// Client
 	ClientCommandBufferSize int `json:"client_command_buffer_size"`
 }
@@ -51,6 +55,7 @@ func init() {
 		LeaderHeartbeatPeriod:     time.Duration(LEADER_HEARTBEAT_PERIOD_IN_MS) * time.Millisecond,
 		LeaderHeartbeatPeriodInMs: LEADER_HEARTBEAT_PERIOD_IN_MS,
 		ClientCommandBufferSize:   HANDLE_CLIENT_COMMAND_BUFFER,
+		LeaderBufferSize:          LEADER_BUFFER_SIZE,
 	}
 	Config = defaultConfig
 }

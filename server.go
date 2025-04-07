@@ -55,6 +55,8 @@ type ClientCommandInternal struct {
 	resChan chan []byte
 }
 
+type TermRank int
+
 // the Raft Server Node
 type Node struct {
 	sem *semaphore.Weighted
@@ -75,13 +77,13 @@ type Node struct {
 
 	// Volatile state on all servers
 	// todo: in the logging part
-	commitIndex int
-	lastApplied int
+	// commitIndex int
+	// lastApplied int
 
 	// Volatile state on leaders only
 	// todo: in the logging part
-	nextIndex  []int
-	matchIndex []int
+	// nextIndex  []int
+	// matchIndex []int
 }
 
 func (node *Node) VoteRequest(req RequestVoteInternal) {
@@ -117,6 +119,7 @@ func (node *Node) Stop() {
 	close(node.clientCommandChan)
 }
 
+// todo, maki: shall check if we need priority of a speicifc channel in our select
 /*
 PAPER (quote):
 Shared Rule: if any RPC request or response is received from a server with a higher term,
@@ -294,13 +297,16 @@ PAPER (quote):
 Shared Rule: if any RPC request or response is received from a server with a higher term,
 convert to follower
 How the Shared Rule works for Leaders:
-(1) response of AppendEntries RPC sent by itself
-(2) receive request of AppendEntries RPC from a server with a higher term
-(3) receive request of requestVote RPC from a server with a higher term
+(1) response of AppendEntries RPC sent by itself (OK)
+(2) receive request of AppendEntries RPC from a server with a higher term (OK)
+(3) receive request of requestVote RPC from a server with a higher term (OK)
 
 Specifical Rule for Leaders:
-(1) Upon election: send initial empty AppendEntries (heartbeat) RPCs to each reserver; repeat during idle periods to prevent election timeouts; (5.2)
-(2) If command received from client: append entry to local log, respond after entry applied to state machine; (5.3)
+(1) Upon election: send initial empty AppendEntries (heartbeat) RPCs to each reserver;
+
+	repeat during idle periods to prevent election timeouts; (5.2) (OK)
+
+(2) If command received from client: append entry to local log, respond after entry applied to state machine; (5.3) (OK)
 (3) If last log index ≥ nextIndex for a follower: send AppendEntries RPC with log entries starting at nextIndex for the follower;
 If successful: update nextIndex and matchIndex for follower
 If AppendEntries fails because of log inconsistency: decrement nextIndex and retry
@@ -318,7 +324,10 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	sugarLogger.Info("acquired semaphore in LEADER state")
 	defer node.sem.Release(1)
 
-	errChan := make(chan error, 1)
+	node.clientCommandChan = make(chan ClientCommandInternal, util.Config.ClientCommandBufferSize)
+	defer close(node.clientCommandChan) // todo: not sure if this is the best way to cleanup
+
+	leaderRecedeToFollowerChan := make(chan TermRank) // the term
 
 	// THE COMPLEXITY OF THE LEADER IS MUCH HIGHER THAN THE CANDIDATE
 	// unlike the candidate which issues one request at a time
@@ -331,66 +340,126 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	// at the same time, it shall send heartbeats to all the followers
 	// at the same time, it shall handle the voting requests from other candidates
 
-	resChan := make(chan MajorityAppendEntriesResp, 1)
-	recedeChan := make(chan int)
-
-	tickerForHeartbeat := time.NewTicker(time.Duration(util.LEADER_HEARTBEAT_PERIOD_IN_MS) * time.Millisecond)
+	// RESPONSE READER FOR THE APPENDENTRIES RESPONSES
+	respReaderCtx, respCancel := context.WithCancel(ctx)
+	defer respCancel()
+	appendEntriesRespChan := make(chan MajorityAppendEntriesResp, util.Config.LeaderBufferSize)
 
 	go func(ctx context.Context) {
 		for {
 			select {
-			case <-ctx.Done():
-				sugarLogger.Info("context done")
-			case response := <-resChan:
-				if response.Term > node.CurrentTerm {
-					recedeChan <- response.Term
-				} else if response.Success {
-					sugarLogger.Info("majority of append entries response received")
-					sugarLogger.Info("handle corresponding client request")
-					// todo: handle the client request
-				} else {
-					sugarLogger.Info("majority of append entries response not received")
-					// todo: handle the client request
-				}
-			case err := <-errChan:
-				sugarLogger.Info("error in sending append entries", err)
-			}
-		}
-	}(ctx)
 
+			case <-ctx.Done():
+				// todo:
+				// what if the responseChan is not empty?
+				sugarLogger.Info("context done")
+				return
+
+			case response := <-appendEntriesRespChan:
+
+				// batching, batching takes all in buffer now, we'll see if we need a batch-size config
+				remainingSize := len(appendEntriesRespChan)
+				responseBatch := make([]MajorityAppendEntriesResp, remainingSize+1)
+				responseBatch[0] = response
+				for i := range remainingSize {
+					responseBatch[i] = <-appendEntriesRespChan
+				}
+
+				highestTerm := node.CurrentTerm
+				for _, resp := range responseBatch {
+					if resp.Term > node.CurrentTerm {
+						highestTerm = max(resp.Term, highestTerm)
+					}
+				}
+				if highestTerm > node.CurrentTerm {
+					sugarLogger.Warn("term is greater than current term")
+					leaderRecedeToFollowerChan <- TermRank(highestTerm)
+					return
+				} else {
+					// calculate the committed index
+					// todo: not impletmented yet
+
+				}
+			}
+
+		}
+	}(respReaderCtx)
+
+	heartbeatDuration := time.Duration(util.Config.LeaderHeartbeatPeriodInMs) * time.Millisecond
+	tickerForHeartbeat := time.NewTicker(heartbeatDuration)
+	defer tickerForHeartbeat.Stop()
 	for {
 		select {
-		case newTerm := <-recedeChan:
+
+		case <-ctx.Done():
+			sugarLogger.Warn("context done, closing up")
+			// todo: do I need to call responseCancel or the cancel just propagates?
+			return
+
+		case newTerm := <-leaderRecedeToFollowerChan:
+			// shall clean up other channels, specially the channel of client request
 			// paper: if a leader receives a heartbeat from a node with a higher term,
 			// it becomes a follower
+
+			// todo: we can make one place for all term and vote changes and add lock if needed
 			node.State = StateFollower
-			node.CurrentTerm = newTerm
-			tickerForHeartbeat.Stop()
+			node.CurrentTerm = int(newTerm)
+			node.VotedFor = -1
 			go node.RunAsFollower(ctx)
 			return
+
 		case <-tickerForHeartbeat.C:
 			heartbeatReq := rpc.AppendEntriesRequest{
 				Term:     node.CurrentTerm,
 				LeaderID: node.NodeID,
 			}
 			// empty log entries as heartbeat
-			go AppendEntriesSend(ctx, heartbeatReq, resChan)
-		case req := <-node.clientCommandChan:
+			go AppendEntriesSend(ctx, heartbeatReq, appendEntriesRespChan)
+
+		case clientCmdReq := <-node.clientCommandChan:
+			// todo: add batching to appendEntries when we do logging
 			tickerForHeartbeat.Stop()
-			// todo: need to get result if the request is successful
-			// possibillty the leader is stale itself
 			appendEntryReq := rpc.AppendEntriesRequest{
 				Term:     node.CurrentTerm,
 				LeaderID: node.NodeID,
 				Entries: []rpc.LogEntry{
 					{
 						Term:  node.CurrentTerm,
-						Index: 0, // todo: dummy log data
-						Data:  req,
+						Index: 0,                            // todo: dummy log data
+						Data:  string(clientCmdReq.request), // todo: dummy
 					},
 				},
 			}
-			go AppendEntriesSend(ctx, appendEntryReq, resChan, errChan)
+			go AppendEntriesSend(ctx, appendEntryReq, appendEntriesRespChan)
+			tickerForHeartbeat.Reset(heartbeatDuration)
+
+		case requestVote := <-node.requestVoteChan: // commonRule: same with candidate
+			req := requestVote.request
+			resChan := requestVote.resChan
+			resp := node.voting(req)
+			resChan <- resp
+			// this means other candiate has a higher term
+			if resp.VoteGranted {
+				node.State = StateFollower
+				go node.RunAsFollower(ctx)
+				return
+			}
+
+		case request := <-node.appendEntryChan: // commonRule: same with candidate
+			req := request.request
+			resChan := request.resChan
+
+			resp := node.appendEntries(req)
+			resChan <- resp
+
+			if resp.Success {
+				// this means there is a leader there
+				node.State = StateFollower
+				node.CurrentTerm = req.Term
+				go node.RunAsFollower(ctx)
+				return
+			}
 		}
 	}
+
 }
