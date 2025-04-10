@@ -53,7 +53,7 @@ func (mock *MockSimpleRPCClientImpl) SyncSendAppendEntries(ctx context.Context, 
 // the real RPC wrapper used directly for the server
 type InternalClientIface interface {
 	SendRequestVote(ctx context.Context, req RequestVoteRequest) chan RPCResWrapper[RequestVoteResponse]
-	SendAppendEntries(ctx context.Context, req AppendEntriesRequest) chan RPCResWrapper[AppendEntriesResponse]
+	SendAppendEntries(ctx context.Context, req AppendEntriesRequest) RPCResWrapper[AppendEntriesResponse]
 }
 
 func NewInternalClient(simpleClient RPCClientIface) InternalClientIface {
@@ -107,16 +107,11 @@ func (rc *InternalClientImpl) SendRequestVote(ctx context.Context, req RequestVo
 
 // the generator pattern
 func (rc *InternalClientImpl) SendAppendEntries(
-	ctx context.Context, req AppendEntriesRequest) chan RPCResWrapper[AppendEntriesResponse] {
-	resChan := make(chan RPCResWrapper[AppendEntriesResponse], 1)
-	// todo: should I add ctx.cancel?
-	go func() {
-		response, err := rc.simpleClient.SyncSendAppendEntries(ctx, req)
-		wrapper := RPCResWrapper[AppendEntriesResponse]{
-			Resp: response,
-			Err:  err,
-		}
-		resChan <- wrapper
-	}()
-	return resChan
+	ctx context.Context, req AppendEntriesRequest) RPCResWrapper[AppendEntriesResponse] {
+	response, err := rc.simpleClient.SyncSendAppendEntries(ctx, req)
+	wrapper := RPCResWrapper[AppendEntriesResponse]{
+		Resp: response,
+		Err:  err,
+	}
+	return wrapper
 }

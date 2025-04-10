@@ -100,22 +100,19 @@ func RequestVoteSendForConsensus(ctx context.Context, request rpc.RequestVoteReq
 	}
 }
 
-// todo: don't need to retry the entire election
-// need revamped
 func AppendEntriesSendForConsensus(
 	ctx context.Context, request rpc.AppendEntriesRequest, respChan chan MajorityAppendEntriesResp) {
 
 	members := getClientOfAllMembers()
-	outChan := make(chan rpc.RPCResWrapper[rpc.AppendEntriesResponse], len(members))
-
-	// maki: one rpc expands to 2*(n-1) goroutines, do we need to care about this?
+	allRespChan := make(chan rpc.RPCResWrapper[rpc.AppendEntriesResponse], len(members))
 	for _, member := range members {
 		// FAN-OUT
-		singleChan := member.SendAppendEntries(ctx, request)
-		// FAN-IN
-		go func(singleChan chan rpc.RPCResWrapper[rpc.AppendEntriesResponse]) {
-			outChan <- <-singleChan
-		}(singleChan)
+		go func() {
+			ctxWithTimeout, cancel := context.WithTimeout(ctx, util.Config.ElectionTimeout)
+			defer cancel()
+			// FAN-IN
+			allRespChan <- member.SendAppendEntries(ctxWithTimeout, request)
+		}()
 	}
 
 	// STOPPING SHORT
@@ -126,7 +123,7 @@ func AppendEntriesSendForConsensus(
 
 	for range members {
 		select {
-		case res := <-outChan:
+		case res := <-allRespChan:
 			if err := res.Err; err != nil {
 				sugarLogger.Error("error in sending append entries to one node", err)
 				continue
