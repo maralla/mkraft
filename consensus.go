@@ -113,9 +113,9 @@ func AppendEntriesSendForConsensus(
 		// FAN-OUT
 		singleChan := member.SendAppendEntries(ctx, request)
 		// FAN-IN
-		go func() {
+		go func(singleChan chan rpc.RPCResWrapper[rpc.AppendEntriesResponse]) {
 			outChan <- <-singleChan
-		}()
+		}(singleChan)
 	}
 
 	// STOPPING SHORT
