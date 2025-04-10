@@ -1,9 +1,12 @@
 
 ## Paper and Learning Web
 
-<img src="pic/logo2.jpg" alt="My Image" align="right" width="350">
+<img src="img/logo2.jpg" alt="My Image" align="right" width="350">
 
 https://raft.github.io/
+
+## External Frameworks/Dependencies
+- gRPC
 
 ## TODO List
 ### Week April 7-12 2025
