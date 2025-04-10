@@ -35,9 +35,10 @@ func RequestVoteSendForConsensus(ctx context.Context, request rpc.RequestVoteReq
 	for _, member := range members {
 		// FAN-OUT
 		go func() {
+			memberHandle := member
 			ctxWithTimeout, cancel := context.WithTimeout(ctx, util.Config.ElectionTimeout)
 			defer cancel()
-			out := member.SendRequestVote(ctxWithTimeout, request)
+			out := memberHandle.SendRequestVote(ctxWithTimeout, request)
 			// FAN-IN
 			resChan <- <-out
 		}()
@@ -106,12 +107,13 @@ func AppendEntriesSendForConsensus(
 	members := getClientOfAllMembers()
 	allRespChan := make(chan rpc.RPCResWrapper[rpc.AppendEntriesResponse], len(members))
 	for _, member := range members {
+		memberHandle := member
 		// FAN-OUT
 		go func() {
 			ctxWithTimeout, cancel := context.WithTimeout(ctx, util.Config.ElectionTimeout)
 			defer cancel()
 			// FAN-IN
-			allRespChan <- member.SendAppendEntries(ctxWithTimeout, request)
+			allRespChan <- memberHandle.SendAppendEntries(ctxWithTimeout, request)
 		}()
 	}
 
