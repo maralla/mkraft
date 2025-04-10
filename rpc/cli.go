@@ -52,8 +52,8 @@ func (mock *MockSimpleRPCClientImpl) SyncSendAppendEntries(ctx context.Context, 
 
 // the real RPC wrapper used directly for the server
 type InternalClientIface interface {
-	SendRequestVoteWithRetry(ctx context.Context, req RequestVoteRequest, wrappedResChan chan RPCResWrapper[RequestVoteResponse])
-	SendAppendEntries(ctx context.Context, req AppendEntriesRequest, resChan chan RPCResWrapper[AppendEntriesResponse])
+	SendRequestVote(ctx context.Context, req RequestVoteRequest) chan RPCResWrapper[RequestVoteResponse]
+	SendAppendEntries(ctx context.Context, req AppendEntriesRequest) chan RPCResWrapper[AppendEntriesResponse]
 }
 
 func NewInternalClient(simpleClient RPCClientIface) InternalClientIface {
@@ -68,49 +68,55 @@ type InternalClientImpl struct {
 
 // should call this with goroutine
 // the parent shall control the timeout of the election
-func (rc *InternalClientImpl) SendRequestVoteWithRetry(ctx context.Context, req RequestVoteRequest, wrappedResChan chan RPCResWrapper[RequestVoteResponse]) {
+func (rc *InternalClientImpl) SendRequestVote(ctx context.Context, req RequestVoteRequest) chan RPCResWrapper[RequestVoteResponse] {
+	out := make(chan RPCResWrapper[RequestVoteResponse], 1)
+	func() {
+		retryTicker := time.NewTicker(time.Millisecond * util.RPC_REUQEST_TIMEOUT_IN_MS)
+		defer retryTicker.Stop()
 
-	retryTicker := time.NewTicker(time.Millisecond * util.RPC_REUQEST_TIMEOUT_IN_MS)
-	defer retryTicker.Stop()
+		var singleResChan chan RPCResWrapper[RequestVoteResponse]
+		callRPC := func() {
+			singleCallCtx, singleCallCancel := context.WithTimeout(ctx, time.Millisecond*(util.RPC_REUQEST_TIMEOUT_IN_MS-10))
+			defer singleCallCancel()
+			// todo: make sure the synchronous call will consume the ctx timeout in someway
+			response, err := rc.simpleClient.SyncSendRequestVote(singleCallCtx, req)
+			wrapper := RPCResWrapper[RequestVoteResponse]{
+				Resp: response,
+				Err:  err,
+			}
+			singleResChan <- wrapper
+		}
+		go callRPC()
 
-	var singleResChan chan RPCResWrapper[RequestVoteResponse]
-	callRPC := func() {
-		singleCallCtx, singleCallCancel := context.WithTimeout(ctx, time.Millisecond*(util.RPC_REUQEST_TIMEOUT_IN_MS-10))
-		defer singleCallCancel()
-		// todo: make sure the synchronous call will consume the ctx timeout in someway
-		response, err := rc.simpleClient.SyncSendRequestVote(singleCallCtx, req)
-		wrapper := RPCResWrapper[RequestVoteResponse]{
+		for {
+			select {
+			case <-ctx.Done():
+				// will propagate to the child context as well
+				out <- RPCResWrapper[RequestVoteResponse]{Err: fmt.Errorf("context done without a response")}
+				return
+			case <-retryTicker.C:
+				callRPC()
+			case response := <-singleResChan:
+				out <- response
+				return
+			}
+		}
+	}()
+	return out
+}
+
+// the generator pattern
+func (rc *InternalClientImpl) SendAppendEntries(
+	ctx context.Context, req AppendEntriesRequest) chan RPCResWrapper[AppendEntriesResponse] {
+	resChan := make(chan RPCResWrapper[AppendEntriesResponse], 1)
+	// todo: should I add ctx.cancel?
+	go func() {
+		response, err := rc.simpleClient.SyncSendAppendEntries(ctx, req)
+		wrapper := RPCResWrapper[AppendEntriesResponse]{
 			Resp: response,
 			Err:  err,
 		}
-		singleResChan <- wrapper
-	}
-	go callRPC()
-
-	for {
-		select {
-		case <-ctx.Done():
-			// will propagate to the child context as well
-			wrappedResChan <- RPCResWrapper[RequestVoteResponse]{Err: fmt.Errorf("context done without a response")}
-			return
-		case <-retryTicker.C:
-			callRPC()
-		case response := <-singleResChan:
-			wrappedResChan <- response
-			return
-		}
-	}
-}
-
-// wrapper with chan, and no retry now
-func (rc *InternalClientImpl) SendAppendEntries(
-	ctx context.Context, req AppendEntriesRequest, resChan chan RPCResWrapper[AppendEntriesResponse]) {
-	ctx, cancel := context.WithTimeout(ctx, util.Config.RPCRequestTimeout)
-	defer cancel()
-	response, err := rc.simpleClient.SyncSendAppendEntries(ctx, req)
-	wrapper := RPCResWrapper[AppendEntriesResponse]{
-		Resp: response,
-		Err:  err,
-	}
-	resChan <- wrapper
+		resChan <- wrapper
+	}()
+	return resChan
 }
