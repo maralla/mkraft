@@ -32,15 +32,15 @@ func RequestVoteSendForConsensus(ctx context.Context, request rpc.RequestVoteReq
 	members := getClientOfAllMembers()
 	resChan := make(chan rpc.RPCResWrapper[rpc.RequestVoteResponse], len(members)) // buffered with len(members) to prevent goroutine leak
 
-	// FAN-OUT
-	rpcCall := func(member rpc.InternalClientIface) {
-		// the retry can last as long as the election timeout
-		ctxWithTimeout, cancel := context.WithTimeout(ctx, util.Config.ElectionTimeout)
-		defer cancel()
-		member.SendRequestVoteWithRetry(ctxWithTimeout, request, resChan)
-	}
 	for _, member := range members {
-		go rpcCall(member)
+		// FAN-OUT
+		go func() {
+			ctxWithTimeout, cancel := context.WithTimeout(ctx, util.Config.ElectionTimeout)
+			defer cancel()
+			out := member.SendRequestVote(ctxWithTimeout, request)
+			// FAN-IN
+			resChan <- <-out
+		}()
 	}
 
 	// FAN-IN WITH STOPPING SHORT
@@ -100,19 +100,22 @@ func RequestVoteSendForConsensus(ctx context.Context, request rpc.RequestVoteReq
 	}
 }
 
-// todo: don't need to retry the entire election
-// need revamped
 func AppendEntriesSendForConsensus(
 	ctx context.Context, request rpc.AppendEntriesRequest, respChan chan MajorityAppendEntriesResp) {
-	members := getClientOfAllMembers()
-	resChan := make(chan rpc.RPCResWrapper[rpc.AppendEntriesResponse], len(members)) // buffered with len(members) to prevent goroutine leak
 
-	// FAN-OUT
+	members := getClientOfAllMembers()
+	allRespChan := make(chan rpc.RPCResWrapper[rpc.AppendEntriesResponse], len(members))
 	for _, member := range members {
-		go member.SendAppendEntries(ctx, request, resChan)
+		// FAN-OUT
+		go func() {
+			ctxWithTimeout, cancel := context.WithTimeout(ctx, util.Config.ElectionTimeout)
+			defer cancel()
+			// FAN-IN
+			allRespChan <- member.SendAppendEntries(ctxWithTimeout, request)
+		}()
 	}
 
-	// FAN-IN WITH STOPPING SHORT
+	// STOPPING SHORT
 	total := len(members)
 	responseNeeded := len(members)/2 + 1 - 1 // -1 because the leader doesn't need to send to itself
 	successAccumulated := 0
@@ -120,7 +123,7 @@ func AppendEntriesSendForConsensus(
 
 	for range members {
 		select {
-		case res := <-resChan:
+		case res := <-allRespChan:
 			if err := res.Err; err != nil {
 				sugarLogger.Error("error in sending append entries to one node", err)
 				continue
