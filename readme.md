@@ -11,19 +11,18 @@ https://raft.github.io/
 ## TODO List
 ### Week April 7-12 2025
 - [x] current rpc layers are unncessarily complicated, design what are really needed for appendEntries/heartbeat in consensus, the two are different (record designs)
-- [ ] add network of RPC (server and client)
-- [ ] static membership
-- [ ] read go blogs and concurrency pattern -> refine and summarize current patterns to gogymnastics
+- [x] add network of RPC (server and client)
+- [ ] design the simplest membership that can work, put it in gogynastics
 
-## Modular Progress Checks
+### Week April 13-19 2025
+- [ ] fix all todos and maki gogyn
+- [ ] make the first version of leaderselection runnable and playable
 
 ### Module0: Engineering Basics
-- [ ] rpc-client framework
-- [ ] rpc-real protocol grpc?
-- [ ] rpc-server framework
-- [ ] configuration management
+- [x] rpc-client framework
+- [X] rpc-server framework
 - [x] logging
-- [ ] metrics
+- [x] configuration management
 
 ### Module1: Leade Election
 - [x] leader election
