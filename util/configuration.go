@@ -2,6 +2,7 @@ package util
 
 import (
 	"math/rand"
+	"syscall"
 	"time"
 )
 
@@ -39,6 +40,8 @@ type Configuration struct {
 	LeaderBufferSize          int           `json:"leader_buffer_size"`
 	// Client
 	ClientCommandBufferSize int `json:"client_command_buffer_size"`
+	// Node Meta
+	NodeID string `json:"node_id"`
 }
 
 var (
@@ -47,6 +50,12 @@ var (
 )
 
 func init() {
+	// read nodeID from env
+	nodeID, found := syscall.Getenv("NODE_ID")
+	if !found {
+		panic("NODE_ID not found")
+	}
+
 	// todo: add configuration loading from env
 	defaultConfig = Configuration{
 		RPCRequestTimeout:         time.Duration(RPC_REUQEST_TIMEOUT_IN_MS) * time.Millisecond,
@@ -56,6 +65,9 @@ func init() {
 		LeaderHeartbeatPeriodInMs: LEADER_HEARTBEAT_PERIOD_IN_MS,
 		ClientCommandBufferSize:   HANDLE_CLIENT_COMMAND_BUFFER,
 		LeaderBufferSize:          LEADER_BUFFER_SIZE,
+		// todo: here seems to dynamic ?
+		// NodeID: uuid.New().String(),
+		NodeID: nodeID,
 	}
 	Config = defaultConfig
 }

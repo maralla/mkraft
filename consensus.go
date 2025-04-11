@@ -10,7 +10,7 @@ import (
 var sugarLogger = util.GetSugarLogger()
 
 type MajorityAppendEntriesResp struct {
-	Term            int
+	Term            int32
 	Success         bool
 	SingleResponses []rpc.AppendEntriesResponse
 	OriginalRequest rpc.AppendEntriesRequest
@@ -18,7 +18,7 @@ type MajorityAppendEntriesResp struct {
 }
 
 type MajorityRequestVoteResp struct {
-	Term            int
+	Term            int32
 	VoteGranted     bool
 	SingleResponses []rpc.RequestVoteResponse
 	OriginalRequest rpc.RequestVoteRequest
@@ -27,20 +27,19 @@ type MajorityRequestVoteResp struct {
 
 // CONSENSUS MODULE
 // todo: currently the result channel only retruns when there is win/fail for sure
-func RequestVoteSendForConsensus(ctx context.Context, request rpc.RequestVoteRequest, resultChannel chan MajorityRequestVoteResp) {
+func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest, resultChannel chan *MajorityRequestVoteResp) {
 
-	members := getClientOfAllMembers()
-	resChan := make(chan rpc.RPCResWrapper[rpc.RequestVoteResponse], len(members)) // buffered with len(members) to prevent goroutine leak
-
+	members := GetPeersInMembership()
+	resChan := make(chan rpc.RPCResWrapper[*rpc.RequestVoteResponse], len(members)) // buffered with len(members) to prevent goroutine leak
 	for _, member := range members {
 		// FAN-OUT
+		// maki: todo topic for go gynastics
 		go func() {
 			memberHandle := member
 			ctxWithTimeout, cancel := context.WithTimeout(ctx, util.Config.ElectionTimeout)
 			defer cancel()
-			out := memberHandle.SendRequestVote(ctxWithTimeout, request)
 			// FAN-IN
-			resChan <- <-out
+			resChan <- <-memberHandle.SendRequestVote(ctxWithTimeout, request)
 		}()
 	}
 
@@ -61,7 +60,7 @@ func RequestVoteSendForConsensus(ctx context.Context, request rpc.RequestVoteReq
 				// if someone responds with a term greater than the current term
 				if resp.Term > request.Term {
 					sugarLogger.Info("term is greater than current term")
-					resultChannel <- MajorityRequestVoteResp{
+					resultChannel <- &MajorityRequestVoteResp{
 						Term:        resp.Term,
 						VoteGranted: false,
 					}
@@ -72,7 +71,7 @@ func RequestVoteSendForConsensus(ctx context.Context, request rpc.RequestVoteReq
 						// won the election
 						voteAccumulated++
 						if voteAccumulated >= majority {
-							resultChannel <- MajorityRequestVoteResp{
+							resultChannel <- &MajorityRequestVoteResp{
 								Term:        request.Term,
 								VoteGranted: true,
 							}
@@ -102,10 +101,10 @@ func RequestVoteSendForConsensus(ctx context.Context, request rpc.RequestVoteReq
 }
 
 func AppendEntriesSendForConsensus(
-	ctx context.Context, request rpc.AppendEntriesRequest, respChan chan MajorityAppendEntriesResp) {
+	ctx context.Context, request *rpc.AppendEntriesRequest, respChan chan *MajorityAppendEntriesResp) {
 
-	members := getClientOfAllMembers()
-	allRespChan := make(chan rpc.RPCResWrapper[rpc.AppendEntriesResponse], len(members))
+	members := GetPeersInMembership()
+	allRespChan := make(chan rpc.RPCResWrapper[*rpc.AppendEntriesResponse], len(members))
 	for _, member := range members {
 		memberHandle := member
 		// FAN-OUT
@@ -133,7 +132,7 @@ func AppendEntriesSendForConsensus(
 				resp := res.Resp
 				if resp.Term > request.Term {
 					sugarLogger.Info("term is greater than current term")
-					respChan <- MajorityAppendEntriesResp{
+					respChan <- &MajorityAppendEntriesResp{
 						Term:    resp.Term,
 						Success: false,
 					}
@@ -143,7 +142,7 @@ func AppendEntriesSendForConsensus(
 					if resp.Success {
 						successAccumulated++
 						if successAccumulated >= responseNeeded {
-							respChan <- MajorityAppendEntriesResp{
+							respChan <- &MajorityAppendEntriesResp{
 								Term:    request.Term,
 								Success: true,
 							}
@@ -177,10 +176,10 @@ func AppendEntriesSendForConsensus(
 // todo: right now this method doesn't check the current state of the node
 // todo: checks the voting works correctly for any state of the node, candidate or leader or follower
 // todo: not sure what state shall be changed inside or outside in the caller
-func (node *Node) voting(req rpc.RequestVoteRequest) rpc.RequestVoteResponse {
+func (node *Node) voting(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
 	var response rpc.RequestVoteResponse
 	if req.Term > node.CurrentTerm {
-		node.VotedFor = req.CandidateID
+		node.VotedFor = req.CandidateId
 		node.CurrentTerm = req.Term
 		response = rpc.RequestVoteResponse{
 			Term:        node.CurrentTerm,
@@ -192,8 +191,8 @@ func (node *Node) voting(req rpc.RequestVoteRequest) rpc.RequestVoteResponse {
 			VoteGranted: false,
 		}
 	} else {
-		if node.VotedFor == -1 || node.VotedFor == req.CandidateID {
-			node.VotedFor = req.CandidateID
+		if node.VotedFor == "" || node.VotedFor == req.CandidateId {
+			node.VotedFor = req.CandidateId
 			response = rpc.RequestVoteResponse{
 				Term:        node.CurrentTerm,
 				VoteGranted: true,
@@ -205,21 +204,22 @@ func (node *Node) voting(req rpc.RequestVoteRequest) rpc.RequestVoteResponse {
 			}
 		}
 	}
-	return response
+	return &response
 }
 
 // maki: jthis method should be a part of the consensus algorithm
 // todo: right now this method doesn't check the current state of the node
 // todo: not sure what state shall be changed inside or outside in the caller
-func (node *Node) appendEntries(req rpc.AppendEntriesRequest) rpc.AppendEntriesResponse {
+func (node *Node) appendEntries(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
 	var response rpc.AppendEntriesResponse
-	if req.Term > node.CurrentTerm {
+	reqTerm := int32(req.Term)
+	if reqTerm > node.CurrentTerm {
 		// todo: tell the leader/candidate to change the state to follower
 		response = rpc.AppendEntriesResponse{
 			Term:    node.CurrentTerm,
 			Success: true,
 		}
-	} else if req.Term < node.CurrentTerm {
+	} else if reqTerm < node.CurrentTerm {
 		response = rpc.AppendEntriesResponse{
 			Term:    node.CurrentTerm,
 			Success: false,
@@ -231,5 +231,5 @@ func (node *Node) appendEntries(req rpc.AppendEntriesRequest) rpc.AppendEntriesR
 			Success: true,
 		}
 	}
-	return response
+	return &response
 }
