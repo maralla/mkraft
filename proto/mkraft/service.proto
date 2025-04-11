@@ -10,6 +10,8 @@ service RaftService {
   rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse) {}
 
   rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse) {}
+
+  rpc AppendEntriesCliStream(stream AppendEntriesRequest) returns (AppendEntriesResponse) {}
 }
 
 message HelloRequest {

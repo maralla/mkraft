@@ -19,9 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RaftService_SayHello_FullMethodName      = "/RaftService/SayHello"
-	RaftService_RequestVote_FullMethodName   = "/RaftService/RequestVote"
-	RaftService_AppendEntries_FullMethodName = "/RaftService/AppendEntries"
+	RaftService_SayHello_FullMethodName               = "/RaftService/SayHello"
+	RaftService_RequestVote_FullMethodName            = "/RaftService/RequestVote"
+	RaftService_AppendEntries_FullMethodName          = "/RaftService/AppendEntries"
+	RaftService_AppendEntriesCliStream_FullMethodName = "/RaftService/AppendEntriesCliStream"
 )
 
 // RaftServiceClient is the client API for RaftService service.
@@ -33,6 +34,7 @@ type RaftServiceClient interface {
 	SayHello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloReply, error)
 	RequestVote(ctx context.Context, in *RequestVoteRequest, opts ...grpc.CallOption) (*RequestVoteResponse, error)
 	AppendEntries(ctx context.Context, in *AppendEntriesRequest, opts ...grpc.CallOption) (*AppendEntriesResponse, error)
+	AppendEntriesCliStream(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[AppendEntriesRequest, AppendEntriesResponse], error)
 }
 
 type raftServiceClient struct {
@@ -73,6 +75,19 @@ func (c *raftServiceClient) AppendEntries(ctx context.Context, in *AppendEntries
 	return out, nil
 }
 
+func (c *raftServiceClient) AppendEntriesCliStream(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[AppendEntriesRequest, AppendEntriesResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RaftService_ServiceDesc.Streams[0], RaftService_AppendEntriesCliStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[AppendEntriesRequest, AppendEntriesResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RaftService_AppendEntriesCliStreamClient = grpc.ClientStreamingClient[AppendEntriesRequest, AppendEntriesResponse]
+
 // RaftServiceServer is the server API for RaftService service.
 // All implementations must embed UnimplementedRaftServiceServer
 // for forward compatibility.
@@ -82,6 +97,7 @@ type RaftServiceServer interface {
 	SayHello(context.Context, *HelloRequest) (*HelloReply, error)
 	RequestVote(context.Context, *RequestVoteRequest) (*RequestVoteResponse, error)
 	AppendEntries(context.Context, *AppendEntriesRequest) (*AppendEntriesResponse, error)
+	AppendEntriesCliStream(grpc.ClientStreamingServer[AppendEntriesRequest, AppendEntriesResponse]) error
 	mustEmbedUnimplementedRaftServiceServer()
 }
 
@@ -100,6 +116,9 @@ func (UnimplementedRaftServiceServer) RequestVote(context.Context, *RequestVoteR
 }
 func (UnimplementedRaftServiceServer) AppendEntries(context.Context, *AppendEntriesRequest) (*AppendEntriesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AppendEntries not implemented")
+}
+func (UnimplementedRaftServiceServer) AppendEntriesCliStream(grpc.ClientStreamingServer[AppendEntriesRequest, AppendEntriesResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method AppendEntriesCliStream not implemented")
 }
 func (UnimplementedRaftServiceServer) mustEmbedUnimplementedRaftServiceServer() {}
 func (UnimplementedRaftServiceServer) testEmbeddedByValue()                     {}
@@ -176,6 +195,13 @@ func _RaftService_AppendEntries_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RaftService_AppendEntriesCliStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(RaftServiceServer).AppendEntriesCliStream(&grpc.GenericServerStream[AppendEntriesRequest, AppendEntriesResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RaftService_AppendEntriesCliStreamServer = grpc.ClientStreamingServer[AppendEntriesRequest, AppendEntriesResponse]
+
 // RaftService_ServiceDesc is the grpc.ServiceDesc for RaftService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -196,6 +222,12 @@ var RaftService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _RaftService_AppendEntries_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "AppendEntriesCliStream",
+			Handler:       _RaftService_AppendEntriesCliStream_Handler,
+			ClientStreams: true,
+		},
+	},
 	Metadata: "proto/mkraft/service.proto",
 }
