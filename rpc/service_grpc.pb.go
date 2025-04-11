@@ -4,7 +4,7 @@
 // - protoc             v5.29.3
 // source: proto/mkraft/service.proto
 
-package protogen
+package rpc
 
 import (
 	context "context"

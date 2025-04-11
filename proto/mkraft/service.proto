@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-option go_package = "github.com/maki3cat/mkraft/proto/generated;protogen";
+option go_package = "./rpc;rpc";
 
 // The greeting service definition.
 service RaftService {
