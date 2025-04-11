@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	pb "github.com/maki3cat/mkraft/proto/mkraft"
+	pb "github.com/maki3cat/mkraft/rpc"
 	"github.com/maki3cat/mkraft/util"
 	"google.golang.org/grpc"
 )

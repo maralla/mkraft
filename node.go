@@ -71,8 +71,8 @@ type Node struct {
 
 	// Persistent state on all servers
 	// todo: how/why to make it persistent? (embedded db?)
-	CurrentTerm int
-	VotedFor    int // candidateID
+	CurrentTerm int32
+	VotedFor    string // candidateID
 	// LogEntries
 
 	// Volatile state on all servers
