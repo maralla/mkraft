@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	pb "github.com/maki3cat/mkraft/rpc"
+	"github.com/maki3cat/mkraft/rpc"
 	"github.com/maki3cat/mkraft/util"
 	"google.golang.org/grpc"
 )
@@ -29,12 +29,19 @@ func getMembershipSnapshot() map[string]string {
 	return membershipSnapshot
 }
 
+// maki: here is a topic
+// todo: should be one connection to one client?
+// todo: what is the best pattern of maintaing busy connections and clients
+// todo: now these connections/clients are stored in map which is not thread safe
+// todo: need to check problem of concurrency here
 var nodesConnecionts map[string]*grpc.ClientConn
 
-// todo: should be one connection to one client?
-var membershipClients map[string]*pb.RaftServiceClient
+// maki: here is a topic for go gynastics
+// interface cannot use pointer
+// todo:
+var membershipClients map[string]rpc.InternalClientIface
 
-func create_connection(serverAddr string) (*grpc.ClientConn, error) {
+func createConn(serverAddr string) (*grpc.ClientConn, error) {
 	conn, err := grpc.NewClient(serverAddr)
 	if err != nil {
 		return nil, err
@@ -42,20 +49,38 @@ func create_connection(serverAddr string) (*grpc.ClientConn, error) {
 	return conn, nil
 }
 
+func createClient(conn *grpc.ClientConn) rpc.InternalClientIface {
+	client := rpc.NewRaftServiceClient(conn)
+	return rpc.NewInternalClient(client)
+}
+
+// todo: and the pointer of the client will be send to the goroutinej
+// todo: concurrency to be handled
+func GetPeersInMembership() []rpc.InternalClientIface {
+	peers := make([]rpc.InternalClientIface, 0)
+	for key, client := range membershipClients {
+		if key == util.GetConfig().NodeID {
+			continue
+		}
+		peers = append(peers, client)
+	}
+	return peers
+}
+
 // TODO: CONNECTING TO OTHER NODES SHOULD HAPPEN AFTER THE CURRENT NODE IS UP
 func init() {
-
 	nodesConnecionts = make(map[string]*grpc.ClientConn)
 	for nodeID, addr := range getMembershipSnapshot() {
 		if nodeID == util.GetConfig().NodeID {
 			continue
 		}
-		conn, err := create_connection(addr)
+		conn, err := createConn(addr)
 		if err != nil {
 			util.GetSugarLogger().Errorw("failed to connect to server", "addr", addr, "error", err)
 			continue
 		}
 		nodesConnecionts[addr] = conn
+		membershipClients[nodeID] = createClient(conn)
 	}
 	fmt.Println("connected to all servers")
 }

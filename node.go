@@ -12,9 +12,7 @@ import (
 var nodeInstance *Node
 
 func init() {
-	// maki: some design details to be documented
-	// todo: for now, we just create a node with a fixed ID
-	nodeInstance = NewNode(1)
+	nodeInstance = NewNode(util.Config.NodeID)
 	nodeInstance.Start(context.Background())
 }
 
@@ -41,13 +39,13 @@ func (state NodeState) String() string {
 
 // the data structure used by the Raft-server
 type RequestVoteInternal struct {
-	request rpc.RequestVoteRequest
-	resChan chan rpc.RequestVoteResponse
+	request *rpc.RequestVoteRequest
+	resChan chan *rpc.RequestVoteResponse
 }
 
 type AppendEntriesInternal struct {
-	request rpc.AppendEntriesRequest
-	resChan chan rpc.AppendEntriesResponse
+	request *rpc.AppendEntriesRequest
+	resChan chan *rpc.AppendEntriesResponse
 }
 
 type ClientCommandInternal struct {
@@ -58,16 +56,18 @@ type ClientCommandInternal struct {
 type TermRank int
 
 // the Raft Server Node
+// maki: go gymnastics for sync values
+// todo: add sync for these values?
 type Node struct {
 	sem *semaphore.Weighted
 
-	LeaderID int
-	NodeID   int // maki: nodeID uuid or number or something else?
+	LeaderId int
+	NodeId   string // maki: nodeID uuid or number or something else?
 	State    NodeState
 
-	clientCommandChan chan ClientCommandInternal
-	requestVoteChan   chan RequestVoteInternal
-	appendEntryChan   chan AppendEntriesInternal
+	clientCommandChan chan *ClientCommandInternal
+	requestVoteChan   chan *RequestVoteInternal
+	appendEntryChan   chan *AppendEntriesInternal
 
 	// Persistent state on all servers
 	// todo: how/why to make it persistent? (embedded db?)
@@ -86,25 +86,36 @@ type Node struct {
 	// matchIndex []int
 }
 
-func (node *Node) VoteRequest(req RequestVoteInternal) {
+// maki: go gymnastics for sync values
+// todo: add sync for these values?
+func (node *Node) SetVoteForAndTerm(voteFor string, term int32) {
+	node.VotedFor = voteFor
+	node.CurrentTerm = term
+}
+
+func (node *Node) ResetVoteFor() {
+	node.VotedFor = ""
+}
+
+func (node *Node) VoteRequest(req *RequestVoteInternal) {
 	node.requestVoteChan <- req
 }
 
-func (node *Node) AppendEntryRequest(req AppendEntriesInternal) {
+func (node *Node) AppendEntryRequest(req *AppendEntriesInternal) {
 	node.appendEntryChan <- req
 }
 
-func NewNode(nodeID int) *Node {
+func NewNode(nodeId string) *Node {
 	return &Node{
 		State:             StateFollower, // servers start up as followers
-		NodeID:            nodeID,
+		NodeId:            nodeId,
 		sem:               semaphore.NewWeighted(1),
 		CurrentTerm:       0,
-		VotedFor:          -1,
-		clientCommandChan: make(chan ClientCommandInternal),
-		requestVoteChan:   make(chan RequestVoteInternal),
-		appendEntryChan:   make(chan AppendEntriesInternal),
-		LeaderID:          -1,
+		VotedFor:          "",
+		clientCommandChan: make(chan *ClientCommandInternal),
+		requestVoteChan:   make(chan *RequestVoteInternal),
+		appendEntryChan:   make(chan *AppendEntriesInternal),
+		LeaderId:          -1,
 	}
 }
 
@@ -161,8 +172,7 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 			electionTicker.Stop()
 
 			// for the follower, the node state has no reason to change because of the request
-			req := requestVoteInternal.request
-			response := node.voting(req)
+			response := node.voting(requestVoteInternal.request)
 			requestVoteInternal.resChan <- response
 
 			electionTicker.Reset(util.GetRandomElectionTimeout())
@@ -208,7 +218,7 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 	sugarLogger.Info("acquired semaphore in CANDIDATE state")
 	defer node.sem.Release(1)
 
-	var consensusChan chan MajorityRequestVoteResp
+	var consensusChan chan *MajorityRequestVoteResp
 	var voteCancel context.CancelFunc
 	defer voteCancel()
 	var ctxTimeout context.Context
@@ -217,12 +227,12 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 	tryElection := func() {
 		// buffer == 1 so that the goroutine can return immediately
 		// we only handle one out-going election at a time
-		consensusChan = make(chan MajorityRequestVoteResp, 1)
+		consensusChan = make(chan *MajorityRequestVoteResp, 1)
 		node.CurrentTerm++
-		node.VotedFor = node.NodeID
-		req := rpc.RequestVoteRequest{
+		node.VotedFor = node.NodeId
+		req := &rpc.RequestVoteRequest{
 			Term:        node.CurrentTerm,
-			CandidateID: node.NodeID,
+			CandidateId: node.NodeId,
 		}
 		ctxTimeout, voteCancel = context.WithTimeout(
 			ctx, time.Duration(util.GetRandomElectionTimeout())*time.Millisecond)
@@ -247,14 +257,14 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 					// some one has become a leader
 					voteCancel()
 					node.CurrentTerm = response.Term
-					node.VotedFor = -1
+					node.ResetVoteFor()
 					node.State = StateFollower
 					go node.RunAsFollower(ctx)
 					return
 				} else {
 					sugarLogger.Infof(
 						"not enough votes, re-elect again, current term: %d, candidateID: %d",
-						node.CurrentTerm, node.NodeID,
+						node.CurrentTerm, node.NodeId,
 					)
 				}
 			}
@@ -330,7 +340,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	sugarLogger.Info("acquired semaphore in LEADER state")
 	defer node.sem.Release(1)
 
-	node.clientCommandChan = make(chan ClientCommandInternal, util.Config.ClientCommandBufferSize)
+	node.clientCommandChan = make(chan *ClientCommandInternal, util.Config.ClientCommandBufferSize)
 	defer close(node.clientCommandChan) // todo: not sure if this is the best way to cleanup
 
 	// THE COMPLEXITY OF THE LEADER IS MUCH HIGHER THAN THE CANDIDATE
@@ -349,24 +359,21 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 
 	respReaderCtx, respCancel := context.WithCancel(ctx)
 	defer respCancel()
-	appendEntriesRespChan := make(chan MajorityAppendEntriesResp, util.Config.LeaderBufferSize)
+	appendEntriesRespChan := make(chan *MajorityAppendEntriesResp, util.Config.LeaderBufferSize)
 	defer close(appendEntriesRespChan) // todo: gorouting writing to it may panic the entire program
 
 	go func(ctx context.Context) {
 		for {
 			select {
-
 			case <-ctx.Done():
 				// todo:
 				// what if the responseChan is not empty?
 				sugarLogger.Info("context done")
 				return
-
 			case response := <-appendEntriesRespChan:
-
 				// BATCHING, BATCHING takes all in buffer now, we'll see if we need a batch-size config
 				remainingSize := len(appendEntriesRespChan)
-				responseBatch := make([]MajorityAppendEntriesResp, remainingSize+1)
+				responseBatch := make([]*MajorityAppendEntriesResp, remainingSize+1)
 				responseBatch[0] = response
 				for i := range remainingSize {
 					responseBatch[i] = <-appendEntriesRespChan
@@ -397,7 +404,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	defer tickerForHeartbeat.Stop()
 
 	// this timeout is one consensus timeout, the internal should be one rpc request timeout
-	callAppendEntries := func(req rpc.AppendEntriesRequest) {
+	callAppendEntries := func(req *rpc.AppendEntriesRequest) {
 		ctxTimeout, cancel := context.WithTimeout(ctx, util.Config.RPCRequestTimeout)
 		defer cancel()
 		AppendEntriesSendForConsensus(ctxTimeout, req, appendEntriesRespChan)
@@ -418,15 +425,14 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 
 			// todo: we can make one place for all term and vote changes and add lock if needed
 			node.State = StateFollower
-			node.CurrentTerm = int(newTerm)
-			node.VotedFor = -1
+			node.SetVoteForAndTerm(node.VotedFor, int32(newTerm))
 			go node.RunAsFollower(ctx)
 			return
 
 		case <-tickerForHeartbeat.C:
-			heartbeatReq := rpc.AppendEntriesRequest{
+			heartbeatReq := &rpc.AppendEntriesRequest{
 				Term:     node.CurrentTerm,
-				LeaderID: node.NodeID,
+				LeaderId: node.NodeId,
 			}
 			// this timeout is one consensus timeout, the internal should be one rpc request timeout
 			go callAppendEntries(heartbeatReq)
@@ -436,16 +442,13 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 			// todo: add batching to appendEntries when we do logging
 			// todo: we don't handle single client command
 			tickerForHeartbeat.Stop()
-			appendEntryReq := rpc.AppendEntriesRequest{
+			log := &rpc.LogEntry{
+				Data: clientCmdReq.request,
+			}
+			appendEntryReq := &rpc.AppendEntriesRequest{
 				Term:     node.CurrentTerm,
-				LeaderID: node.NodeID,
-				Entries: []rpc.LogEntry{
-					{
-						Term:  node.CurrentTerm,
-						Index: 0,                            // todo: dummy log data
-						Data:  string(clientCmdReq.request), // todo: dummy
-					},
-				},
+				LeaderId: node.NodeId,
+				Entries:  []*rpc.LogEntry{log},
 			}
 			go callAppendEntries(appendEntryReq)
 			tickerForHeartbeat.Reset(heartbeatDuration)

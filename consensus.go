@@ -29,18 +29,17 @@ type MajorityRequestVoteResp struct {
 // todo: currently the result channel only retruns when there is win/fail for sure
 func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest, resultChannel chan *MajorityRequestVoteResp) {
 
-	members := getClientOfAllMembers()
+	members := GetPeersInMembership()
 	resChan := make(chan rpc.RPCResWrapper[*rpc.RequestVoteResponse], len(members)) // buffered with len(members) to prevent goroutine leak
-
 	for _, member := range members {
 		// FAN-OUT
+		// maki: todo topic for go gynastics
 		go func() {
 			memberHandle := member
 			ctxWithTimeout, cancel := context.WithTimeout(ctx, util.Config.ElectionTimeout)
 			defer cancel()
-			out := memberHandle.SendRequestVote(ctxWithTimeout, request)
 			// FAN-IN
-			resChan <- <-out
+			resChan <- <-memberHandle.SendRequestVote(ctxWithTimeout, request)
 		}()
 	}
 
@@ -104,7 +103,7 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 func AppendEntriesSendForConsensus(
 	ctx context.Context, request *rpc.AppendEntriesRequest, respChan chan *MajorityAppendEntriesResp) {
 
-	members := getClientOfAllMembers()
+	members := GetPeersInMembership()
 	allRespChan := make(chan rpc.RPCResWrapper[*rpc.AppendEntriesResponse], len(members))
 	for _, member := range members {
 		memberHandle := member
@@ -179,7 +178,6 @@ func AppendEntriesSendForConsensus(
 // todo: not sure what state shall be changed inside or outside in the caller
 func (node *Node) voting(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
 	var response rpc.RequestVoteResponse
-
 	if req.Term > node.CurrentTerm {
 		node.VotedFor = req.CandidateId
 		node.CurrentTerm = req.Term
