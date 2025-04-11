@@ -50,6 +50,7 @@ var (
 )
 
 func init() {
+
 	// read nodeID from env
 	nodeID, found := syscall.Getenv("NODE_ID")
 	if !found {

@@ -9,9 +9,15 @@ import (
 	"google.golang.org/grpc"
 )
 
+// THE WHOLE STATIC MEMBERSHIP REQUIRES TO BE REDESIGNED
 // maki: this needs to be threadsafe, analyze this to gogynastics
 var membership sync.Map
 
+func init() {
+	initMembership()
+}
+
+// todo: this right now is static membership, and shall be be dynamically found and registered
 func initMembership() {
 	membership.Store("node1", "localhost:50051")
 	membership.Store("node2", "localhost:50052")
