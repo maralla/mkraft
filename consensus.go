@@ -49,7 +49,7 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 	voteAccumulated := 0
 	voteFailed := 0
 	// todo: or should use for true range?
-	for i := 0; i < len(members); i++ {
+	for range members {
 		select {
 		case res := <-resChan:
 			if err := res.Err; err != nil {
