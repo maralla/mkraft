@@ -12,7 +12,7 @@ import (
 var nodeInstance *Node
 
 func init() {
-	nodeInstance = NewNode(util.Config.NodeID)
+	nodeInstance = NewNode(util.GetConfig().NodeID)
 	nodeInstance.Start(context.Background())
 }
 
@@ -340,7 +340,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	sugarLogger.Info("acquired semaphore in LEADER state")
 	defer node.sem.Release(1)
 
-	node.clientCommandChan = make(chan *ClientCommandInternal, util.Config.ClientCommandBufferSize)
+	node.clientCommandChan = make(chan *ClientCommandInternal, util.GetConfig().ClientCommandBufferSize)
 	defer close(node.clientCommandChan) // todo: not sure if this is the best way to cleanup
 
 	// THE COMPLEXITY OF THE LEADER IS MUCH HIGHER THAN THE CANDIDATE
@@ -359,7 +359,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 
 	respReaderCtx, respCancel := context.WithCancel(ctx)
 	defer respCancel()
-	appendEntriesRespChan := make(chan *MajorityAppendEntriesResp, util.Config.LeaderBufferSize)
+	appendEntriesRespChan := make(chan *MajorityAppendEntriesResp, util.GetConfig().LeaderBufferSize)
 	defer close(appendEntriesRespChan) // todo: gorouting writing to it may panic the entire program
 
 	go func(ctx context.Context) {
@@ -399,13 +399,13 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 		}
 	}(respReaderCtx)
 
-	heartbeatDuration := time.Duration(util.Config.LeaderHeartbeatPeriodInMs) * time.Millisecond
+	heartbeatDuration := time.Duration(util.GetConfig().LeaderHeartbeatPeriodInMs) * time.Millisecond
 	tickerForHeartbeat := time.NewTicker(heartbeatDuration)
 	defer tickerForHeartbeat.Stop()
 
 	// this timeout is one consensus timeout, the internal should be one rpc request timeout
 	callAppendEntries := func(req *rpc.AppendEntriesRequest) {
-		ctxTimeout, cancel := context.WithTimeout(ctx, util.Config.RPCRequestTimeout)
+		ctxTimeout, cancel := context.WithTimeout(ctx, util.GetConfig().RPCRequestTimeout)
 		defer cancel()
 		AppendEntriesSendForConsensus(ctxTimeout, req, appendEntriesRespChan)
 	}
