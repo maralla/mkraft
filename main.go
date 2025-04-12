@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 
 	pb "github.com/maki3cat/mkraft/rpc"
+	"github.com/maki3cat/mkraft/util"
 	"google.golang.org/grpc"
 )
 
@@ -65,7 +67,21 @@ func (s *server) AppendEntries(_ context.Context, in *pb.AppendEntriesRequest) (
 }
 
 func main() {
+
+	membershipStr := flag.String("m", "", "the json string of MembershipBasicInfo")
 	flag.Parse()
+	fmt.Printf("membership: %s\n", *membershipStr)
+	if *membershipStr == "" {
+		panic("please provide the membership json string")
+	}
+
+	membershipBasicInfo := util.MembershipBasicInfo{}
+	err := json.Unmarshal([]byte(*membershipStr), &membershipBasicInfo)
+	if err != nil {
+		panic("failed to parse membership json string " + *membershipStr + ": " + err.Error())
+	}
+	util.SetConfig(&membershipBasicInfo)
+
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)

@@ -1,8 +1,9 @@
 package util
 
 import (
+	"encoding/json"
+	"fmt"
 	"math/rand"
-	"syscall"
 	"time"
 )
 
@@ -29,36 +30,58 @@ const HANDLE_CLIENT_COMMAND_BUFFER = 1000
 const LEADER_BUFFER_SIZE = 1000
 
 type Configuration struct {
+	// RPC timeout
 	RPCRequestTimeout     time.Duration `json:"rpc_request_timeout"`
 	RPCRequestTimeoutInMs int           `json:"rpc_request_timeout_in_ms"`
-	// Election
+
+	// Election timeout
 	ElectionTimeout     time.Duration `json:"election_timeout"`
 	ElectionTimeoutInMs int           `json:"election_timeout_in_ms"`
+
 	// Leader
 	LeaderHeartbeatPeriod     time.Duration `json:"leader_heartbeat_period"`
 	LeaderHeartbeatPeriodInMs int           `json:"leader_heartbeat_period_in_ms"`
 	LeaderBufferSize          int           `json:"leader_buffer_size"`
+
 	// Client
 	ClientCommandBufferSize int `json:"client_command_buffer_size"`
+
 	// Node Meta
-	NodeID string `json:"node_id"`
+	MembershipBasicInfo
+}
+
+func (c *Configuration) String() string {
+	jsonStr, _ := json.Marshal(c)
+	return string(jsonStr)
+}
+
+type MembershipBasicInfo struct {
+	NodeID     string              `json:"node_id"`
+	Membership []NodeConfigruation `json:"membership"`
+}
+
+type NodeConfigruation struct {
+	NodeID  string `json:"node_id"`
+	NodeURI string `json:"node_uri"`
 }
 
 var (
-	defaultConfig Configuration
-	Config        Configuration
+	theConfig *Configuration
 )
 
-func init() {
+func GetConfig() *Configuration {
+	return theConfig
+}
 
-	// read nodeID from env
-	nodeID, found := syscall.Getenv("NODE_ID")
-	if !found {
-		panic("NODE_ID not found")
-	}
+func SetConfig(membership *MembershipBasicInfo) {
+	// todo: add sync to config
+	theConfig = GetDefaultConfig()
+	theConfig.MembershipBasicInfo = *membership
+	fmt.Printf("set config: %s\n", theConfig)
+}
 
-	// todo: add configuration loading from env
-	defaultConfig = Configuration{
+func GetDefaultConfig() *Configuration {
+	return &Configuration{
 		RPCRequestTimeout:         time.Duration(RPC_REUQEST_TIMEOUT_IN_MS) * time.Millisecond,
 		RPCRequestTimeoutInMs:     RPC_REUQEST_TIMEOUT_IN_MS,
 		ElectionTimeoutInMs:       ELECTION_TIMEOUT_MIN_IN_MS,
@@ -66,13 +89,5 @@ func init() {
 		LeaderHeartbeatPeriodInMs: LEADER_HEARTBEAT_PERIOD_IN_MS,
 		ClientCommandBufferSize:   HANDLE_CLIENT_COMMAND_BUFFER,
 		LeaderBufferSize:          LEADER_BUFFER_SIZE,
-		// todo: here seems to dynamic ?
-		// NodeID: uuid.New().String(),
-		NodeID: nodeID,
 	}
-	Config = defaultConfig
-}
-
-func GetConfig() Configuration {
-	return Config
 }
