@@ -1,11 +1,9 @@
-package util
+package main
 
 import (
 	"encoding/json"
 	"fmt"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 var nodeBasicInfo *MembershipConfig
@@ -46,12 +44,4 @@ func TestMembershipBasicInfo(t *testing.T) {
 		fmt.Printf("json string: %s\n", jsonStr)
 		t.Logf("json string: %s", jsonStr)
 	}
-}
-
-func TestConfig(t *testing.T) {
-	config := CreateDefaultConf()
-	config.MembershipConfig = *nodeBasicInfo
-	assert.Equal(t, config.MembershipConfig.NodeID, nodeBasicInfo.NodeID)
-	assert.ElementsMatch(t, config.MembershipConfig.Membership, nodeBasicInfo.Membership)
-	assert.Equal(t, config.RPCRequestTimeoutInMs, RPC_REUQEST_TIMEOUT_IN_MS)
 }

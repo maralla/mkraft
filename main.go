@@ -81,6 +81,7 @@ func main() {
 		panic("failed to parse membership json string " + *membershipStr + ": " + err.Error())
 	}
 	util.InitConf(&membershipBasicInfo)
+	InitMembershipManager(&membershipBasicInfo)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {

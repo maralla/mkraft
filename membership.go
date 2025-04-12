@@ -9,43 +9,67 @@ import (
 	"google.golang.org/grpc"
 )
 
-// THE WHOLE STATIC MEMBERSHIP REQUIRES TO BE REDESIGNED
-// maki: this needs to be threadsafe, analyze this to gogynastics
-var membership sync.Map
+var (
+	membershipManagerInst *MembershipManager
+)
 
-func init() {
-	initMembership()
+type MembershipConfig struct {
+	NodeID     string       `json:"node_id"`
+	Membership []NodeConfig `json:"membership"`
 }
 
-// todo: this right now is static membership, and shall be be dynamically found and registered
-func initMembership() {
-	membership.Store("node1", "localhost:50051")
-	membership.Store("node2", "localhost:50052")
-	membership.Store("node3", "localhost:50053")
-	membership.Store("node4", "localhost:50054")
-	membership.Store("node5", "localhost:50055")
+type NodeConfig struct {
+	NodeID  string `json:"node_id"`
+	NodeURI string `json:"node_uri"`
 }
 
-func getMembershipSnapshot() map[string]string {
-	membershipSnapshot := make(map[string]string)
-	membership.Range(func(key, value interface{}) bool {
-		membershipSnapshot[key.(string)] = value.(string)
-		return true
-	})
-	return membershipSnapshot
+func InitMembershipManager(conf *MembershipConfig) {
+	membershipManagerInst = &MembershipManager{
+		currentMembers: conf,
+		connections:    make(map[string]*grpc.ClientConn),
+		clients:        make(map[string]rpc.InternalClientIface),
+		locks:          make(map[string]sync.Mutex),
+	}
+	for _, nodeInfo := range conf.Membership {
+		membershipManagerInst.locks[nodeInfo.NodeID] = sync.Mutex{}
+	}
 }
 
-// maki: here is a topic
-// todo: should be one connection to one client?
-// todo: what is the best pattern of maintaing busy connections and clients
-// todo: now these connections/clients are stored in map which is not thread safe
-// todo: need to check problem of concurrency here
-var nodesConnecionts map[string]*grpc.ClientConn
+// maki
+// todo: right now we suppose membership list doesn't change after first set up
+// they may be alive or dead, but the list is fixed
+type MembershipManager struct {
 
-// maki: here is a topic for go gynastics
-// interface cannot use pointer
-// todo:
-var membershipClients map[string]rpc.InternalClientIface
+	// todo: in the near future, we need update membership dynamically;
+	// todo: in the remote future, we need to update the config dynamically
+	currentMembers *util.MembershipConfig
+
+	// maki: here is a topic
+	// todo: should be one connection to one client?
+	// todo: what is the best pattern of maintaing busy connections and clients
+	// todo: now these connections/clients are stored in map which is not thread safe
+	// todo: need to check problem of concurrency here
+	connections map[string]*grpc.ClientConn
+
+	// maki: here is a topic for go gynastics
+	// interface cannot use pointer
+	clients map[string]rpc.InternalClientIface
+	locks   map[string]sync.Mutex
+}
+
+// lazily initialized for the first time
+func (mgr *MembershipManager) GetClient(nodeID string) rpc.InternalClientIface {
+	client, ok := mgr.clients[nodeID]
+	if ok {
+		// todo: if this client is thread safe for different goroutines?
+		return client
+	}
+	if !ok {
+		util.GetSugarLogger().Errorw("failed to get client", "nodeID", nodeID)
+		return nil
+	}
+	return client
+}
 
 func createConn(serverAddr string) (*grpc.ClientConn, error) {
 	conn, err := grpc.NewClient(serverAddr)
@@ -73,19 +97,24 @@ func GetPeersInMembership() []rpc.InternalClientIface {
 	return peers
 }
 
-// TODO: CONNECTING TO OTHER NODES SHOULD HAPPEN AFTER THE CURRENT NODE IS UP
-func init() {
+// clients shalle be lazily initialized
+// if we start them all at when all servers boot, they fail at the same time
+func InitClients() {
 	nodesConnecionts = make(map[string]*grpc.ClientConn)
-	for nodeID, addr := range getMembershipSnapshot() {
+	otherNodes := util.GetConfig().MembershipConfig.Membership
+
+	for _, nodeInfo := range otherNodes {
+		nodeID := nodeInfo.NodeID
+		nodeURI := nodeInfo.NodeURI
 		if nodeID == util.GetConfig().NodeID {
 			continue
 		}
-		conn, err := createConn(addr)
+		conn, err := createConn(nodeURI)
 		if err != nil {
-			util.GetSugarLogger().Errorw("failed to connect to server", "addr", addr, "error", err)
+			util.GetSugarLogger().Errorw("failed to connect to server", "nodeURI", nodeURI, "error", err)
 			continue
 		}
-		nodesConnecionts[addr] = conn
+		nodesConnecionts[nodeURI] = conn
 		membershipClients[nodeID] = createClient(conn)
 	}
 	fmt.Println("connected to all servers")
