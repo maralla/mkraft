@@ -154,7 +154,7 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 	sugarLogger.Info("acquired semaphore in FOLLOWER state")
 	defer node.sem.Release(1)
 
-	electionTicker := time.NewTicker(util.GetRandomElectionTimeout())
+	electionTicker := time.NewTicker(util.GetConfig().GetRPCRequestTimeout())
 	defer electionTicker.Stop()
 
 	for {
@@ -175,7 +175,7 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 			response := node.voting(requestVoteInternal.request)
 			requestVoteInternal.resChan <- response
 
-			electionTicker.Reset(util.GetRandomElectionTimeout())
+			electionTicker.Reset(util.GetConfig().GetElectionTimeout())
 
 		case appendEntriesInternal := <-node.appendEntryChan:
 			electionTicker.Stop()
@@ -185,7 +185,7 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 			resChan := appendEntriesInternal.resChan
 			resChan <- node.appendEntries(req)
 
-			electionTicker.Reset(util.GetRandomElectionTimeout())
+			electionTicker.Reset(util.GetConfig().GetElectionTimeout())
 		}
 	}
 }
@@ -235,14 +235,14 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 			CandidateId: node.NodeId,
 		}
 		ctxTimeout, voteCancel = context.WithTimeout(
-			ctx, time.Duration(util.GetRandomElectionTimeout())*time.Millisecond)
+			ctx, time.Duration(util.GetConfig().GetElectionTimeout())*time.Millisecond)
 		go RequestVoteSendForConsensus(ctxTimeout, req, consensusChan)
 	}
 
 	// the first trial of election
 	tryElection()
 
-	ticker := time.NewTicker(util.GetRandomElectionTimeout())
+	ticker := time.NewTicker(util.GetConfig().GetElectionTimeout())
 	for {
 		select {
 		case response := <-consensusChan: // some response from last election
@@ -405,7 +405,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 
 	// this timeout is one consensus timeout, the internal should be one rpc request timeout
 	callAppendEntries := func(req *rpc.AppendEntriesRequest) {
-		ctxTimeout, cancel := context.WithTimeout(ctx, util.GetConfig().RPCRequestTimeout)
+		ctxTimeout, cancel := context.WithTimeout(ctx, util.GetConfig().GetRPCRequestTimeout())
 		defer cancel()
 		AppendEntriesSendForConsensus(ctxTimeout, req, appendEntriesRespChan)
 	}

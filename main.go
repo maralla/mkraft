@@ -75,12 +75,12 @@ func main() {
 		panic("please provide the membership json string")
 	}
 
-	membershipBasicInfo := util.MembershipBasicInfo{}
+	membershipBasicInfo := util.MembershipConfig{}
 	err := json.Unmarshal([]byte(*membershipStr), &membershipBasicInfo)
 	if err != nil {
 		panic("failed to parse membership json string " + *membershipStr + ": " + err.Error())
 	}
-	util.SetConfig(&membershipBasicInfo)
+	util.InitConf(&membershipBasicInfo)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {

@@ -8,12 +8,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var nodeBasicInfo *MembershipBasicInfo
+var nodeBasicInfo *MembershipConfig
 
 func init() {
-	nodeBasicInfo = &MembershipBasicInfo{
+	nodeBasicInfo = &MembershipConfig{
 		NodeID: "node1",
-		Membership: []NodeConfigruation{
+		Membership: []NodeConfig{
 			{
 				NodeID:  "node1",
 				NodeURI: "localhost:18080",
@@ -49,9 +49,9 @@ func TestMembershipBasicInfo(t *testing.T) {
 }
 
 func TestConfig(t *testing.T) {
-	config := GetDefaultConfig()
-	config.MembershipBasicInfo = *nodeBasicInfo
-	assert.Equal(t, config.MembershipBasicInfo.NodeID, nodeBasicInfo.NodeID)
-	assert.ElementsMatch(t, config.MembershipBasicInfo.Membership, nodeBasicInfo.Membership)
+	config := CreateDefaultConf()
+	config.MembershipConfig = *nodeBasicInfo
+	assert.Equal(t, config.MembershipConfig.NodeID, nodeBasicInfo.NodeID)
+	assert.ElementsMatch(t, config.MembershipConfig.Membership, nodeBasicInfo.Membership)
 	assert.Equal(t, config.RPCRequestTimeoutInMs, RPC_REUQEST_TIMEOUT_IN_MS)
 }

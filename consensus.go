@@ -36,7 +36,7 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 		// maki: todo topic for go gynastics
 		go func() {
 			memberHandle := member
-			ctxWithTimeout, cancel := context.WithTimeout(ctx, util.GetConfig().ElectionTimeout)
+			ctxWithTimeout, cancel := context.WithTimeout(ctx, util.GetConfig().GetElectionTimeout())
 			defer cancel()
 			// FAN-IN
 			resChan <- <-memberHandle.SendRequestVote(ctxWithTimeout, request)
@@ -109,7 +109,7 @@ func AppendEntriesSendForConsensus(
 		memberHandle := member
 		// FAN-OUT
 		go func() {
-			ctxWithTimeout, cancel := context.WithTimeout(ctx, util.GetConfig().ElectionTimeout)
+			ctxWithTimeout, cancel := context.WithTimeout(ctx, util.GetConfig().GetElectionTimeout())
 			defer cancel()
 			// FAN-IN
 			allRespChan <- memberHandle.SendAppendEntries(ctxWithTimeout, request)
