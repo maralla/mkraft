@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	memberMgr *MembershipManager
+	memberMgr MembershipMgrIface
 )
 
 type Membership struct {
@@ -24,22 +24,31 @@ type NodeAddr struct {
 	NodeURI string `json:"node_uri"`
 }
 
-func InitMembershipManager(staticMembership *Membership) {
-	memberMgr = &MembershipManager{
+func InitMembershipWithStaticConfig(staticMembership *Membership) {
+	staticMembershipMgr := &StaticMembershipMgr{
 		membership: staticMembership,
 		clients:    make(map[string]rpc.InternalClientIface),
 		cliRWLock:  sync.RWMutex{},
 		peerAddrs:  make(map[string]string),
 	}
 	for _, node := range staticMembership.AllMembers {
-		memberMgr.peerAddrs[node.NodeID] = node.NodeURI
+		staticMembershipMgr.peerAddrs[node.NodeID] = node.NodeURI
 	}
+	memberMgr = staticMembershipMgr
+}
+
+type MembershipMgrIface interface {
+	GetClientWithLazyInit(nodeID string) rpc.InternalClientIface
+
+	// if the memebrship is dynamic, the count and peer change and may not be consistent
+	GetMemberCount() int
+	GetAllPeers() chan rpc.InternalClientIface
 }
 
 // maki
 // todo: right now we suppose membership list doesn't change after first set up
 // they may be alive or dead, but the list is fixed
-type MembershipManager struct {
+type StaticMembershipMgr struct {
 
 	// todo: in the near future, we need update membership dynamically;
 	// todo: in the remote future, we need to update the config dynamically
@@ -58,8 +67,7 @@ type MembershipManager struct {
 	clients   map[string]rpc.InternalClientIface
 }
 
-// lazily initialized for the first time
-func (mgr *MembershipManager) InitClient(nodeID string) {
+func (mgr *StaticMembershipMgr) initClient(nodeID string) {
 	mgr.cliRWLock.Lock()
 	defer mgr.cliRWLock.Lock()
 
@@ -78,32 +86,27 @@ func (mgr *MembershipManager) InitClient(nodeID string) {
 	mgr.clients[nodeID] = internalClient
 }
 
-func (mgr *MembershipManager) getClient(nodeID string) rpc.InternalClientIface {
+func (mgr *StaticMembershipMgr) getClient(nodeID string) rpc.InternalClientIface {
 	mgr.cliRWLock.RLock()
 	defer mgr.cliRWLock.RUnlock()
 	client := mgr.clients[nodeID]
 	return client
 }
 
-func (mgr *MembershipManager) GetClientWithLazyInit(nodeID string) rpc.InternalClientIface {
+func (mgr *StaticMembershipMgr) GetClientWithLazyInit(nodeID string) rpc.InternalClientIface {
 	client := mgr.getClient(nodeID)
 	if client == nil {
-		mgr.InitClient(nodeID)
+		mgr.initClient(nodeID)
 		client = mgr.getClient(nodeID)
 	}
 	return client
 }
 
-func (mgr *MembershipManager) GetMemberCount() int {
+func (mgr *StaticMembershipMgr) GetMemberCount() int {
 	return len(mgr.membership.AllMembers)
 }
 
-// :return: a channel of all peers
-func (mgr *MembershipManager) GetAllPeers() chan rpc.InternalClientIface {
-	// todo: could the membership change at this time
-	// if membership is changed in the process, the number of members will be changed
-	// we assume the membership is fixed at the beginning
-
+func (mgr *StaticMembershipMgr) GetAllPeers() chan rpc.InternalClientIface {
 	peers := make(chan rpc.InternalClientIface)
 	go func() {
 		for _, nodeInfo := range mgr.membership.AllMembers {
