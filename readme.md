@@ -20,7 +20,6 @@ https://raft.github.io/
 - [x] design the simplest membership that can work, put it in gogynastics
 
 
-
 ## Module Checks
 ### Module0: Engineering Basics
 - [x] rpc-client framework
@@ -65,3 +64,9 @@ https://raft.github.io/
 - [ ] add batching to handling ClientCommands, and send AppendLogEntries
 - [ ] check prof Yang's improvements of paxos for ideas
 - [ ] check architecture classes of caching and memory hierarchy for ideas
+
+## Module Explnations
+
+## Implementation Decisions and Extreme Engineering
+
+<img src="img/logo1.jpg" alt="My Image" align="left" width="300">
