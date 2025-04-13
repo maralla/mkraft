@@ -1,4 +1,4 @@
-package main
+package raft
 
 import (
 	"sync"
@@ -29,6 +29,7 @@ func InitMembershipManager(staticMembership *Membership) {
 		membership: staticMembership,
 		clients:    make(map[string]rpc.InternalClientIface),
 		cliRWLock:  sync.RWMutex{},
+		peerAddrs:  make(map[string]string),
 	}
 	for _, node := range staticMembership.AllMembers {
 		memberMgr.peerAddrs[node.NodeID] = node.NodeURI

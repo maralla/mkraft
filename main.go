@@ -8,7 +8,9 @@ import (
 	"log"
 	"net"
 
+	"github.com/maki3cat/mkraft/raft"
 	pb "github.com/maki3cat/mkraft/rpc"
+	"github.com/maki3cat/mkraft/util"
 	"google.golang.org/grpc"
 )
 
@@ -44,23 +46,26 @@ type server struct {
 	pb.UnimplementedRaftServiceServer
 }
 
+var logger = util.GetSugarLogger()
+
 // SayHello implements helloworld.GreeterServer
 func (s *server) SayHello(_ context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
-	log.Printf("Received: %v", in.GetName())
+	logger.Infof("Received: %v", in)
 	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
 }
 
 func (s *server) RequestVote(_ context.Context, in *pb.RequestVoteRequest) (*pb.RequestVoteResponse, error) {
-	log.Printf("Received: %v", in)
+	logger.Infof("Received: %v", in)
 	return &pb.RequestVoteResponse{Term: 1, VoteGranted: true}, nil
 }
 
 func (s *server) AppendEntries(_ context.Context, in *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {
-	log.Printf("Received: %v", in)
+	logger.Infof("Received: %v", in)
 	return &pb.AppendEntriesResponse{Term: 1, Success: true}, nil
 }
 
 func main() {
+	logger := util.GetSugarLogger()
 
 	membershipStr := flag.String("m", "", "the json string of MembershipBasicInfo")
 	flag.Parse()
@@ -68,22 +73,23 @@ func main() {
 	if *membershipStr == "" {
 		panic("please provide the membership json string")
 	}
-
-	membershipBasicInfo := Membership{}
+	membershipBasicInfo := raft.Membership{}
 	err := json.Unmarshal([]byte(*membershipStr), &membershipBasicInfo)
 	if err != nil {
 		panic("failed to parse membership json string " + *membershipStr + ": " + err.Error())
 	}
-	InitMembershipManager(&membershipBasicInfo)
+	raft.InitMembershipManager(&membershipBasicInfo)
+
+	logger.Infow("Step1: finish init membershipManager")
 
 	port := membershipBasicInfo.CurrentPort
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		logger.Fatalw("failed to listen", "error", err)
 	}
 	s := grpc.NewServer()
 	pb.RegisterRaftServiceServer(s, &server{})
-	log.Printf("server listening at %v", lis.Addr())
+	logger.Infof("Step2: server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}

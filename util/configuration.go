@@ -10,10 +10,6 @@ var (
 	theConf *Config
 )
 
-func init() {
-	InitConf()
-}
-
 func InitConf() {
 	theConf = CreateDefaultConf()
 	sugarLogger.Infof("init the config to %s", theConf)
