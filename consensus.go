@@ -29,9 +29,10 @@ type MajorityRequestVoteResp struct {
 // todo: currently the result channel only retruns when there is win/fail for sure
 func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest, resultChannel chan *MajorityRequestVoteResp) {
 
-	members := GetPeersInMembership()
-	resChan := make(chan rpc.RPCResWrapper[*rpc.RequestVoteResponse], len(members)) // buffered with len(members) to prevent goroutine leak
-	for _, member := range members {
+	memberChan := memberMgr.GetAllPeers()
+	memberCount := memberMgr.GetMemberCount()
+	resChan := make(chan rpc.RPCResWrapper[*rpc.RequestVoteResponse], memberCount) // buffered with len(members) to prevent goroutine leak
+	for member := range memberChan {
 		// FAN-OUT
 		// maki: todo topic for go gynastics
 		go func() {
@@ -44,12 +45,13 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 	}
 
 	// FAN-IN WITH STOPPING SHORT
-	total := len(members)
-	majority := len(members)/2 + 1
+	total := memberCount
+	majority := memberCount/2 + 1
+	sugarLogger.Debugw("current setup of membership", "majority", majority, "total", total, "memberCount", memberCount)
+
 	voteAccumulated := 0
 	voteFailed := 0
-	// todo: or should use for true range?
-	for i := 0; i < len(members); i++ {
+	for range memberCount - 1 {
 		select {
 		case res := <-resChan:
 			if err := res.Err; err != nil {
@@ -103,9 +105,10 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 func AppendEntriesSendForConsensus(
 	ctx context.Context, request *rpc.AppendEntriesRequest, respChan chan *MajorityAppendEntriesResp) {
 
-	members := GetPeersInMembership()
-	allRespChan := make(chan rpc.RPCResWrapper[*rpc.AppendEntriesResponse], len(members))
-	for _, member := range members {
+	memberChan := memberMgr.GetAllPeers()
+	memberCount := memberMgr.GetMemberCount()
+	allRespChan := make(chan rpc.RPCResWrapper[*rpc.AppendEntriesResponse], memberCount)
+	for member := range memberChan {
 		memberHandle := member
 		// FAN-OUT
 		go func() {
@@ -117,12 +120,13 @@ func AppendEntriesSendForConsensus(
 	}
 
 	// STOPPING SHORT
-	total := len(members)
-	responseNeeded := len(members)/2 + 1 - 1 // -1 because the leader doesn't need to send to itself
+	total := memberCount
+	responseNeeded := memberCount/2 + 1 - 1 // -1 because the leader doesn't need to send to itself
 	successAccumulated := 0
 	failAccumulated := 0
+	sugarLogger.Debugw("current setup of membership", "majority", majority, "total", total, "memberCount", memberCount)
 
-	for range members {
+	for range memberCount - 1 {
 		select {
 		case res := <-allRespChan:
 			if err := res.Err; err != nil {

@@ -61,7 +61,7 @@ type TermRank int
 type Node struct {
 	sem *semaphore.Weighted
 
-	LeaderId int
+	LeaderId string
 	NodeId   string // maki: nodeID uuid or number or something else?
 	State    NodeState
 
@@ -115,7 +115,7 @@ func NewNode(nodeId string) *Node {
 		clientCommandChan: make(chan *ClientCommandInternal),
 		requestVoteChan:   make(chan *RequestVoteInternal),
 		appendEntryChan:   make(chan *AppendEntriesInternal),
-		LeaderId:          -1,
+		LeaderId:          "",
 	}
 }
 

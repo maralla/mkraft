@@ -10,18 +10,19 @@ var (
 	theConf *Config
 )
 
+func init() {
+	InitConf()
+}
+
+func InitConf() {
+	theConf = CreateDefaultConf()
+	sugarLogger.Infof("init the config to %s", theConf)
+}
+
 // maki: haven't found easy way to lock the writing of theConf without copying the value
 // so careful coding is needed
 func GetConfig() *Config {
 	return theConf
-}
-
-// todo: in the near future, we need update membership dynamically;
-// todo: in the remote future, we need to update the config dynamically
-func InitConf(membership *MembershipConfig) {
-	theConf = CreateDefaultConf()
-	theConf.MembershipConfig = *membership
-	sugarLogger.Infof("init the config to %s", theConf)
 }
 
 func CreateDefaultConf() *Config {
@@ -64,8 +65,8 @@ type Config struct {
 	ClientCommandBufferSize int `json:"client_command_buffer_size"`
 	ClientCommandBatchSize  int `json:"client_command_batch_size"`
 
-	// Node Meta
-	MembershipConfig
+	// Node Basic Info
+	NodeID string `json:"node_id"`
 }
 
 func (c *Config) GetRPCRequestTimeout() time.Duration {
@@ -97,14 +98,4 @@ func (c *Config) GetClientCommandBatchSize() int {
 func (c *Config) String() string {
 	jsonStr, _ := json.Marshal(c)
 	return string(jsonStr)
-}
-
-type MembershipConfig struct {
-	NodeID     string       `json:"node_id"`
-	Membership []NodeConfig `json:"membership"`
-}
-
-type NodeConfig struct {
-	NodeID  string `json:"node_id"`
-	NodeURI string `json:"node_uri"`
 }
