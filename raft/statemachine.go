@@ -1,3 +1,3 @@
-package main
+package raft
 
 // to be added

@@ -1,4 +1,4 @@
-package main
+package raft
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 var nodeInstance *Node
 
-func init() {
+func InitRaftNode() {
 	nodeInstance = NewNode(util.GetConfig().NodeID)
 	nodeInstance.Start(context.Background())
 }
@@ -481,5 +481,4 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 			}
 		}
 	}
-
 }

@@ -1,4 +1,4 @@
-package main
+package raft
 
 import (
 	"encoding/json"
@@ -10,7 +10,9 @@ var nodeBasicInfo *Membership
 
 func init() {
 	nodeBasicInfo = &Membership{
-		CurrentNodeID: "node1",
+		CurrentNodeID:   "node1",
+		CurrentNodeAddr: "localhost:18080",
+		CurrentPort:     18080,
 		AllMembers: []NodeAddr{
 			{
 				NodeID:  "node1",

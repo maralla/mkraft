@@ -1,4 +1,4 @@
-package main
+package raft
 
 import (
 	"sync"
@@ -13,8 +13,10 @@ var (
 )
 
 type Membership struct {
-	CurrentNodeID string     `json:"current_node_id"`
-	AllMembers    []NodeAddr `json:"all_members"`
+	CurrentNodeID   string     `json:"current_node_id"`
+	CurrentPort     int        `json:"current_port"`
+	CurrentNodeAddr string     `json:"current_node_addr"`
+	AllMembers      []NodeAddr `json:"all_members"`
 }
 
 type NodeAddr struct {
@@ -27,6 +29,7 @@ func InitMembershipManager(staticMembership *Membership) {
 		membership: staticMembership,
 		clients:    make(map[string]rpc.InternalClientIface),
 		cliRWLock:  sync.RWMutex{},
+		peerAddrs:  make(map[string]string),
 	}
 	for _, node := range staticMembership.AllMembers {
 		memberMgr.peerAddrs[node.NodeID] = node.NodeURI

@@ -1,4 +1,4 @@
-package main
+package raft
 
 import (
 	"context"
@@ -121,7 +121,7 @@ func AppendEntriesSendForConsensus(
 
 	// STOPPING SHORT
 	total := memberCount
-	responseNeeded := memberCount/2 + 1 - 1 // -1 because the leader doesn't need to send to itself
+	majority := memberCount/2 + 1 - 1 // -1 because the leader doesn't need to send to itself
 	successAccumulated := 0
 	failAccumulated := 0
 	sugarLogger.Debugw("current setup of membership", "majority", majority, "total", total, "memberCount", memberCount)
@@ -145,7 +145,7 @@ func AppendEntriesSendForConsensus(
 				if resp.Term == request.Term {
 					if resp.Success {
 						successAccumulated++
-						if successAccumulated >= responseNeeded {
+						if successAccumulated >= majority {
 							respChan <- &MajorityAppendEntriesResp{
 								Term:    request.Term,
 								Success: true,
@@ -154,7 +154,7 @@ func AppendEntriesSendForConsensus(
 						}
 					} else {
 						failAccumulated++
-						if failAccumulated > total-responseNeeded {
+						if failAccumulated > total-majority {
 							sugarLogger.Error("invairant failed, one same term has different leader?")
 							panic("this should not happen, the consensus algorithm is not implmented correctly")
 						}
