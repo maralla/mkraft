@@ -13,8 +13,10 @@ var (
 )
 
 type Membership struct {
-	CurrentNodeID string     `json:"current_node_id"`
-	AllMembers    []NodeAddr `json:"all_members"`
+	CurrentNodeID   string     `json:"current_node_id"`
+	CurrentPort     int        `json:"current_port"`
+	CurrentNodeAddr string     `json:"current_node_addr"`
+	AllMembers      []NodeAddr `json:"all_members"`
 }
 
 type NodeAddr struct {

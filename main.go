@@ -39,11 +39,6 @@ type RPCServerIface interface {
  */
 
 // Package main implements a server for Greeter service.
-
-var (
-	port = flag.Int("port", 50051, "The server port")
-)
-
 // server is used to implement helloworld.GreeterServer.
 type server struct {
 	pb.UnimplementedRaftServiceServer
@@ -81,7 +76,8 @@ func main() {
 	}
 	InitMembershipManager(&membershipBasicInfo)
 
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
+	port := membershipBasicInfo.CurrentPort
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
