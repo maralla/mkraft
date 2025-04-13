@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-var nodeBasicInfo *MembershipConfig
+var nodeBasicInfo *Membership
 
 func init() {
-	nodeBasicInfo = &MembershipConfig{
-		NodeID: "node1",
-		Membership: []NodeConfig{
+	nodeBasicInfo = &Membership{
+		CurrentNodeID: "node1",
+		AllMembers: []NodeAddr{
 			{
 				NodeID:  "node1",
 				NodeURI: "localhost:18080",

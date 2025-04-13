@@ -9,7 +9,6 @@ import (
 	"net"
 
 	pb "github.com/maki3cat/mkraft/rpc"
-	"github.com/maki3cat/mkraft/util"
 	"google.golang.org/grpc"
 )
 
@@ -75,12 +74,11 @@ func main() {
 		panic("please provide the membership json string")
 	}
 
-	membershipBasicInfo := util.MembershipConfig{}
+	membershipBasicInfo := Membership{}
 	err := json.Unmarshal([]byte(*membershipStr), &membershipBasicInfo)
 	if err != nil {
 		panic("failed to parse membership json string " + *membershipStr + ": " + err.Error())
 	}
-	util.InitConf(&membershipBasicInfo)
 	InitMembershipManager(&membershipBasicInfo)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/maki3cat/mkraft/rpc"
@@ -10,28 +9,27 @@ import (
 )
 
 var (
-	membershipManagerInst *MembershipManager
+	memberMgr *MembershipManager
 )
 
-type MembershipConfig struct {
-	NodeID     string       `json:"node_id"`
-	Membership []NodeConfig `json:"membership"`
+type Membership struct {
+	CurrentNodeID string     `json:"current_node_id"`
+	AllMembers    []NodeAddr `json:"all_members"`
 }
 
-type NodeConfig struct {
+type NodeAddr struct {
 	NodeID  string `json:"node_id"`
 	NodeURI string `json:"node_uri"`
 }
 
-func InitMembershipManager(conf *MembershipConfig) {
-	membershipManagerInst = &MembershipManager{
-		currentMembers: conf,
-		connections:    make(map[string]*grpc.ClientConn),
-		clients:        make(map[string]rpc.InternalClientIface),
-		locks:          make(map[string]sync.Mutex),
+func InitMembershipManager(staticMembership *Membership) {
+	memberMgr = &MembershipManager{
+		membership: staticMembership,
+		clients:    make(map[string]rpc.InternalClientIface),
+		cliRWLock:  sync.RWMutex{},
 	}
-	for _, nodeInfo := range conf.Membership {
-		membershipManagerInst.locks[nodeInfo.NodeID] = sync.Mutex{}
+	for _, node := range staticMembership.AllMembers {
+		memberMgr.peerAddrs[node.NodeID] = node.NodeURI
 	}
 }
 
@@ -42,80 +40,78 @@ type MembershipManager struct {
 
 	// todo: in the near future, we need update membership dynamically;
 	// todo: in the remote future, we need to update the config dynamically
-	currentMembers *util.MembershipConfig
+	membership *Membership
+	peerAddrs  map[string]string
 
 	// maki: here is a topic
 	// todo: should be one connection to one client?
 	// todo: what is the best pattern of maintaing busy connections and clients
 	// todo: now these connections/clients are stored in map which is not thread safe
 	// todo: need to check problem of concurrency here
-	connections map[string]*grpc.ClientConn
 
 	// maki: here is a topic for go gynastics
 	// interface cannot use pointer
-	clients map[string]rpc.InternalClientIface
-	locks   map[string]sync.Mutex
+	cliRWLock sync.RWMutex
+	clients   map[string]rpc.InternalClientIface
 }
 
 // lazily initialized for the first time
-func (mgr *MembershipManager) GetClient(nodeID string) rpc.InternalClientIface {
-	client, ok := mgr.clients[nodeID]
-	if ok {
-		// todo: if this client is thread safe for different goroutines?
-		return client
+func (mgr *MembershipManager) InitClient(nodeID string) {
+	mgr.cliRWLock.Lock()
+	defer mgr.cliRWLock.Lock()
+
+	if _, ok := mgr.clients[nodeID]; ok {
+		util.GetSugarLogger().Debugw("client already exists", "nodeID", nodeID)
+		return
 	}
-	if !ok {
-		util.GetSugarLogger().Errorw("failed to get client", "nodeID", nodeID)
-		return nil
+
+	serverAddr := mgr.peerAddrs[nodeID]
+	conn, err := grpc.NewClient(serverAddr)
+	if err != nil {
+		util.GetSugarLogger().Errorw("failed to connect to server", "nodeID", nodeID, "error", err)
+	}
+	client := rpc.NewRaftServiceClient(conn)
+	internalClient := rpc.NewInternalClient(client)
+	mgr.clients[nodeID] = internalClient
+}
+
+func (mgr *MembershipManager) getClient(nodeID string) rpc.InternalClientIface {
+	mgr.cliRWLock.RLock()
+	defer mgr.cliRWLock.RUnlock()
+	client := mgr.clients[nodeID]
+	return client
+}
+
+func (mgr *MembershipManager) GetClientWithLazyInit(nodeID string) rpc.InternalClientIface {
+	client := mgr.getClient(nodeID)
+	if client == nil {
+		mgr.InitClient(nodeID)
+		client = mgr.getClient(nodeID)
 	}
 	return client
 }
 
-func createConn(serverAddr string) (*grpc.ClientConn, error) {
-	conn, err := grpc.NewClient(serverAddr)
-	if err != nil {
-		return nil, err
-	}
-	return conn, nil
+func (mgr *MembershipManager) GetMemberCount() int {
+	return len(mgr.membership.AllMembers)
 }
 
-func createClient(conn *grpc.ClientConn) rpc.InternalClientIface {
-	client := rpc.NewRaftServiceClient(conn)
-	return rpc.NewInternalClient(client)
-}
+// :return: a channel of all peers
+func (mgr *MembershipManager) GetAllPeers() chan rpc.InternalClientIface {
+	// todo: could the membership change at this time
+	// if membership is changed in the process, the number of members will be changed
+	// we assume the membership is fixed at the beginning
 
-// todo: and the pointer of the client will be send to the goroutinej
-// todo: concurrency to be handled
-func GetPeersInMembership() []rpc.InternalClientIface {
-	peers := make([]rpc.InternalClientIface, 0)
-	for key, client := range membershipClients {
-		if key == util.GetConfig().NodeID {
-			continue
+	peers := make(chan rpc.InternalClientIface)
+	go func() {
+		for _, nodeInfo := range mgr.membership.AllMembers {
+			nodeID := nodeInfo.NodeID
+			if nodeID == util.GetConfig().NodeID {
+				continue
+			}
+			client := mgr.GetClientWithLazyInit(nodeID)
+			peers <- client
 		}
-		peers = append(peers, client)
-	}
+		close(peers)
+	}()
 	return peers
-}
-
-// clients shalle be lazily initialized
-// if we start them all at when all servers boot, they fail at the same time
-func InitClients() {
-	nodesConnecionts = make(map[string]*grpc.ClientConn)
-	otherNodes := util.GetConfig().MembershipConfig.Membership
-
-	for _, nodeInfo := range otherNodes {
-		nodeID := nodeInfo.NodeID
-		nodeURI := nodeInfo.NodeURI
-		if nodeID == util.GetConfig().NodeID {
-			continue
-		}
-		conn, err := createConn(nodeURI)
-		if err != nil {
-			util.GetSugarLogger().Errorw("failed to connect to server", "nodeURI", nodeURI, "error", err)
-			continue
-		}
-		nodesConnecionts[nodeURI] = conn
-		membershipClients[nodeID] = createClient(conn)
-	}
-	fmt.Println("connected to all servers")
 }
