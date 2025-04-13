@@ -67,6 +67,7 @@ func (s *server) AppendEntries(_ context.Context, in *pb.AppendEntriesRequest) (
 func main() {
 	logger := util.GetSugarLogger()
 
+	// STATIC MEMBERHSIP
 	membershipStr := flag.String("m", "", "the json string of MembershipBasicInfo")
 	flag.Parse()
 	fmt.Printf("membership: %s\n", *membershipStr)
@@ -78,10 +79,10 @@ func main() {
 	if err != nil {
 		panic("failed to parse membership json string " + *membershipStr + ": " + err.Error())
 	}
-	raft.InitMembershipManager(&membershipBasicInfo)
+	raft.InitMembershipWithStaticConfig(&membershipBasicInfo)
 
-	logger.Infow("Step1: finish init membershipManager")
-
+	// todo: shall start raft server here
+	// START THE GRPC SERVER
 	port := membershipBasicInfo.CurrentPort
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
@@ -89,7 +90,7 @@ func main() {
 	}
 	s := grpc.NewServer()
 	pb.RegisterRaftServiceServer(s, &server{})
-	logger.Infof("Step2: server listening at %v", lis.Addr())
+	logger.Infof("server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
