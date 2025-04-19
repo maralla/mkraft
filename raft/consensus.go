@@ -29,7 +29,15 @@ type MajorityRequestVoteResp struct {
 // todo: currently the result channel only retruns when there is win/fail for sure
 func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest, resultChannel chan *MajorityRequestVoteResp) {
 
-	memberClients := memberMgr.GetAllPeerClients()
+	memberClients, err := memberMgr.GetAllPeerClients()
+	if err != nil {
+		sugarLogger.Error("error in getting all peer clients", err)
+		resultChannel <- &MajorityRequestVoteResp{
+			Error: err,
+		}
+		return
+	}
+
 	memberCount := memberMgr.GetMemberCount()
 	resChan := make(chan rpc.RPCResWrapper[*rpc.RequestVoteResponse], memberCount) // buffered with len(members) to prevent goroutine leak
 	for _, member := range memberClients {
@@ -105,7 +113,15 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 func AppendEntriesSendForConsensus(
 	ctx context.Context, request *rpc.AppendEntriesRequest, respChan chan *MajorityAppendEntriesResp) {
 
-	memberChan := memberMgr.GetAllPeerClients()
+	memberChan, err := memberMgr.GetAllPeerClients()
+	if err != nil {
+		sugarLogger.Error("error in getting all peer clients", err)
+		respChan <- &MajorityAppendEntriesResp{
+			Error: err,
+		}
+		return
+	}
+
 	memberCount := memberMgr.GetMemberCount()
 	allRespChan := make(chan rpc.RPCResWrapper[*rpc.AppendEntriesResponse], memberCount)
 	for _, member := range memberChan {

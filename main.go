@@ -69,6 +69,7 @@ func (s *server) AppendEntries(_ context.Context, in *pb.AppendEntriesRequest) (
 	return &pb.AppendEntriesResponse{Term: 1, Success: true}, nil
 }
 
+// maki: gogymnastics pattern serving and gracefully shutdown
 func startRPCServer(ctx context.Context, port int) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
@@ -124,6 +125,7 @@ func main() {
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
 
+	// maki: gogymnastics pattern can wait on multiple context
 	// start raft and rpc servers
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

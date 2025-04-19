@@ -32,10 +32,10 @@ func InitGlobalMembershipManager(staticMembership *Membership) {
 
 type MembershipMgrIface interface {
 	GetCurrentNodeID() string
-	GetPeerClient(nodeID string) rpc.InternalClientIface
+	GetPeerClient(nodeID string) (rpc.InternalClientIface, error)
 	// if the memebrship is dynamic, the count and peer change and may not be consistent
 	GetMemberCount() int
-	GetAllPeerClients() []rpc.InternalClientIface
+	GetAllPeerClients() ([]rpc.InternalClientIface, error)
 	Warmup()
 }
 
@@ -64,13 +64,19 @@ func (mgr *StaticMembershipMgr) GetCurrentNodeID() string {
 }
 
 func (mgr *StaticMembershipMgr) Warmup() {
-	mgr.GetAllPeerClients()
+	_, err := mgr.GetAllPeerClients()
+	if err != nil {
+		util.GetSugarLogger().Errorw("failed to warmup peer clients", "error", err)
+	} else {
+		util.GetSugarLogger().Info("warmup peer clients done")
+
+	}
 }
 
-func (mgr *StaticMembershipMgr) GetPeerClient(nodeID string) rpc.InternalClientIface {
+func (mgr *StaticMembershipMgr) GetPeerClient(nodeID string) (rpc.InternalClientIface, error) {
 	client, ok := mgr.connections.Load(nodeID)
 	if ok {
-		return client.(rpc.InternalClientIface)
+		return client.(rpc.InternalClientIface), nil
 	}
 
 	mgr.peerInitLocks[nodeID].Lock()
@@ -78,15 +84,16 @@ func (mgr *StaticMembershipMgr) GetPeerClient(nodeID string) rpc.InternalClientI
 
 	client, ok = mgr.connections.Load(nodeID)
 	if ok {
-		return client.(rpc.InternalClientIface)
+		return client.(rpc.InternalClientIface), nil
 	}
 
 	conn, err := grpc.NewClient(mgr.peerAddrs[nodeID])
 	if err != nil {
 		util.GetSugarLogger().Errorw("failed to connect to server", "nodeID", nodeID, "error", err)
+		return nil, err
 	}
 	newClient := rpc.NewInternalClient(rpc.NewRaftServiceClient(conn))
-	return newClient
+	return newClient, nil
 }
 
 func (mgr *StaticMembershipMgr) GetMemberCount() int {
@@ -94,15 +101,19 @@ func (mgr *StaticMembershipMgr) GetMemberCount() int {
 }
 
 // synchronous, can pre-warm
-func (mgr *StaticMembershipMgr) GetAllPeerClients() []rpc.InternalClientIface {
+func (mgr *StaticMembershipMgr) GetAllPeerClients() ([]rpc.InternalClientIface, error) {
 	peers := make([]rpc.InternalClientIface, 0)
 	for _, nodeInfo := range mgr.membership.AllMembers {
 		if nodeInfo.NodeID == mgr.membership.CurrentNodeID {
 			// self
 			continue
 		}
-		client := mgr.GetPeerClient(nodeInfo.NodeID)
+		client, err := mgr.GetPeerClient(nodeInfo.NodeID)
+		if err != nil {
+			util.GetSugarLogger().Errorw("failed to get peer client", "nodeID", nodeInfo.NodeID, "error", err)
+			return nil, err
+		}
 		peers = append(peers, client)
 	}
-	return peers
+	return peers, nil
 }
