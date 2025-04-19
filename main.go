@@ -8,6 +8,9 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/maki3cat/mkraft/raft"
 	pb "github.com/maki3cat/mkraft/rpc"
@@ -66,7 +69,7 @@ func (s *server) AppendEntries(_ context.Context, in *pb.AppendEntriesRequest) (
 	return &pb.AppendEntriesResponse{Term: 1, Success: true}, nil
 }
 
-func StartServerNode(ctx context.Context, port int) {
+func startRPCServer(ctx context.Context, port int) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		logger.Fatalw("failed to listen", "error", err)
@@ -117,20 +120,19 @@ func main() {
 	}
 	raft.InitGlobalMembershipManager(membershipConfig)
 
+	// signal handling
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
+
+	// start raft and rpc servers
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	startRPCServer(ctx, membershipConfig.CurrentPort)
 	raft.StartRaftNode(ctx)
 
-	// START THE GRPC SERVER
-	port := membershipConfig.CurrentPort
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		logger.Fatalw("failed to listen", "error", err)
-	}
-	s := grpc.NewServer()
-	pb.RegisterRaftServiceServer(s, &server{})
-	logger.Infof("server listening at %v", lis.Addr())
-	if err := s.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
-	}
+	sig := <-signalChan
+	logger.Info("\nReceived signal: %s\n", sig)
+	cancel() // Cancel the context to stop the server gracefully
+	time.Sleep(2 * time.Second)
+	logger.Info("Main exiting")
 }
