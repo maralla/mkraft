@@ -69,7 +69,7 @@ func main() {
 	logger := util.GetSugarLogger()
 	defaultPath := "./local/config1.yaml"
 
-	// STATIC MEMBERHSIP
+	// read config from the yaml file
 	configPath := flag.String("c", "", "the path of the config file")
 	if *configPath == "" {
 		*configPath = defaultPath
@@ -83,8 +83,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Unmarshal: %v", err)
 	}
+	raft.SetGlobalMembershipManager(membershipConfig)
 
-	raft.NewStaticMembershipMgr(membershipConfig)
 	// START THE GRPC SERVER
 	port := membershipConfig.CurrentPort
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))

@@ -10,7 +10,25 @@ import (
 
 var (
 	memberMgr MembershipMgrIface
+	once      sync.Once
 )
+
+func SetGlobalMembershipManager(staticMembership *Membership) {
+	once.Do(func() {
+		util.GetSugarLogger().Info("Initializing static membership manager")
+		staticMembershipMgr := &StaticMembershipMgr{
+			membership:    staticMembership,
+			connections:   &sync.Map{},
+			peerAddrs:     make(map[string]string),
+			peerInitLocks: make(map[string]*sync.Mutex),
+		}
+		for _, node := range staticMembership.AllMembers {
+			staticMembershipMgr.peerAddrs[node.NodeID] = node.NodeURI
+			staticMembershipMgr.peerInitLocks[node.NodeID] = &sync.Mutex{}
+		}
+		memberMgr = staticMembershipMgr
+	})
+}
 
 type MembershipMgrIface interface {
 	GetPeerClient(nodeID string) rpc.InternalClientIface
@@ -30,20 +48,6 @@ type Membership struct {
 type NodeAddr struct {
 	NodeID  string `json:"node_id"`
 	NodeURI string `json:"node_uri"`
-}
-
-func NewStaticMembershipMgr(staticMembership *Membership) {
-	staticMembershipMgr := &StaticMembershipMgr{
-		membership:    staticMembership,
-		connections:   &sync.Map{},
-		peerAddrs:     make(map[string]string),
-		peerInitLocks: make(map[string]*sync.Mutex),
-	}
-	for _, node := range staticMembership.AllMembers {
-		staticMembershipMgr.peerAddrs[node.NodeID] = node.NodeURI
-		staticMembershipMgr.peerInitLocks[node.NodeID] = &sync.Mutex{}
-	}
-	memberMgr = staticMembershipMgr
 }
 
 type StaticMembershipMgr struct {
