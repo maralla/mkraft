@@ -79,7 +79,7 @@ func main() {
 	if err != nil {
 		panic("failed to parse membership json string " + *membershipStr + ": " + err.Error())
 	}
-	raft.InitMembershipWithStaticConfig(&membershipBasicInfo)
+	raft.NewStaticMembershipMgr(&membershipBasicInfo)
 
 	// todo: shall start raft server here
 	// START THE GRPC SERVER

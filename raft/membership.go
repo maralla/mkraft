@@ -24,25 +24,26 @@ type NodeAddr struct {
 	NodeURI string `json:"node_uri"`
 }
 
-func InitMembershipWithStaticConfig(staticMembership *Membership) {
+func NewStaticMembershipMgr(staticMembership *Membership) {
 	staticMembershipMgr := &StaticMembershipMgr{
-		membership: staticMembership,
-		clients:    make(map[string]rpc.InternalClientIface),
-		cliRWLock:  sync.RWMutex{},
-		peerAddrs:  make(map[string]string),
+		membership:    staticMembership,
+		connections:   &sync.Map{},
+		peerAddrs:     make(map[string]string),
+		peerInitLocks: make(map[string]*sync.Mutex),
 	}
 	for _, node := range staticMembership.AllMembers {
 		staticMembershipMgr.peerAddrs[node.NodeID] = node.NodeURI
+		staticMembershipMgr.peerInitLocks[node.NodeID] = &sync.Mutex{}
 	}
 	memberMgr = staticMembershipMgr
 }
 
 type MembershipMgrIface interface {
-	GetClientWithLazyInit(nodeID string) rpc.InternalClientIface
-
+	GetPeerClient(nodeID string) rpc.InternalClientIface
 	// if the memebrship is dynamic, the count and peer change and may not be consistent
 	GetMemberCount() int
-	GetAllPeers() chan rpc.InternalClientIface
+	GetAllPeerClients() []rpc.InternalClientIface
+	Warmup()
 }
 
 // maki
@@ -53,71 +54,52 @@ type StaticMembershipMgr struct {
 	// todo: in the near future, we need update membership dynamically;
 	// todo: in the remote future, we need to update the config dynamically
 	membership *Membership
-	peerAddrs  map[string]string
 
-	// maki: here is a topic
-	// todo: should be one connection to one client?
-	// todo: what is the best pattern of maintaing busy connections and clients
-	// todo: now these connections/clients are stored in map which is not thread safe
-	// todo: need to check problem of concurrency here
-
-	// maki: here is a topic for go gynastics
-	// interface cannot use pointer
-	cliRWLock sync.RWMutex
-	clients   map[string]rpc.InternalClientIface
+	peerAddrs     map[string]string
+	peerInitLocks map[string]*sync.Mutex
+	connections   *sync.Map
 }
 
-func (mgr *StaticMembershipMgr) initClient(nodeID string) {
-	mgr.cliRWLock.Lock()
-	defer mgr.cliRWLock.Lock()
+func (mgr *StaticMembershipMgr) Warmup() {
+	mgr.GetAllPeerClients()
+}
 
-	if _, ok := mgr.clients[nodeID]; ok {
-		util.GetSugarLogger().Debugw("client already exists", "nodeID", nodeID)
-		return
+func (mgr *StaticMembershipMgr) GetPeerClient(nodeID string) rpc.InternalClientIface {
+	client, ok := mgr.connections.Load(nodeID)
+	if ok {
+		return client.(rpc.InternalClientIface)
 	}
 
-	serverAddr := mgr.peerAddrs[nodeID]
-	conn, err := grpc.NewClient(serverAddr)
+	mgr.peerInitLocks[nodeID].Lock()
+	defer mgr.peerInitLocks[nodeID].Unlock()
+
+	client, ok = mgr.connections.Load(nodeID)
+	if ok {
+		return client.(rpc.InternalClientIface)
+	}
+
+	conn, err := grpc.NewClient(mgr.peerAddrs[nodeID])
 	if err != nil {
 		util.GetSugarLogger().Errorw("failed to connect to server", "nodeID", nodeID, "error", err)
 	}
-	client := rpc.NewRaftServiceClient(conn)
-	internalClient := rpc.NewInternalClient(client)
-	mgr.clients[nodeID] = internalClient
-}
-
-func (mgr *StaticMembershipMgr) getClient(nodeID string) rpc.InternalClientIface {
-	mgr.cliRWLock.RLock()
-	defer mgr.cliRWLock.RUnlock()
-	client := mgr.clients[nodeID]
-	return client
-}
-
-func (mgr *StaticMembershipMgr) GetClientWithLazyInit(nodeID string) rpc.InternalClientIface {
-	client := mgr.getClient(nodeID)
-	if client == nil {
-		mgr.initClient(nodeID)
-		client = mgr.getClient(nodeID)
-	}
-	return client
+	newClient := rpc.NewInternalClient(rpc.NewRaftServiceClient(conn))
+	return newClient
 }
 
 func (mgr *StaticMembershipMgr) GetMemberCount() int {
 	return len(mgr.membership.AllMembers)
 }
 
-func (mgr *StaticMembershipMgr) GetAllPeers() chan rpc.InternalClientIface {
-	peers := make(chan rpc.InternalClientIface)
-	go func() {
-		for _, nodeInfo := range mgr.membership.AllMembers {
-			nodeID := nodeInfo.NodeID
-			if nodeID == util.GetConfig().NodeID {
-				continue
-			}
-			client := mgr.GetClientWithLazyInit(nodeID)
-			peers <- client
+// synchronous, can pre-warm
+func (mgr *StaticMembershipMgr) GetAllPeerClients() []rpc.InternalClientIface {
+	peers := make([]rpc.InternalClientIface, 0)
+	for _, nodeInfo := range mgr.membership.AllMembers {
+		if nodeInfo.NodeID == util.GetConfig().NodeID {
+			// self
+			continue
 		}
-		close(peers)
-	}()
+		client := mgr.GetPeerClient(nodeInfo.NodeID)
+		peers = append(peers, client)
+	}
 	return peers
 }
