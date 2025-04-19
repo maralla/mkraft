@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -65,6 +66,37 @@ func (s *server) AppendEntries(_ context.Context, in *pb.AppendEntriesRequest) (
 	return &pb.AppendEntriesResponse{Term: 1, Success: true}, nil
 }
 
+func StartServerNode(ctx context.Context, port int) {
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		logger.Fatalw("failed to listen", "error", err)
+	}
+
+	s := grpc.NewServer()
+	pb.RegisterRaftServiceServer(s, &server{})
+	logger.Infof("server listening at %v", lis.Addr())
+
+	go func() {
+		logger.Info("starting gRPC server...")
+		if err := s.Serve(lis); err != nil {
+			if errors.Is(err, grpc.ErrServerStopped) {
+				logger.Info("gRPC server stopped")
+				return
+			} else {
+				logger.Errorw("failed to serve", "error", err)
+				panic(err)
+			}
+		}
+	}()
+
+	go func() {
+		logger.Info("waiting for context cancellation or server quit...")
+		<-ctx.Done()
+		logger.Info("context canceled, stopping gRPC server...")
+		s.GracefulStop() // or s.Stop() for immediate stop
+	}()
+}
+
 func main() {
 	logger := util.GetSugarLogger()
 	defaultPath := "./local/config1.yaml"
@@ -83,7 +115,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Unmarshal: %v", err)
 	}
-	raft.SetGlobalMembershipManager(membershipConfig)
+	raft.InitGlobalMembershipManager(membershipConfig)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	raft.StartRaftNode(ctx)
 
 	// START THE GRPC SERVER
 	port := membershipConfig.CurrentPort

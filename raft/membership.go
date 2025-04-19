@@ -13,7 +13,7 @@ var (
 	once      sync.Once
 )
 
-func SetGlobalMembershipManager(staticMembership *Membership) {
+func InitGlobalMembershipManager(staticMembership *Membership) {
 	once.Do(func() {
 		util.GetSugarLogger().Info("Initializing static membership manager")
 		staticMembershipMgr := &StaticMembershipMgr{
@@ -31,6 +31,7 @@ func SetGlobalMembershipManager(staticMembership *Membership) {
 }
 
 type MembershipMgrIface interface {
+	GetCurrentNodeID() string
 	GetPeerClient(nodeID string) rpc.InternalClientIface
 	// if the memebrship is dynamic, the count and peer change and may not be consistent
 	GetMemberCount() int
@@ -56,6 +57,10 @@ type StaticMembershipMgr struct {
 	peerAddrs     map[string]string
 	peerInitLocks map[string]*sync.Mutex
 	connections   *sync.Map
+}
+
+func (mgr *StaticMembershipMgr) GetCurrentNodeID() string {
+	return mgr.membership.CurrentNodeID
 }
 
 func (mgr *StaticMembershipMgr) Warmup() {
@@ -92,7 +97,7 @@ func (mgr *StaticMembershipMgr) GetMemberCount() int {
 func (mgr *StaticMembershipMgr) GetAllPeerClients() []rpc.InternalClientIface {
 	peers := make([]rpc.InternalClientIface, 0)
 	for _, nodeInfo := range mgr.membership.AllMembers {
-		if nodeInfo.NodeID == util.GetConfig().NodeID {
+		if nodeInfo.NodeID == mgr.membership.CurrentNodeID {
 			// self
 			continue
 		}
