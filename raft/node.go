@@ -2,6 +2,7 @@ package raft
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/maki3cat/mkraft/rpc"
@@ -10,10 +11,13 @@ import (
 )
 
 var nodeInstance *Node
+var nodeInitOnce = &sync.Once{}
 
-func InitRaftNode() {
-	nodeInstance = NewNode(util.GetConfig().NodeID)
-	nodeInstance.Start(context.Background())
+func StartRaftNode(ctx context.Context) {
+	nodeInitOnce.Do(func() {
+		nodeInstance = NewNode(memberMgr.GetCurrentNodeID())
+		nodeInstance.Start(ctx)
+	})
 }
 
 type NodeState int

@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// current design: membership is not a part of the configuration
 var (
 	theConf *Config
 )
@@ -15,8 +16,6 @@ func InitConf() {
 	sugarLogger.Infof("init the config to %s", theConf)
 }
 
-// maki: haven't found easy way to lock the writing of theConf without copying the value
-// so careful coding is needed
 func GetConfig() *Config {
 	return theConf
 }
@@ -60,9 +59,6 @@ type Config struct {
 	// Client
 	ClientCommandBufferSize int `json:"client_command_buffer_size"`
 	ClientCommandBatchSize  int `json:"client_command_batch_size"`
-
-	// Node Basic Info
-	NodeID string `json:"node_id"`
 }
 
 func (c *Config) GetRPCRequestTimeout() time.Duration {

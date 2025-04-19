@@ -38,20 +38,24 @@ https://raft.github.io/
 - [ ] framework: sending framework, based on log and commit index
 - [ ] framework: receiving framework, based on log and commmit index
 
-### Module3: Log
+### Module3: Membership
+- [ ] Fixed Membership thru config
+- [ ] Membership Changes
+- [ ] Memberhsip with Gossip OR Service Discovery?
+
+### Module4: Log
 - [ ] replication
 - [ ] persistence
 - [ ] compaction
 
-### Module4: StateMachine
+### Module5: StateMachine
 - [ ] interface for pluggable
 - [ ] one pluggable example
 
-### Module5: Membership Management
-- [ ] Service Discovery
-- [ ] Membership Change
+<img src="img/logo1.jpg" alt="My Image" align="left" width="300">
 
-### Module6: Learning of Golang for gymnastics
+## Patterns for GoGymnastics
+
 - [ ] async all with future pattern
 - [ ] retry call with timeout
 - [ ] fan-in/fan-out in RAFT
@@ -60,13 +64,8 @@ https://raft.github.io/
 - [ ] context examples summary
 - [ ] plummer and channels
 
-### Module7: Extreme Engineering for performance
+## Implementation Decisions and Extreme Engineering
+
 - [ ] add batching to handling ClientCommands, and send AppendLogEntries
 - [ ] check prof Yang's improvements of paxos for ideas
 - [ ] check architecture classes of caching and memory hierarchy for ideas
-
-## Module Explnations
-
-## Implementation Decisions and Extreme Engineering
-
-<img src="img/logo1.jpg" alt="My Image" align="left" width="300">
