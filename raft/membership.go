@@ -12,11 +12,19 @@ var (
 	memberMgr MembershipMgrIface
 )
 
+type MembershipMgrIface interface {
+	GetPeerClient(nodeID string) rpc.InternalClientIface
+	// if the memebrship is dynamic, the count and peer change and may not be consistent
+	GetMemberCount() int
+	GetAllPeerClients() []rpc.InternalClientIface
+	Warmup()
+}
+
 type Membership struct {
-	CurrentNodeID   string     `json:"current_node_id"`
-	CurrentPort     int        `json:"current_port"`
-	CurrentNodeAddr string     `json:"current_node_addr"`
-	AllMembers      []NodeAddr `json:"all_members"`
+	CurrentNodeID   string     `json:"current_node_id" yaml:"current_node_id"`
+	CurrentPort     int        `json:"current_port" yaml:"current_port"`
+	CurrentNodeAddr string     `json:"current_node_addr" yaml:"current_node_addr"`
+	AllMembers      []NodeAddr `json:"all_members" yaml:"all_members"`
 }
 
 type NodeAddr struct {
@@ -38,21 +46,7 @@ func NewStaticMembershipMgr(staticMembership *Membership) {
 	memberMgr = staticMembershipMgr
 }
 
-type MembershipMgrIface interface {
-	GetPeerClient(nodeID string) rpc.InternalClientIface
-	// if the memebrship is dynamic, the count and peer change and may not be consistent
-	GetMemberCount() int
-	GetAllPeerClients() []rpc.InternalClientIface
-	Warmup()
-}
-
-// maki
-// todo: right now we suppose membership list doesn't change after first set up
-// they may be alive or dead, but the list is fixed
 type StaticMembershipMgr struct {
-
-	// todo: in the near future, we need update membership dynamically;
-	// todo: in the remote future, we need to update the config dynamically
 	membership *Membership
 
 	peerAddrs     map[string]string

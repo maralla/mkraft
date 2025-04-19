@@ -2,16 +2,17 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net"
+	"os"
 
 	"github.com/maki3cat/mkraft/raft"
 	pb "github.com/maki3cat/mkraft/rpc"
 	"github.com/maki3cat/mkraft/util"
 	"google.golang.org/grpc"
+	"gopkg.in/yaml.v2"
 )
 
 // THE RPC SERVER, which is different from the RAFT SERVER
@@ -66,24 +67,26 @@ func (s *server) AppendEntries(_ context.Context, in *pb.AppendEntriesRequest) (
 
 func main() {
 	logger := util.GetSugarLogger()
+	defaultPath := "./local/config1.yaml"
 
 	// STATIC MEMBERHSIP
-	membershipStr := flag.String("m", "", "the json string of MembershipBasicInfo")
-	flag.Parse()
-	fmt.Printf("membership: %s\n", *membershipStr)
-	if *membershipStr == "" {
-		panic("please provide the membership json string")
+	configPath := flag.String("c", "", "the path of the config file")
+	if *configPath == "" {
+		*configPath = defaultPath
 	}
-	membershipBasicInfo := raft.Membership{}
-	err := json.Unmarshal([]byte(*membershipStr), &membershipBasicInfo)
+	membershipConfig := &raft.Membership{}
+	yamlFile, err := os.ReadFile(*configPath)
 	if err != nil {
-		panic("failed to parse membership json string " + *membershipStr + ": " + err.Error())
+		log.Printf("yamlFile.Get err  #%v ", err)
 	}
-	raft.NewStaticMembershipMgr(&membershipBasicInfo)
+	err = yaml.Unmarshal(yamlFile, membershipConfig)
+	if err != nil {
+		log.Fatalf("Unmarshal: %v", err)
+	}
 
-	// todo: shall start raft server here
+	raft.NewStaticMembershipMgr(membershipConfig)
 	// START THE GRPC SERVER
-	port := membershipBasicInfo.CurrentPort
+	port := membershipConfig.CurrentPort
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		logger.Fatalw("failed to listen", "error", err)
