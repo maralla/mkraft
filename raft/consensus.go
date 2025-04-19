@@ -29,6 +29,8 @@ type MajorityRequestVoteResp struct {
 // todo: currently the result channel only retruns when there is win/fail for sure
 func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest, resultChannel chan *MajorityRequestVoteResp) {
 
+	// maki: patten, the majority doesn't fail is not fail
+	// todo: this is not the right solution, we should just use the clients left as long as they reach the majority
 	memberClients, err := memberMgr.GetAllPeerClients()
 	if err != nil {
 		sugarLogger.Error("error in getting all peer clients", err)
@@ -113,6 +115,8 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 func AppendEntriesSendForConsensus(
 	ctx context.Context, request *rpc.AppendEntriesRequest, respChan chan *MajorityAppendEntriesResp) {
 
+	// maki: patten, the majority doesn't fail is not fail
+	// todo: this is not the right solution, we should just use the clients left as long as they reach the majority
 	memberChan, err := memberMgr.GetAllPeerClients()
 	if err != nil {
 		sugarLogger.Error("error in getting all peer clients", err)
