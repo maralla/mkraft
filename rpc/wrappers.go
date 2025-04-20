@@ -73,6 +73,9 @@ func (rc *InternalClientImpl) SendRequestVote(ctx context.Context, req *RequestV
 			defer singleCallCancel()
 			// todo: make sure the synchronous call will consume the ctx timeout in someway
 			response, err := rc.rawClient.RequestVote(singleCallCtx, req)
+			if err != nil {
+				logger.Errorw("error in sending request vote", "member", rc.rawClient, "error", err)
+			}
 			wrapper := RPCRespWrapper[*RequestVoteResponse]{
 				Resp: response,
 				Err:  err,
