@@ -43,20 +43,9 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 	}
 
 	// URGENTbug
-	// todo: 1) the connection is refused; 2) the grpc connection is lazy;
+	// todo: 1) the connection is refused;
+	// todo: 2) the grpc connection is lazy;
 	// todo: the original ctx has problem that it is Done immediately
-	for {
-		for _, memberCli := range memberClients {
-			sugarLogger.Debugw("member clients", "member", memberCli)
-			_, err := memberCli.Hello(context.Background(), &rpc.HelloRequest{
-				Name: "test",
-			})
-			if err != nil {
-				logger.Errorw("error in sending hello to member", "member", memberCli, "error", err)
-
-			}
-		}
-	}
 
 	memberCount := memberMgr.GetMemberCount()
 	resChan := make(chan rpc.RPCRespWrapper[*rpc.RequestVoteResponse], memberCount) // buffered with len(members) to prevent goroutine leak
