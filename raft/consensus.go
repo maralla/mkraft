@@ -41,7 +41,7 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 	}
 
 	memberCount := memberMgr.GetMemberCount()
-	resChan := make(chan rpc.RPCResWrapper[*rpc.RequestVoteResponse], memberCount) // buffered with len(members) to prevent goroutine leak
+	resChan := make(chan rpc.RPCRespWrapper[*rpc.RequestVoteResponse], memberCount) // buffered with len(members) to prevent goroutine leak
 	for _, member := range memberClients {
 		// FAN-OUT
 		// maki: todo topic for go gynastics
@@ -65,7 +65,7 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 		select {
 		case res := <-resChan:
 			if err := res.Err; err != nil {
-				sugarLogger.Error("error in sending request vote to one node", err)
+				sugarLogger.Errorf("error in sending request vote to one node: %v", err)
 				continue
 			} else {
 				resp := res.Resp
@@ -127,7 +127,7 @@ func AppendEntriesSendForConsensus(
 	}
 
 	memberCount := memberMgr.GetMemberCount()
-	allRespChan := make(chan rpc.RPCResWrapper[*rpc.AppendEntriesResponse], memberCount)
+	allRespChan := make(chan rpc.RPCRespWrapper[*rpc.AppendEntriesResponse], memberCount)
 	for _, member := range memberChan {
 		memberHandle := member
 		// FAN-OUT

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -53,22 +52,6 @@ type server struct {
 
 var logger = util.GetSugarLogger()
 
-// SayHello implements helloworld.GreeterServer
-func (s *server) SayHello(_ context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
-	logger.Infof("Received: %v", in)
-	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
-}
-
-func (s *server) RequestVote(_ context.Context, in *pb.RequestVoteRequest) (*pb.RequestVoteResponse, error) {
-	logger.Infof("Received: %v", in)
-	return &pb.RequestVoteResponse{Term: 1, VoteGranted: true}, nil
-}
-
-func (s *server) AppendEntries(_ context.Context, in *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {
-	logger.Infof("Received: %v", in)
-	return &pb.AppendEntriesResponse{Term: 1, Success: true}, nil
-}
-
 // maki: gogymnastics pattern serving and gracefully shutdown
 func startRPCServer(ctx context.Context, port int) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
@@ -103,23 +86,27 @@ func startRPCServer(ctx context.Context, port int) {
 
 func main() {
 	logger := util.GetSugarLogger()
-	defaultPath := "./local/config1.yaml"
+	defaultPath := "./config/config1.yaml"
 
 	// read config from the yaml file
 	configPath := flag.String("c", "", "the path of the config file")
 	if *configPath == "" {
 		*configPath = defaultPath
 	}
+	flag.Parse()
+	logger.Info("config file path: ", *configPath)
 	membershipConfig := &raft.Membership{}
 	yamlFile, err := os.ReadFile(*configPath)
 	if err != nil {
-		log.Printf("yamlFile.Get err  #%v ", err)
+		logger.Fatalf("yamlFile.Get err  #%v ", err)
 	}
 	err = yaml.Unmarshal(yamlFile, membershipConfig)
 	if err != nil {
-		log.Fatalf("Unmarshal: %v", err)
+		logger.Fatalf("Unmarshal: %v", err)
 	}
-	raft.InitGlobalMembershipManager(membershipConfig)
+	logger.Infof("Config: %v", membershipConfig)
+
+	raft.InitGlobalMembershipWithStaticConfig(membershipConfig)
 
 	// signal handling
 	signalChan := make(chan os.Signal, 1)
@@ -133,8 +120,8 @@ func main() {
 	raft.StartRaftNode(ctx)
 
 	sig := <-signalChan
-	logger.Info("\nReceived signal: %s\n", sig)
-	cancel() // Cancel the context to stop the server gracefully
+	logger.Warn("\nReceived signal: %s\n", sig)
+	cancel()
 	time.Sleep(2 * time.Second)
-	logger.Info("Main exiting")
+	logger.Warn("Main exiting")
 }

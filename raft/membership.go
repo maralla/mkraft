@@ -6,6 +6,7 @@ import (
 	"github.com/maki3cat/mkraft/rpc"
 	"github.com/maki3cat/mkraft/util"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 var (
@@ -13,12 +14,24 @@ var (
 	once      sync.Once
 )
 
-func InitGlobalMembershipManager(staticMembership *Membership) {
+func InitGlobalMembershipWithStaticConfig(staticMembership *Membership) {
 	once.Do(func() {
+		// check sanity
+		if staticMembership.AllMembers == nil || len(staticMembership.AllMembers) == 0 {
+			util.GetSugarLogger().Fatal("static membership is empty")
+		}
+		for _, node := range staticMembership.AllMembers {
+			if node.NodeID == "" || node.NodeURI == "" {
+				util.GetSugarLogger().Fatal("static membership is invalid")
+			}
+		}
+
+		// init
 		util.GetSugarLogger().Info("Initializing static membership manager")
 		staticMembershipMgr := &StaticMembershipMgr{
 			membership:    staticMembership,
-			connections:   &sync.Map{},
+			clients:       &sync.Map{},
+			conns:         &sync.Map{},
 			peerAddrs:     make(map[string]string),
 			peerInitLocks: make(map[string]*sync.Mutex),
 		}
@@ -37,6 +50,7 @@ type MembershipMgrIface interface {
 	GetMemberCount() int
 	GetAllPeerClients() ([]rpc.InternalClientIface, error)
 	Warmup()
+	GracefulShutdown()
 }
 
 type Membership struct {
@@ -47,8 +61,8 @@ type Membership struct {
 }
 
 type NodeAddr struct {
-	NodeID  string `json:"node_id"`
-	NodeURI string `json:"node_uri"`
+	NodeID  string `json:"node_id" yaml:"node_id"`
+	NodeURI string `json:"node_uri" yaml:"node_uri"`
 }
 
 type StaticMembershipMgr struct {
@@ -56,7 +70,8 @@ type StaticMembershipMgr struct {
 
 	peerAddrs     map[string]string
 	peerInitLocks map[string]*sync.Mutex
-	connections   *sync.Map
+	clients       *sync.Map
+	conns         *sync.Map
 }
 
 func (mgr *StaticMembershipMgr) GetCurrentNodeID() string {
@@ -73,8 +88,26 @@ func (mgr *StaticMembershipMgr) Warmup() {
 	}
 }
 
+func (mgr *StaticMembershipMgr) GracefulShutdown() {
+	logger := util.GetSugarLogger()
+	logger.Info("graceful shutdown of membership manager")
+	// close all connections
+	for _, nodeInfo := range mgr.membership.AllMembers {
+		if nodeInfo.NodeID == mgr.membership.CurrentNodeID {
+			// self
+			continue
+		}
+		conn, ok := mgr.conns.Load(nodeInfo.NodeID)
+		if ok {
+			logger.Infof("closing connection to %s", nodeInfo.NodeID)
+			clientConn, _ := conn.(*grpc.ClientConn)
+			clientConn.Close()
+		}
+	}
+}
+
 func (mgr *StaticMembershipMgr) GetPeerClient(nodeID string) (rpc.InternalClientIface, error) {
-	client, ok := mgr.connections.Load(nodeID)
+	client, ok := mgr.clients.Load(nodeID)
 	if ok {
 		return client.(rpc.InternalClientIface), nil
 	}
@@ -82,17 +115,22 @@ func (mgr *StaticMembershipMgr) GetPeerClient(nodeID string) (rpc.InternalClient
 	mgr.peerInitLocks[nodeID].Lock()
 	defer mgr.peerInitLocks[nodeID].Unlock()
 
-	client, ok = mgr.connections.Load(nodeID)
+	client, ok = mgr.clients.Load(nodeID)
 	if ok {
 		return client.(rpc.InternalClientIface), nil
 	}
 
-	conn, err := grpc.NewClient(mgr.peerAddrs[nodeID])
+	// todo: insecure credentials now
+	conn, err := grpc.NewClient(
+		mgr.peerAddrs[nodeID], grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		util.GetSugarLogger().Errorw("failed to connect to server", "nodeID", nodeID, "error", err)
-		return nil, err
 	}
+	// todo: put it in graceful shutdown
+	// defer conn.Close()
+	mgr.conns.Store(nodeID, conn)
 	newClient := rpc.NewInternalClient(rpc.NewRaftServiceClient(conn))
+	mgr.clients.Store(nodeID, newClient)
 	return newClient, nil
 }
 

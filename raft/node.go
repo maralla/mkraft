@@ -3,6 +3,7 @@ package raft
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/maki3cat/mkraft/rpc"
@@ -18,6 +19,13 @@ func StartRaftNode(ctx context.Context) {
 		nodeInstance = NewNode(memberMgr.GetCurrentNodeID())
 		nodeInstance.Start(ctx)
 	})
+}
+
+func GetRaftNode() *Node {
+	if nodeInstance == nil {
+		panic("raft node is not initialized")
+	}
+	return nodeInstance
 }
 
 type NodeState int
@@ -42,14 +50,16 @@ func (state NodeState) String() string {
 }
 
 // the data structure used by the Raft-server
+// todo: shall I add a timeout ctx for this internal request as well?
 type RequestVoteInternal struct {
-	request *rpc.RequestVoteRequest
-	resChan chan *rpc.RequestVoteResponse
+	Request    *rpc.RequestVoteRequest
+	RespWraper chan *rpc.RPCRespWrapper[*rpc.RequestVoteResponse]
+	IsTimeout  atomic.Bool
 }
 
 type AppendEntriesInternal struct {
-	request *rpc.AppendEntriesRequest
-	resChan chan *rpc.AppendEntriesResponse
+	Request      *rpc.AppendEntriesRequest
+	ResponseChan chan *rpc.AppendEntriesResponse
 }
 
 type ClientCommandInternal struct {
@@ -171,22 +181,28 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 			node.State = StateCandidate
 			go node.RunAsCandidate(ctx)
 			return
-
 		case requestVoteInternal := <-node.requestVoteChan:
+			if requestVoteInternal.IsTimeout.Load() {
+				sugarLogger.Warn("request vote is timeout")
+				continue
+			}
 			electionTicker.Stop()
 
 			// for the follower, the node state has no reason to change because of the request
-			response := node.voting(requestVoteInternal.request)
-			requestVoteInternal.resChan <- response
-
+			resp := node.voting(requestVoteInternal.Request)
+			wrapper := &rpc.RPCRespWrapper[*rpc.RequestVoteResponse]{
+				Resp: resp,
+				Err:  nil,
+			}
+			requestVoteInternal.RespWraper <- wrapper
 			electionTicker.Reset(util.GetConfig().GetElectionTimeout())
 
 		case appendEntriesInternal := <-node.appendEntryChan:
 			electionTicker.Stop()
 
 			// for the follower, the node state has no reason to change because of the request
-			req := appendEntriesInternal.request
-			resChan := appendEntriesInternal.resChan
+			req := appendEntriesInternal.Request
+			resChan := appendEntriesInternal.ResponseChan
 			resChan <- node.appendEntries(req)
 
 			electionTicker.Reset(util.GetConfig().GetElectionTimeout())
@@ -217,9 +233,9 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 		panic("node is not in CANDIDATE state")
 	}
 
-	sugarLogger.Info("node acquires to run in CANDIDATE state")
+	sugarLogger.Info("node starts to acquiring CANDIDATE state")
 	node.sem.Acquire(ctx, 1)
-	sugarLogger.Info("acquired semaphore in CANDIDATE state")
+	sugarLogger.Info("node has acquired semaphore in CANDIDATE state")
 	defer node.sem.Release(1)
 
 	var consensusChan chan *MajorityRequestVoteResp
@@ -249,6 +265,10 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 	ticker := time.NewTicker(util.GetConfig().GetElectionTimeout())
 	for {
 		select {
+		case <-ctx.Done():
+			sugarLogger.Warn("raft node main context done")
+			memberMgr.GracefulShutdown()
+			return
 		case response := <-consensusChan: // some response from last election
 			// I don't think we need to reset the ticker here
 			voteCancel() // cancel the rest
@@ -277,11 +297,19 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 			voteCancel()
 			tryElection()
 
-		case requestVote := <-node.requestVoteChan: // commonRule: handling voteRequest from another candidate
-			req := requestVote.request
-			resChan := requestVote.resChan
+		case requestVoteInternal := <-node.requestVoteChan: // commonRule: handling voteRequest from another candidate
+			if requestVoteInternal.IsTimeout.Load() {
+				sugarLogger.Warn("request vote is timeout")
+				continue
+			}
+			req := requestVoteInternal.Request
+			resChan := requestVoteInternal.RespWraper
 			resp := node.voting(req)
-			resChan <- resp
+			wrapper := &rpc.RPCRespWrapper[*rpc.RequestVoteResponse]{
+				Resp: resp,
+				Err:  nil,
+			}
+			resChan <- wrapper
 			// this means other candiate has a higher term
 			if resp.VoteGranted {
 				node.State = StateFollower
@@ -289,8 +317,8 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 				return
 			}
 		case request := <-node.appendEntryChan: // commonRule: handling appendEntry from a leader which can be stale or new
-			req := request.request
-			resChan := request.resChan
+			req := request.Request
+			resChan := request.ResponseChan
 
 			resp := node.appendEntries(req)
 			resChan <- resp
@@ -370,9 +398,8 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
-				// todo:
-				// what if the responseChan is not empty?
-				sugarLogger.Info("context done")
+				sugarLogger.Warn("raft node main context done")
+				memberMgr.GracefulShutdown()
 				return
 			case response := <-appendEntriesRespChan:
 				// BATCHING, BATCHING takes all in buffer now, we'll see if we need a batch-size config
@@ -416,12 +443,10 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 
 	for {
 		select {
-
 		case <-ctx.Done():
-			sugarLogger.Warn("context done, closing up")
-			// todo: do I need to call responseCancel or the cancel just propagates?
+			sugarLogger.Warn("raft node main context done")
+			memberMgr.GracefulShutdown()
 			return
-
 		case newTerm := <-leaderRecedeToFollowerChan:
 			// shall clean up other channels, specially the channel of client request
 			// paper: if a leader receives a heartbeat from a node with a higher term,
@@ -458,20 +483,25 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 			tickerForHeartbeat.Reset(heartbeatDuration)
 
 		case requestVote := <-node.requestVoteChan: // commonRule: same with candidate
-			req := requestVote.request
-			resChan := requestVote.resChan
-			resp := node.voting(req)
-			resChan <- resp
-			// this means other candiate has a higher term
-			if resp.VoteGranted {
-				node.State = StateFollower
-				go node.RunAsFollower(ctx)
-				return
+			if !requestVote.IsTimeout.Load() {
+				req := requestVote.Request
+				resChan := requestVote.RespWraper
+				resp := node.voting(req)
+				wrapper := &rpc.RPCRespWrapper[*rpc.RequestVoteResponse]{
+					Resp: resp,
+					Err:  nil,
+				}
+				resChan <- wrapper
+				// this means other candiate has a higher term
+				if resp.VoteGranted {
+					node.State = StateFollower
+					go node.RunAsFollower(ctx)
+					return
+				}
 			}
-
 		case request := <-node.appendEntryChan: // commonRule: same with candidate
-			req := request.request
-			resChan := request.resChan
+			req := request.Request
+			resChan := request.ResponseChan
 
 			resp := node.appendEntries(req)
 			resChan <- resp
