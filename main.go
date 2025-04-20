@@ -106,7 +106,7 @@ func main() {
 	}
 	logger.Infof("Config: %v", membershipConfig)
 
-	raft.InitGlobalMembershipManager(membershipConfig)
+	raft.InitGlobalMembershipWithStaticConfig(membershipConfig)
 
 	// signal handling
 	signalChan := make(chan os.Signal, 1)

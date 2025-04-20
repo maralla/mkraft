@@ -40,7 +40,7 @@ func main() {
 	}
 	logger.Infof("Config: %v", membershipConfig)
 
-	raft.InitGlobalMembershipManager(membershipConfig)
+	raft.InitGlobalMembershipWithStaticConfig(membershipConfig)
 	port := membershipConfig.CurrentPort
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
