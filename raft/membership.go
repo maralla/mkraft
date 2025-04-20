@@ -89,6 +89,8 @@ func (mgr *StaticMembershipMgr) Warmup() {
 }
 
 func (mgr *StaticMembershipMgr) GracefulShutdown() {
+	logger := util.GetSugarLogger()
+	logger.Info("graceful shutdown of membership manager")
 	// close all connections
 	for _, nodeInfo := range mgr.membership.AllMembers {
 		if nodeInfo.NodeID == mgr.membership.CurrentNodeID {
@@ -97,6 +99,7 @@ func (mgr *StaticMembershipMgr) GracefulShutdown() {
 		}
 		conn, ok := mgr.conns.Load(nodeInfo.NodeID)
 		if ok {
+			logger.Infof("closing connection to %s", nodeInfo.NodeID)
 			clientConn, _ := conn.(*grpc.ClientConn)
 			clientConn.Close()
 		}

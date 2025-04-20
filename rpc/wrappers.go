@@ -44,9 +44,12 @@ func NewInternalClient(raftServiceClient RaftServiceClient) InternalClientIface 
 	}
 }
 
+var logger = util.GetSugarLogger()
+
 // should call this with goroutine
 // the parent shall control the timeout of the election
 func (rc *InternalClientImpl) SendRequestVote(ctx context.Context, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse] {
+	logger.Debugw("send request vote", "req", req)
 	out := make(chan RPCRespWrapper[*RequestVoteResponse], 1)
 	func() {
 		retryTicker := time.NewTicker(time.Millisecond * util.RPC_REUQEST_TIMEOUT_IN_MS)
