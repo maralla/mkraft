@@ -9,17 +9,22 @@ https://raft.github.io/
 - gRPC
 
 
-## Bug List
-- [ ]when running server-1, the rpc send doesn't get connection refused error -> not logged?
-- [ ]cancel func deffered before assigned, probably the reason to panic;
-- [ ]server get the request, no one handles it;
-
-
 ## TODO List
 
 ### Week April 19-30 2025
 
-- [ ] fix the bug list
+#### Bug List 
+- [ ]when running server-1, the rpc send doesn't get connection refused error -> not logged?
+- [ ]cancel func deffered before assigned, probably the reason to panic;
+- [ ]server get the request, no one handles it;
+
+#### gRPC refinement
+- [ ] reading the following grpc docs to solidify current implementation
+    - https://grpc.io/docs/guides/health-checking/
+    - https://grpc.io/docs/guides/server-graceful-stop/
+    - https://grpc.io/docs/guides/cancellation/
+    - https://grpc.io/docs/guides/error/
+    - https://grpc.io/docs/guides/deadlines/
 
 ### Week April 13-19 2025
 - [x] fix all todos and summarize into go-gymnastics (30%)
