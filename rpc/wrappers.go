@@ -19,6 +19,8 @@ import (
 	util "github.com/maki3cat/mkraft/util"
 )
 
+var logger = util.GetSugarLogger()
+
 type RPCRespWrapper[T RPCResponse] struct {
 	Err  error
 	Resp T
@@ -32,19 +34,29 @@ type RPCResponse interface {
 type InternalClientIface interface {
 	SendRequestVote(ctx context.Context, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse]
 	SendAppendEntries(ctx context.Context, req *AppendEntriesRequest) RPCRespWrapper[*AppendEntriesResponse]
+	SayHello(ctx context.Context, req *HelloRequest) (*HelloReply, error)
+	String() string
 }
 
 type InternalClientImpl struct {
+	name      string
 	rawClient RaftServiceClient
 }
 
 func NewInternalClient(raftServiceClient RaftServiceClient) InternalClientIface {
 	return &InternalClientImpl{
+		name:      "InternalClientImpl",
 		rawClient: raftServiceClient,
 	}
 }
 
-var logger = util.GetSugarLogger()
+func (rc *InternalClientImpl) String() string {
+	return fmt.Sprintf("%s", rc.name)
+}
+
+func (rc *InternalClientImpl) SayHello(ctx context.Context, req *HelloRequest) (*HelloReply, error) {
+	return rc.rawClient.SayHello(ctx, req)
+}
 
 // should call this with goroutine
 // the parent shall control the timeout of the election
@@ -61,6 +73,9 @@ func (rc *InternalClientImpl) SendRequestVote(ctx context.Context, req *RequestV
 			defer singleCallCancel()
 			// todo: make sure the synchronous call will consume the ctx timeout in someway
 			response, err := rc.rawClient.RequestVote(singleCallCtx, req)
+			if err != nil {
+				logger.Errorw("error in sending request vote", "member", rc.rawClient, "error", err)
+			}
 			wrapper := RPCRespWrapper[*RequestVoteResponse]{
 				Resp: response,
 				Err:  err,
@@ -72,13 +87,12 @@ func (rc *InternalClientImpl) SendRequestVote(ctx context.Context, req *RequestV
 		for {
 			select {
 			case <-ctx.Done():
-				// will propagate to the child context as well
-				out <- RPCRespWrapper[*RequestVoteResponse]{Err: fmt.Errorf("context done without a response")}
+				out <- RPCRespWrapper[*RequestVoteResponse]{
+					Err: fmt.Errorf("SendRequestVote context done before getting a response")}
 				return
 			case <-retryTicker.C:
 				callRPC()
-			case response := <-singleResChan:
-				out <- response
+			case out <- <-singleResChan:
 				return
 			}
 		}

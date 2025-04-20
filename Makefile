@@ -1,4 +1,8 @@
-default:
+
+
+all: build test
+
+test:
 	@go test -v ./...
 
 run:
@@ -9,3 +13,6 @@ protogen:
 	@protoc --go_out=. --go-grpc_out=. proto/mkraft/service.proto
 	@echo "Protocol buffer files generated successfully."
 
+build:
+	@echo "Building the project..."
+	@go build -o mkraft
