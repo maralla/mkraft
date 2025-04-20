@@ -42,13 +42,19 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 		return
 	}
 
-	for _, memberCli := range memberClients {
-		sugarLogger.Debugw("member clients", "member", memberCli)
-		_, err := memberCli.Hello(ctx, &rpc.HelloRequest{
-			Name: "test",
-		})
-		if err != nil {
-			panic(err)
+	// URGENTbug
+	// todo: 1) the connection is refused; 2) the grpc connection is lazy;
+	// todo: the original ctx has problem that it is Done immediately
+	for {
+		for _, memberCli := range memberClients {
+			sugarLogger.Debugw("member clients", "member", memberCli)
+			_, err := memberCli.Hello(context.Background(), &rpc.HelloRequest{
+				Name: "test",
+			})
+			if err != nil {
+				logger.Errorw("error in sending hello to member", "member", memberCli, "error", err)
+
+			}
 		}
 	}
 

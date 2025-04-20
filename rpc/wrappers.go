@@ -32,6 +32,7 @@ type RPCResponse interface {
 type InternalClientIface interface {
 	SendRequestVote(ctx context.Context, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse]
 	SendAppendEntries(ctx context.Context, req *AppendEntriesRequest) RPCRespWrapper[*AppendEntriesResponse]
+	Hello(ctx context.Context, req *HelloRequest) (*HelloReply, error)
 }
 
 type InternalClientImpl struct {
@@ -45,6 +46,10 @@ func NewInternalClient(raftServiceClient RaftServiceClient) InternalClientIface 
 }
 
 var logger = util.GetSugarLogger()
+
+func (rc *InternalClientImpl) Hello(ctx context.Context, req *HelloRequest) (*HelloReply, error) {
+	return rc.rawClient.SayHello(ctx, req)
+}
 
 // should call this with goroutine
 // the parent shall control the timeout of the election
