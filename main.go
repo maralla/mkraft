@@ -86,7 +86,7 @@ func startRPCServer(ctx context.Context, port int) {
 
 func main() {
 	logger := util.GetSugarLogger()
-	defaultPath := "./local/config1.yaml"
+	defaultPath := "./config/config1.yaml"
 
 	// read config from the yaml file
 	configPath := flag.String("c", "", "the path of the config file")
