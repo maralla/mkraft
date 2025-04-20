@@ -19,7 +19,7 @@ import (
 	util "github.com/maki3cat/mkraft/util"
 )
 
-type RPCResWrapper[T RPCResponse] struct {
+type RPCRespWrapper[T RPCResponse] struct {
 	Err  error
 	Resp T
 }
@@ -30,8 +30,8 @@ type RPCResponse interface {
 
 // the real RPC wrapper used directly for the server
 type InternalClientIface interface {
-	SendRequestVote(ctx context.Context, req *RequestVoteRequest) chan RPCResWrapper[*RequestVoteResponse]
-	SendAppendEntries(ctx context.Context, req *AppendEntriesRequest) RPCResWrapper[*AppendEntriesResponse]
+	SendRequestVote(ctx context.Context, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse]
+	SendAppendEntries(ctx context.Context, req *AppendEntriesRequest) RPCRespWrapper[*AppendEntriesResponse]
 }
 
 type InternalClientImpl struct {
@@ -46,19 +46,19 @@ func NewInternalClient(raftServiceClient RaftServiceClient) InternalClientIface 
 
 // should call this with goroutine
 // the parent shall control the timeout of the election
-func (rc *InternalClientImpl) SendRequestVote(ctx context.Context, req *RequestVoteRequest) chan RPCResWrapper[*RequestVoteResponse] {
-	out := make(chan RPCResWrapper[*RequestVoteResponse], 1)
+func (rc *InternalClientImpl) SendRequestVote(ctx context.Context, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse] {
+	out := make(chan RPCRespWrapper[*RequestVoteResponse], 1)
 	func() {
 		retryTicker := time.NewTicker(time.Millisecond * util.RPC_REUQEST_TIMEOUT_IN_MS)
 		defer retryTicker.Stop()
 
-		var singleResChan chan RPCResWrapper[*RequestVoteResponse]
+		var singleResChan chan RPCRespWrapper[*RequestVoteResponse]
 		callRPC := func() {
 			singleCallCtx, singleCallCancel := context.WithTimeout(ctx, time.Millisecond*(util.RPC_REUQEST_TIMEOUT_IN_MS-10))
 			defer singleCallCancel()
 			// todo: make sure the synchronous call will consume the ctx timeout in someway
 			response, err := rc.rawClient.RequestVote(singleCallCtx, req)
-			wrapper := RPCResWrapper[*RequestVoteResponse]{
+			wrapper := RPCRespWrapper[*RequestVoteResponse]{
 				Resp: response,
 				Err:  err,
 			}
@@ -70,7 +70,7 @@ func (rc *InternalClientImpl) SendRequestVote(ctx context.Context, req *RequestV
 			select {
 			case <-ctx.Done():
 				// will propagate to the child context as well
-				out <- RPCResWrapper[*RequestVoteResponse]{Err: fmt.Errorf("context done without a response")}
+				out <- RPCRespWrapper[*RequestVoteResponse]{Err: fmt.Errorf("context done without a response")}
 				return
 			case <-retryTicker.C:
 				callRPC()
@@ -85,9 +85,9 @@ func (rc *InternalClientImpl) SendRequestVote(ctx context.Context, req *RequestV
 
 // the generator pattern
 func (rc *InternalClientImpl) SendAppendEntries(
-	ctx context.Context, req *AppendEntriesRequest) RPCResWrapper[*AppendEntriesResponse] {
+	ctx context.Context, req *AppendEntriesRequest) RPCRespWrapper[*AppendEntriesResponse] {
 	response, err := rc.rawClient.AppendEntries(ctx, req)
-	wrapper := RPCResWrapper[*AppendEntriesResponse]{
+	wrapper := RPCRespWrapper[*AppendEntriesResponse]{
 		Resp: response,
 		Err:  err,
 	}

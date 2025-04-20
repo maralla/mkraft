@@ -1,8 +1,12 @@
 package main
 
 import (
+<<<<<<< HEAD
 	"context"
 	"errors"
+=======
+	"encoding/json"
+>>>>>>> 44b8385 (connect request vote of rpc server to raft server)
 	"flag"
 	"fmt"
 	"log"
@@ -53,6 +57,7 @@ type server struct {
 
 var logger = util.GetSugarLogger()
 
+<<<<<<< HEAD
 // SayHello implements helloworld.GreeterServer
 func (s *server) SayHello(_ context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
 	logger.Infof("Received: %v", in)
@@ -71,6 +76,28 @@ func (s *server) AppendEntries(_ context.Context, in *pb.AppendEntriesRequest) (
 
 // maki: gogymnastics pattern serving and gracefully shutdown
 func startRPCServer(ctx context.Context, port int) {
+=======
+func main() {
+	logger := util.GetSugarLogger()
+
+	// STATIC MEMBERHSIP
+	membershipStr := flag.String("m", "", "the json string of MembershipBasicInfo")
+	flag.Parse()
+	fmt.Printf("membership: %s\n", *membershipStr)
+	if *membershipStr == "" {
+		panic("please provide the membership json string")
+	}
+	membershipBasicInfo := raft.Membership{}
+	err := json.Unmarshal([]byte(*membershipStr), &membershipBasicInfo)
+	if err != nil {
+		panic("failed to parse membership json string " + *membershipStr + ": " + err.Error())
+	}
+	raft.InitMembershipWithStaticConfig(&membershipBasicInfo)
+
+	// todo: shall start raft server here
+	// START THE GRPC SERVER
+	port := membershipBasicInfo.CurrentPort
+>>>>>>> 44b8385 (connect request vote of rpc server to raft server)
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		logger.Fatalw("failed to listen", "error", err)
