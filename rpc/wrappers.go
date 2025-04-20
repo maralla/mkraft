@@ -72,13 +72,12 @@ func (rc *InternalClientImpl) SendRequestVote(ctx context.Context, req *RequestV
 		for {
 			select {
 			case <-ctx.Done():
-				// will propagate to the child context as well
-				out <- RPCRespWrapper[*RequestVoteResponse]{Err: fmt.Errorf("context done without a response")}
+				out <- RPCRespWrapper[*RequestVoteResponse]{
+					Err: fmt.Errorf("SendRequestVote context done before getting a response")}
 				return
 			case <-retryTicker.C:
 				callRPC()
-			case response := <-singleResChan:
-				out <- response
+			case out <- <-singleResChan:
 				return
 			}
 		}
