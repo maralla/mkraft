@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"context"
 	"errors"
 	"sync"
 
@@ -153,16 +152,7 @@ func (mgr *StaticMembershipMgr) GetPeerClient(nodeID string) (rpc.InternalClient
 	}
 	mgr.conns.Store(nodeID, conn)
 
-	// todo: put it in graceful shutdown
-	// defer conn.Close()
 	rpcClient := rpc.NewRaftServiceClient(conn)
-	// todo: remove this
-	util.GetSugarLogger().Debugw("testing new rpc client")
-	resp, err := rpcClient.SayHello(context.Background(), &rpc.HelloRequest{
-		Name: "test rpc client",
-	})
-	util.GetSugarLogger().Debugw("hello in getting client response from member", "response", resp)
-
 	newClient := rpc.NewInternalClient(rpcClient)
 	mgr.clients.Store(nodeID, newClient)
 	return newClient, nil
