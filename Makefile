@@ -15,4 +15,4 @@ protogen:
 
 build:
 	@echo "Building the project..."
-	@go build -o mkraft
+	@go build -o bin/mkraft

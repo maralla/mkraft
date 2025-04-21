@@ -144,7 +144,7 @@ func (mgr *StaticMembershipMgr) GetPeerClient(nodeID string) (rpc.InternalClient
 	}
 
 	// todo: insecure credentials now
-	addr, _ := mgr.peerAddrs[nodeID]
+	addr := mgr.peerAddrs[nodeID]
 	util.GetSugarLogger().Debugw("creating new connection to", "nodeID", nodeID, "peerAddr", addr)
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -153,7 +153,8 @@ func (mgr *StaticMembershipMgr) GetPeerClient(nodeID string) (rpc.InternalClient
 	mgr.conns.Store(nodeID, conn)
 
 	rpcClient := rpc.NewRaftServiceClient(conn)
-	newClient := rpc.NewInternalClient(rpcClient)
+	newClient := rpc.NewInternalClient(
+		rpcClient, nodeID, addr)
 	mgr.clients.Store(nodeID, newClient)
 	return newClient, nil
 }
