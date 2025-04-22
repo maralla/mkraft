@@ -3,7 +3,6 @@ package rpc
 import (
 	"context"
 	"fmt"
-	"time"
 
 	util "github.com/maki3cat/mkraft/util"
 )
@@ -47,65 +46,6 @@ func (rc *InternalClientImpl) String() string {
 
 func (rc *InternalClientImpl) SayHello(ctx context.Context, req *HelloRequest) (*HelloReply, error) {
 	return rc.rawClient.SayHello(ctx, req)
-}
-
-// should call this with goroutine
-// the parent shall control the timeout of the election
-// this call is a retry call
-func (rc *InternalClientImpl) SendRequestVote(ctx context.Context, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse] {
-	logger.Debugw("send request vote", "req", req)
-	out := make(chan RPCRespWrapper[*RequestVoteResponse], 1)
-
-	retriedRPC := func() {
-
-		retryTicker := time.NewTicker(time.Millisecond * util.RPC_REUQEST_TIMEOUT_IN_MS)
-		defer retryTicker.Stop()
-
-		// maki: pattern here if we put channel outside and call go func outside
-		// if we try the 2 gorotuines will all write to this channel,
-		// and they will block causing goroutine leak
-		callRPC := func() chan RPCRespWrapper[*RequestVoteResponse] {
-			singleResChan := make(chan RPCRespWrapper[*RequestVoteResponse], 1)
-			go func() {
-				singleCallCtx, singleCallCancel := context.WithTimeout(ctx, time.Millisecond*(util.RPC_REUQEST_TIMEOUT_IN_MS-10))
-				defer singleCallCancel()
-
-				// todo: make sure the synchronous call will consume the ctx timeout in someway
-				response, err := rc.rawClient.RequestVote(singleCallCtx, req)
-				if err != nil {
-					logger.Errorw("single RPC error:", "to", rc, "error", err)
-				} else {
-					logger.Debugw("single RPC response:", "member", rc, "response", response)
-				}
-
-				wrapper := RPCRespWrapper[*RequestVoteResponse]{
-					Resp: response,
-					Err:  err,
-				}
-				singleResChan <- wrapper
-			}()
-			return singleResChan
-		}
-		singleResChan := callRPC()
-
-		for {
-			select {
-			case <-ctx.Done():
-				msg := fmt.Sprintf("SendRequestVote context done, %s", ctx.Err())
-				logger.Errorw("single RPC error:", "to", rc, "error", msg)
-				out <- RPCRespWrapper[*RequestVoteResponse]{Err: fmt.Errorf("%s", msg)}
-				return
-			case <-retryTicker.C:
-				logger.Debugw("retrying RPC", "to", rc, "req", req)
-				callRPC()
-			case out <- <-singleResChan:
-				return
-			}
-		}
-	}
-
-	retriedRPC()
-	return out
 }
 
 // the generator pattern
