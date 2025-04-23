@@ -19,3 +19,6 @@ mockgen:
 build:
 	@echo "Building the project..."
 	@go build -o bin/mkraft
+
+clean:
+	@rm bin/*
