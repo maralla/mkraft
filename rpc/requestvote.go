@@ -44,8 +44,6 @@ func (rc *InternalClientImpl) SendRequestVote(ctx context.Context, req *RequestV
 	out := make(chan RPCRespWrapper[*RequestVoteResponse], 1)
 
 	retriedRPC := func() {
-		retryTicker := time.NewTicker(time.Millisecond * util.RPC_REUQEST_TIMEOUT_IN_MS)
-		defer retryTicker.Stop()
 		singleResChan := AsyncCallRequestVote(ctx, rc.rawClient, req)
 		for {
 			select {
@@ -53,14 +51,21 @@ func (rc *InternalClientImpl) SendRequestVote(ctx context.Context, req *RequestV
 				out <- RPCRespWrapper[*RequestVoteResponse]{
 					Err: fmt.Errorf("%s", "election timeout for request votes")}
 				return
-			// to avoid race of singleResChan, and ticker
-			// the ticker shall be a bit longer than the RPC timeout
 			case resp := <-singleResChan:
-				out <- resp
-				return
-			case <-retryTicker.C:
-				logger.Debugw("retrying RPC", "to", rc, "req", req)
-				singleResChan = AsyncCallRequestVote(ctx, rc.rawClient, req)
+				if resp.Err != nil {
+					deadline, ok := ctx.Deadline()
+					if ok && time.Until(deadline) < util.GetConfig().GetRPCRequestTimeout() {
+						out <- resp
+						return
+					} else {
+						logger.Errorw("need retry, RPC error:", "to", rc, "error", resp.Err)
+						singleResChan = AsyncCallRequestVote(ctx, rc.rawClient, req)
+						continue
+					}
+				} else {
+					out <- resp
+					return
+				}
 			}
 		}
 	}
