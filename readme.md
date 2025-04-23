@@ -14,17 +14,18 @@ https://raft.github.io/
 ### Week April 19-30 2025
 
 #### Bug List 
-- [ ]when running server-1, the rpc send doesn't get connection refused error -> not logged?
-- [ ]cancel func deffered before assigned, probably the reason to panic;
-- [ ]server get the request, no one handles it;
+- [ ]run as leader has logic invariant broken
+- [x]when running server-1, the rpc send doesn't get connection refused error -> not logged?
+- [x]cancel func deffered before assigned, probably the reason to panic;
+- [x]server get the request, no one handles it;
 
 #### gRPC refinement
 - [ ] reading the following grpc docs to solidify current implementation
-    - https://grpc.io/docs/guides/health-checking/
+    - https://grpc.io/docs/guides/health-checking/ 
     - https://grpc.io/docs/guides/server-graceful-stop/
     - https://grpc.io/docs/guides/cancellation/
     - https://grpc.io/docs/guides/error/
-    - https://grpc.io/docs/guides/deadlines/
+    - https://grpc.io/docs/guides/deadlines/ (DONE)
 
 ### Week April 13-19 2025
 - [x] fix all todos and summarize into go-gymnastics (30%)
