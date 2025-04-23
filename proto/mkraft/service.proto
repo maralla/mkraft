@@ -4,14 +4,11 @@ option go_package = "./rpc;rpc";
 
 // The greeting service definition.
 service RaftService {
-
   rpc SayHello (HelloRequest) returns (HelloReply) {}
 
   rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse) {}
 
   rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse) {}
-
-  rpc AppendEntriesCliStream(stream AppendEntriesRequest) returns (AppendEntriesResponse) {}
 }
 
 message HelloRequest {

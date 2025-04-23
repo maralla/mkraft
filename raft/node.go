@@ -210,6 +210,20 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 	}
 }
 
+func (node *Node) startElection(ctx context.Context) chan *MajorityRequestVoteResp {
+	consensusChan := make(chan *MajorityRequestVoteResp, 1)
+	node.CurrentTerm++
+	node.VotedFor = node.NodeId
+	req := &rpc.RequestVoteRequest{
+		Term:        node.CurrentTerm,
+		CandidateId: node.NodeId,
+	}
+	ctxTimeout, _ := context.WithTimeout(
+		ctx, time.Duration(util.GetConfig().GetElectionTimeout()))
+	go RequestVoteSendForConsensus(ctxTimeout, req, consensusChan)
+	return consensusChan
+}
+
 /*
 PAPER (quote):
 Shared Rule: if any RPC request or response is received from a server with a higher term,
@@ -238,29 +252,7 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 	sugarLogger.Info("node has acquired semaphore in CANDIDATE state")
 	defer node.sem.Release(1)
 
-	var consensusChan chan *MajorityRequestVoteResp
-	var voteCancel context.CancelFunc
-	defer voteCancel()
-	var ctxTimeout context.Context
-
-	// leverage closure
-	tryElection := func() {
-		// buffer == 1 so that the goroutine can return immediately
-		// we only handle one out-going election at a time
-		consensusChan = make(chan *MajorityRequestVoteResp, 1)
-		node.CurrentTerm++
-		node.VotedFor = node.NodeId
-		req := &rpc.RequestVoteRequest{
-			Term:        node.CurrentTerm,
-			CandidateId: node.NodeId,
-		}
-		ctxTimeout, voteCancel = context.WithTimeout(
-			ctx, time.Duration(util.GetConfig().GetElectionTimeout())*time.Millisecond)
-		go RequestVoteSendForConsensus(ctxTimeout, req, consensusChan)
-	}
-
-	// the first trial of election
-	tryElection()
+	consensusChan := node.startElection(ctx)
 
 	ticker := time.NewTicker(util.GetConfig().GetElectionTimeout())
 	for {
@@ -271,7 +263,7 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 			return
 		case response := <-consensusChan: // some response from last election
 			// I don't think we need to reset the ticker here
-			voteCancel() // cancel the rest
+			// voteCancel() // cancel the rest
 			if response.VoteGranted {
 				node.State = StateLeader
 				go node.RunAsLeader(ctx)
@@ -279,7 +271,7 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 			} else {
 				if response.Term > node.CurrentTerm {
 					// some one has become a leader
-					voteCancel()
+					// voteCancel()
 					node.CurrentTerm = response.Term
 					node.ResetVoteFor()
 					node.State = StateFollower
@@ -292,11 +284,9 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 					)
 				}
 			}
-
 		case <-ticker.C: // last election timeout withno response
-			voteCancel()
-			tryElection()
-
+			// voteCancel()
+			consensusChan = node.startElection(ctx)
 		case requestVoteInternal := <-node.requestVoteChan: // commonRule: handling voteRequest from another candidate
 			if requestVoteInternal.IsTimeout.Load() {
 				sugarLogger.Warn("request vote is timeout")

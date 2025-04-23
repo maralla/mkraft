@@ -42,11 +42,6 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 		return
 	}
 
-	// URGENTbug
-	// todo: 1) the connection is refused;
-	// todo: 2) the grpc connection is lazy;
-	// todo: the original ctx has problem that it is Done immediately
-
 	memberCount := memberMgr.GetMemberCount()
 	resChan := make(chan rpc.RPCRespWrapper[*rpc.RequestVoteResponse], memberCount) // buffered with len(members) to prevent goroutine leak
 	for _, member := range memberClients {
