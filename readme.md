@@ -14,7 +14,8 @@ https://raft.github.io/
 ### Week April 19-30 2025
 
 #### Bug List 
-- [ ]run as leader has logic invariant broken
+- [ ]when 3 nodes run together, the first leader will panic
+- [ ]when 2 nodes run together, no one becomes the leader
 - [x]when running server-1, the rpc send doesn't get connection refused error -> not logged?
 - [x]cancel func deffered before assigned, probably the reason to panic;
 - [x]server get the request, no one handles it;
