@@ -180,13 +180,20 @@ func AppendEntriesSendForConsensus(
 					} else {
 						failAccumulated++
 						if failAccumulated > total-majority {
-							sugarLogger.Error("invairant failed, one same term has different leader?")
-							panic("this should not happen, the consensus algorithm is not implmented correctly")
+							sugarLogger.Warn("another node with same term becomes the leader")
+							respChan <- &MajorityAppendEntriesResp{
+								Term:    request.Term,
+								Success: false,
+							}
+							return
 						}
 					}
 				}
 				if resp.Term < request.Term {
-					sugarLogger.Error("invairant failed, smaller term is not overwritten by larger term")
+					sugarLogger.Errorw(
+						"invairant failed, smaller term is not overwritten by larger term",
+						"request", request,
+						"response", resp)
 					panic("this should not happen, the consensus algorithm is not implmented correctly")
 				}
 			}
@@ -206,12 +213,14 @@ func AppendEntriesSendForConsensus(
 // todo: checks the voting works correctly for any state of the node, candidate or leader or follower
 // todo: not sure what state shall be changed inside or outside in the caller
 func (node *Node) voting(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
+	sugarLogger := util.GetSugarLogger()
+	sugarLogger.Debugw("consensus module handling voting request", "request", req)
 	var response rpc.RequestVoteResponse
 	if req.Term > node.CurrentTerm {
 		node.VotedFor = req.CandidateId
 		node.CurrentTerm = req.Term
 		response = rpc.RequestVoteResponse{
-			Term:        node.CurrentTerm,
+			Term:        req.Term,
 			VoteGranted: true,
 		}
 	} else if req.Term < node.CurrentTerm {
@@ -233,6 +242,9 @@ func (node *Node) voting(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
 			}
 		}
 	}
+	sugarLogger.Debugw(
+		"consensus returns voting response",
+		"response.term", response.Term, "response.voteGranted", response.VoteGranted)
 	return &response
 }
 

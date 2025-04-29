@@ -52,6 +52,7 @@ func (rc *InternalClientImpl) SayHello(ctx context.Context, req *HelloRequest) (
 func (rc *InternalClientImpl) SendAppendEntries(
 	ctx context.Context, req *AppendEntriesRequest) RPCRespWrapper[*AppendEntriesResponse] {
 	response, err := rc.rawClient.AppendEntries(ctx, req)
+	logger.Debugw("InternalClinet SendAppendEntries", "request", req, "response", response, "error", err)
 	wrapper := RPCRespWrapper[*AppendEntriesResponse]{
 		Resp: response,
 		Err:  err,

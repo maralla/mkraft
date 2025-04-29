@@ -111,6 +111,7 @@ func (node *Node) ResetVoteFor() {
 	node.VotedFor = ""
 }
 
+// todo: this has a congestion problem
 func (node *Node) VoteRequest(req *RequestVoteInternal) {
 	node.requestVoteChan <- req
 }
@@ -173,14 +174,17 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 
 	for {
 		select {
+
 		case <-ctx.Done():
 			sugarLogger.Warn("context done")
 			memberMgr.GracefulShutdown()
 			return
+
 		case <-electionTicker.C:
 			node.State = StateCandidate
 			go node.RunAsCandidate(ctx)
 			return
+
 		case requestVoteInternal := <-node.requestVoteChan:
 			if requestVoteInternal.IsTimeout.Load() {
 				sugarLogger.Warn("request vote is timeout")

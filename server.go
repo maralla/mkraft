@@ -21,7 +21,7 @@ func (s *Server) SayHello(_ context.Context, in *pb.HelloRequest) (*pb.HelloRepl
 
 // timeout handling guideline: https://grpc.io/docs/guides/deadlines/
 func (s *Server) RequestVote(_ context.Context, in *pb.RequestVoteRequest) (*pb.RequestVoteResponse, error) {
-	logger.Infof("RequestVote received: %v", in)
+	logger.Infof("RPC Server RequestVote received: %v", in)
 	respChan := make(chan *pb.RPCRespWrapper[*pb.RequestVoteResponse], 1)
 	internalReq := &raft.RequestVoteInternal{
 		Request:    in,
@@ -45,6 +45,7 @@ func (s *Server) RequestVote(_ context.Context, in *pb.RequestVoteRequest) (*pb.
 			logger.Error("error in getting response from raft server", resp.Err)
 			return nil, resp.Err
 		}
+		logger.Infof("RPC Server RequestVote respond: %v", resp.Resp)
 		return resp.Resp, nil
 	}
 }
