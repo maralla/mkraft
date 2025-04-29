@@ -15,7 +15,7 @@ https://raft.github.io/
 
 #### Bug List 
 - [ ]when 2 nodes run together, no one becomes the leader
-- [ ]when 3 nodes run together, the first leader will panic because appendEntries return the incorrect term
+- [x]when 3 nodes run together, the first leader will panic because appendEntries return the incorrect term
 - [x]when running server-1, the rpc send doesn't get connection refused error -> not logged?
 - [x]cancel func deffered before assigned, probably the reason to panic;
 - [x]server get the request, no one handles it;
