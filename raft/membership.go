@@ -72,7 +72,6 @@ type MembershipMgrIface interface {
 	// if the memebrship is dynamic, the count and peer change and may not be consistent
 	GetMemberCount() int
 	GetAllPeerClients() ([]rpc.InternalClientIface, error)
-	Warmup()
 	GracefulShutdown()
 }
 
@@ -99,16 +98,6 @@ type StaticMembershipMgr struct {
 
 func (mgr *StaticMembershipMgr) GetCurrentNodeID() string {
 	return mgr.membership.CurrentNodeID
-}
-
-func (mgr *StaticMembershipMgr) Warmup() {
-	_, err := mgr.GetAllPeerClients()
-	if err != nil {
-		util.GetSugarLogger().Errorw("failed to warmup peer clients", "error", err)
-	} else {
-		util.GetSugarLogger().Info("warmup peer clients done")
-
-	}
 }
 
 func (mgr *StaticMembershipMgr) GracefulShutdown() {
@@ -149,6 +138,7 @@ func (mgr *StaticMembershipMgr) GetPeerClient(nodeID string) (rpc.InternalClient
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		util.GetSugarLogger().Errorw("failed to connect to server", "nodeID", nodeID, "error", err)
+		return nil, err
 	}
 	mgr.conns.Store(nodeID, conn)
 
@@ -168,17 +158,16 @@ func (mgr *StaticMembershipMgr) GetAllPeerClients() ([]rpc.InternalClientIface, 
 	for _, nodeInfo := range mgr.membership.AllMembers {
 		if nodeInfo.NodeID != mgr.membership.CurrentNodeID {
 			client, err := mgr.GetPeerClient(nodeInfo.NodeID)
-			// todo: here the get client doesn't stop the process
 			if err != nil {
 				util.GetSugarLogger().Errorw(
-					"failed to get peer client", "nodeID", nodeInfo.NodeID, "error", err)
+					"failed to get peer client, omit this one", "nodeID", nodeInfo.NodeID, "error", err)
 				continue
 			}
 			peers = append(peers, client)
 		}
 	}
 	if len(peers) == 0 {
-		return peers, errors.New("no peers found")
+		return peers, errors.New("no peers found without errors")
 	}
 	return peers, nil
 }

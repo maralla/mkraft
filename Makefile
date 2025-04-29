@@ -22,3 +22,6 @@ build:
 
 clean:
 	@rm bin/*
+
+
+#  ./bin/mkraft -c config/config1.yaml > output1.log 2>&1
