@@ -214,7 +214,7 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 	}
 }
 
-func (node *Node) startElection(ctx context.Context) chan *MajorityRequestVoteResp {
+func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteResp {
 	consensusChan := make(chan *MajorityRequestVoteResp, 1)
 	node.CurrentTerm++
 	node.VotedFor = node.NodeId
@@ -256,7 +256,7 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 	sugarLogger.Info("node has acquired semaphore in CANDIDATE state")
 	defer node.sem.Release(1)
 
-	consensusChan := node.startElection(ctx)
+	consensusChan := node.runOneElection(ctx)
 
 	ticker := time.NewTicker(util.GetConfig().GetElectionTimeout())
 	for {
@@ -290,7 +290,7 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 			}
 		case <-ticker.C: // last election timeout withno response
 			// voteCancel()
-			consensusChan = node.startElection(ctx)
+			consensusChan = node.runOneElection(ctx)
 		case requestVoteInternal := <-node.requestVoteChan: // commonRule: handling voteRequest from another candidate
 			if requestVoteInternal.IsTimeout.Load() {
 				sugarLogger.Warn("request vote is timeout")
