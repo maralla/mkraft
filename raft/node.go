@@ -49,8 +49,6 @@ func (state NodeState) String() string {
 	return "Unknown State"
 }
 
-// the data structure used by the Raft-server
-// todo: shall I add a timeout ctx for this internal request as well?
 type RequestVoteInternal struct {
 	Request    *rpc.RequestVoteRequest
 	RespWraper chan *rpc.RPCRespWrapper[*rpc.RequestVoteResponse]
@@ -58,8 +56,9 @@ type RequestVoteInternal struct {
 }
 
 type AppendEntriesInternal struct {
-	Request      *rpc.AppendEntriesRequest
-	ResponseChan chan *rpc.AppendEntriesResponse
+	Request    *rpc.AppendEntriesRequest
+	RespWraper chan *rpc.RPCRespWrapper[*rpc.AppendEntriesResponse]
+	IsTimeout  atomic.Bool
 }
 
 type ClientCommandInternal struct {
@@ -111,7 +110,6 @@ func (node *Node) ResetVoteFor() {
 	node.VotedFor = ""
 }
 
-// todo: this has a congestion problem
 func (node *Node) VoteRequest(req *RequestVoteInternal) {
 	node.requestVoteChan <- req
 }
@@ -122,14 +120,15 @@ func (node *Node) AppendEntryRequest(req *AppendEntriesInternal) {
 
 func NewNode(nodeId string) *Node {
 	return &Node{
-		State:             StateFollower, // servers start up as followers
-		NodeId:            nodeId,
-		sem:               semaphore.NewWeighted(1),
-		CurrentTerm:       0,
-		VotedFor:          "",
-		clientCommandChan: make(chan *ClientCommandInternal),
-		requestVoteChan:   make(chan *RequestVoteInternal),
-		appendEntryChan:   make(chan *AppendEntriesInternal),
+		State:       StateFollower, // servers start up as followers
+		NodeId:      nodeId,
+		sem:         semaphore.NewWeighted(1),
+		CurrentTerm: 0,
+		VotedFor:    "",
+		//todo: the configuration
+		clientCommandChan: make(chan *ClientCommandInternal, 100),
+		requestVoteChan:   make(chan *RequestVoteInternal, 100),
+		appendEntryChan:   make(chan *AppendEntriesInternal, 100),
 		LeaderId:          "",
 	}
 }
@@ -201,14 +200,15 @@ func (node *Node) RunAsFollower(ctx context.Context) {
 			requestVoteInternal.RespWraper <- wrapper
 			electionTicker.Reset(util.GetConfig().GetElectionTimeout())
 
-		case appendEntriesInternal := <-node.appendEntryChan:
+		case req := <-node.appendEntryChan:
 			electionTicker.Stop()
-
 			// for the follower, the node state has no reason to change because of the request
-			req := appendEntriesInternal.Request
-			resChan := appendEntriesInternal.ResponseChan
-			resChan <- node.appendEntries(req)
-
+			resp := node.appendEntries(req.Request)
+			wrappedResp := &rpc.RPCRespWrapper[*rpc.AppendEntriesResponse]{
+				Resp: resp,
+				Err:  nil,
+			}
+			req.RespWraper <- wrappedResp
 			electionTicker.Reset(util.GetConfig().GetElectionTimeout())
 		}
 	}
@@ -310,17 +310,17 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 				go node.RunAsFollower(ctx)
 				return
 			}
-		case request := <-node.appendEntryChan: // commonRule: handling appendEntry from a leader which can be stale or new
-			req := request.Request
-			resChan := request.ResponseChan
-
-			resp := node.appendEntries(req)
-			resChan <- resp
-
+		case req := <-node.appendEntryChan: // commonRule: handling appendEntry from a leader which can be stale or new
+			resp := node.appendEntries(req.Request)
+			wrappedResp := &rpc.RPCRespWrapper[*rpc.AppendEntriesResponse]{
+				Resp: resp,
+				Err:  nil,
+			}
+			req.RespWraper <- wrappedResp
 			if resp.Success {
 				// this means there is a leader there
 				node.State = StateFollower
-				node.CurrentTerm = req.Term
+				node.CurrentTerm = req.Request.Term
 				go node.RunAsFollower(ctx)
 				return
 			}
@@ -493,17 +493,17 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 					return
 				}
 			}
-		case request := <-node.appendEntryChan: // commonRule: same with candidate
-			req := request.Request
-			resChan := request.ResponseChan
-
-			resp := node.appendEntries(req)
-			resChan <- resp
-
+		case req := <-node.appendEntryChan: // commonRule: same with candidate
+			resp := node.appendEntries(req.Request)
+			wrapper := rpc.RPCRespWrapper[*rpc.AppendEntriesResponse]{
+				Resp: resp,
+				Err:  nil,
+			}
+			req.RespWraper <- &wrapper
 			if resp.Success {
 				// this means there is a leader there
 				node.State = StateFollower
-				node.CurrentTerm = req.Term
+				node.CurrentTerm = req.Request.Term
 				go node.RunAsFollower(ctx)
 				return
 			}
