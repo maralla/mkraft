@@ -2,6 +2,7 @@ package raft
 
 import (
 	"context"
+	"errors"
 
 	"github.com/maki3cat/mkraft/rpc"
 	"github.com/maki3cat/mkraft/util"
@@ -26,13 +27,14 @@ type MajorityRequestVoteResp struct {
 }
 
 // CONSENSUS MODULE
-// todo: currently the result channel only retruns when there is win/fail for sure
+// the response returns error when the majority of peers failed
 func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest, resultChannel chan *MajorityRequestVoteResp) {
 	logger := util.GetSugarLogger()
-	logger.Debugw("RequestVoteSendForConsensus", "request", request)
 
-	// maki: patten, the majority doesn't fail is not fail
-	// todo: this is not the right solution, we should just use the clients left as long as they reach the majority
+	total := memberMgr.GetMemberCount()
+	majority := total/2 + 1
+	logger.Debugw("RequestVoteSendForConsensus", "request", request, "total", total, "majority", majority)
+
 	memberClients, err := memberMgr.GetAllPeerClients()
 	if err != nil {
 		sugarLogger.Error("error in getting all peer clients", err)
@@ -41,9 +43,16 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 		}
 		return
 	}
+	if len(memberClients)+1 < majority {
+		sugarLogger.Error("no member clients found")
+		resultChannel <- &MajorityRequestVoteResp{
+			Error: errors.New("no member clients found"),
+		}
+		return
+	}
 
-	memberCount := memberMgr.GetMemberCount()
-	resChan := make(chan rpc.RPCRespWrapper[*rpc.RequestVoteResponse], memberCount) // buffered with len(members) to prevent goroutine leak
+	peersCount := len(memberClients)
+	resChan := make(chan rpc.RPCRespWrapper[*rpc.RequestVoteResponse], peersCount) // buffered with len(members) to prevent goroutine leak
 	for _, member := range memberClients {
 		// FAN-OUT
 		// maki: todo topic for go gynastics
@@ -60,23 +69,31 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 	}
 
 	// FAN-IN WITH STOPPING SHORT
-	total := memberCount
-	majority := memberCount/2 + 1
-	sugarLogger.Debugw("current setup of membership", "majority", majority, "total", total, "memberCount", memberCount)
-
-	voteAccumulated := 0
+	sugarLogger.Debugw("current setup of membership", "majority", majority, "total", total, "peersCount", peersCount)
+	voteAccumulated := 1 // the node itself is counted as a vote
 	voteFailed := 0
-	for range memberCount - 1 {
+	for range peersCount {
 		select {
 		case res := <-resChan:
 			if err := res.Err; err != nil {
+				voteFailed++
 				sugarLogger.Errorf("error in sending request vote to one node: %v", err)
-				continue
+				remains := peersCount - voteFailed - voteAccumulated
+				needs := majority - voteAccumulated
+				if remains < needs {
+					resultChannel <- &MajorityRequestVoteResp{
+						VoteGranted: false,
+						Error:       errors.New("majority of nodes failed to respond"),
+					}
+					return
+				} else {
+					continue
+				}
 			} else {
 				resp := res.Resp
 				// if someone responds with a term greater than the current term
 				if resp.Term > request.Term {
-					sugarLogger.Info("term is greater than current term")
+					sugarLogger.Info("peer's term is greater than the node's current term")
 					resultChannel <- &MajorityRequestVoteResp{
 						Term:        resp.Term,
 						VoteGranted: false,
@@ -95,11 +112,14 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 							return
 						}
 					} else {
-						// todo: not sure if this the right logic to do this
-						// a fail or draw in the election, unsure
-						// no need to return anything
 						voteFailed++
-						if voteFailed > total-majority {
+						remains := peersCount - voteFailed - voteAccumulated
+						needs := majority - voteAccumulated
+						if remains < needs {
+							resultChannel <- &MajorityRequestVoteResp{
+								VoteGranted: false,
+								Error:       errors.New("majority of nodes failed to respond"),
+							}
 							return
 						}
 					}
