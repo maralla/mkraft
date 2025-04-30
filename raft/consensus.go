@@ -43,8 +43,7 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 		return nil, err
 	}
 	if !calculateIfMajorityMet(total, len(peerClients)) {
-		logger.Error("no member clients found")
-		return nil, err
+		return nil, errors.New("no member clients found")
 	}
 
 	peersCount := len(peerClients)

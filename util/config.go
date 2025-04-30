@@ -8,7 +8,7 @@ import (
 
 // current design: membership is not a part of the configuration
 var (
-	theConf *Config
+	theConf ConfigIface
 )
 
 func InitConf() {
@@ -16,7 +16,7 @@ func InitConf() {
 	sugarLogger.Infof("init the config to %s", theConf)
 }
 
-func GetConfig() *Config {
+func GetConfig() ConfigIface {
 	return theConf
 }
 
@@ -45,6 +45,17 @@ const RPC_REUQEST_TIMEOUT_IN_MS = 200
 
 const ELECTION_TIMEOUT_MIN_IN_MS = 350
 const ELECTION_TIMEOUT_MAX_IN_MS = 550
+
+type ConfigIface interface {
+	GetRPCRequestTimeout() time.Duration
+	GetElectionTimeout() time.Duration
+	GetRaftNodeRequestBuffer() int
+	GetLeaderHeartbeatPeriod() time.Duration
+	GetLeaderBufferSize() int
+	GetClientCommandBufferSize() int
+	GetClientCommandBatchSize() int
+	String() string
+}
 
 type Config struct {
 	RaftNodeRequestBufferSize int `json:"raft_node_request_buffer_size"`
