@@ -138,7 +138,7 @@ func (node *Node) ClientCommandRequest(request []byte) {
 }
 
 func NewNode(nodeId string) *Node {
-	bufferSize := util.GetConfig().GetRaftNodeRequestBuffer()
+	bufferSize := util.GetConfig().GetRaftNodeRequestBufferSize()
 	return &Node{
 		State:             StateFollower, // servers start up as followers
 		NodeId:            nodeId,

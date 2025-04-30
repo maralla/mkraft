@@ -82,20 +82,6 @@ func (mr *MockConfigIfaceMockRecorder) GetElectionTimeout() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetElectionTimeout", reflect.TypeOf((*MockConfigIface)(nil).GetElectionTimeout))
 }
 
-// GetLeaderBufferSize mocks base method.
-func (m *MockConfigIface) GetLeaderBufferSize() int {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetLeaderBufferSize")
-	ret0, _ := ret[0].(int)
-	return ret0
-}
-
-// GetLeaderBufferSize indicates an expected call of GetLeaderBufferSize.
-func (mr *MockConfigIfaceMockRecorder) GetLeaderBufferSize() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeaderBufferSize", reflect.TypeOf((*MockConfigIface)(nil).GetLeaderBufferSize))
-}
-
 // GetLeaderHeartbeatPeriod mocks base method.
 func (m *MockConfigIface) GetLeaderHeartbeatPeriod() time.Duration {
 	m.ctrl.T.Helper()
@@ -124,18 +110,18 @@ func (mr *MockConfigIfaceMockRecorder) GetRPCRequestTimeout() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRPCRequestTimeout", reflect.TypeOf((*MockConfigIface)(nil).GetRPCRequestTimeout))
 }
 
-// GetRaftNodeRequestBuffer mocks base method.
-func (m *MockConfigIface) GetRaftNodeRequestBuffer() int {
+// GetRaftNodeRequestBufferSize mocks base method.
+func (m *MockConfigIface) GetRaftNodeRequestBufferSize() int {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetRaftNodeRequestBuffer")
+	ret := m.ctrl.Call(m, "GetRaftNodeRequestBufferSize")
 	ret0, _ := ret[0].(int)
 	return ret0
 }
 
-// GetRaftNodeRequestBuffer indicates an expected call of GetRaftNodeRequestBuffer.
-func (mr *MockConfigIfaceMockRecorder) GetRaftNodeRequestBuffer() *gomock.Call {
+// GetRaftNodeRequestBufferSize indicates an expected call of GetRaftNodeRequestBufferSize.
+func (mr *MockConfigIfaceMockRecorder) GetRaftNodeRequestBufferSize() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRaftNodeRequestBuffer", reflect.TypeOf((*MockConfigIface)(nil).GetRaftNodeRequestBuffer))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRaftNodeRequestBufferSize", reflect.TypeOf((*MockConfigIface)(nil).GetRaftNodeRequestBufferSize))
 }
 
 // String mocks base method.

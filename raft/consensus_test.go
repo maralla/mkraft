@@ -5,26 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/maki3cat/mkraft/rpc"
+	"github.com/maki3cat/mkraft/util"
 	gomock "go.uber.org/mock/gomock"
 )
 
-type DummyIface interface {
-	Dummay()
-}
-
-type DummyImpl struct {
-}
-
-func (d *DummyImpl) Dummay() {
-	fmt.Println("DummyImpl Dummay called")
-}
-
-func TestPrintIface(t *testing.T) {
-	var iface DummyIface = &DummyImpl{}
-	fmt.Println(iface)
-}
 func TestCalculateIfMajorityMet(t *testing.T) {
 	tests := []struct {
 		total               int
@@ -32,9 +19,11 @@ func TestCalculateIfMajorityMet(t *testing.T) {
 		expected            bool
 	}{
 		{total: 5, peerVoteAccumulated: 3, expected: true},
-		{total: 5, peerVoteAccumulated: 2, expected: false},
+		{total: 5, peerVoteAccumulated: 2, expected: true},
+		{total: 5, peerVoteAccumulated: 1, expected: false},
 		{total: 3, peerVoteAccumulated: 2, expected: true},
-		{total: 3, peerVoteAccumulated: 1, expected: false},
+		{total: 3, peerVoteAccumulated: 1, expected: true},
+		{total: 3, peerVoteAccumulated: 0, expected: false},
 	}
 
 	for _, test := range tests {
@@ -53,9 +42,10 @@ func TestCalculateIfAlreadyFail(t *testing.T) {
 		voteFailed          int
 		expected            bool
 	}{
-		{total: 5, peersCount: 4, peerVoteAccumulated: 2, voteFailed: 1, expected: false},
-		{total: 5, peersCount: 4, peerVoteAccumulated: 1, voteFailed: 2, expected: false},
+		{total: 5, peersCount: 3, peerVoteAccumulated: 2, voteFailed: 1, expected: false},
+		{total: 5, peersCount: 3, peerVoteAccumulated: 1, voteFailed: 2, expected: true},
 		{total: 5, peersCount: 4, peerVoteAccumulated: 1, voteFailed: 3, expected: true},
+		{total: 5, peersCount: 4, peerVoteAccumulated: 1, voteFailed: 2, expected: false},
 
 		{total: 3, peersCount: 1, peerVoteAccumulated: 0, voteFailed: 1, expected: true},
 		{total: 3, peersCount: 2, peerVoteAccumulated: 1, voteFailed: 0, expected: false},
@@ -68,18 +58,14 @@ func TestCalculateIfAlreadyFail(t *testing.T) {
 		}
 	}
 }
+
 func TestRequestVoteSendForConsensus(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
-	// Mock dependencies
+	mockConfig := util.NewMockConfigIface(ctrl)
+	mockConfig.EXPECT().GetElectionTimeout().Return(1000 * time.Millisecond).AnyTimes()
 	mockMemberMgr := NewMockMembershipMgrIface(ctrl)
 	memberMgr = mockMemberMgr
-	mockClient1 := rpc.NewMockInternalClientIface(ctrl)
-	mockClient2 := rpc.NewMockInternalClientIface(ctrl)
-	peerClients := []rpc.InternalClientIface{mockClient1, mockClient2}
-	// majorityClients := []rpc.InternalClientIface{mockClient1}
-
-	// Removed unused variables allPeerClients and notEnoughPeerClients
 
 	tests := []struct {
 		name         string
@@ -91,8 +77,8 @@ func TestRequestVoteSendForConsensus(t *testing.T) {
 		{
 			name: "Error getting peer clients",
 			mockSetup: func() {
-				mockMemberMgr.EXPECT().GetMemberCount().Return(3)
-				mockMemberMgr.EXPECT().GetAllPeerClients().Return(nil, errors.New("mock error"))
+				mockMemberMgr.EXPECT().GetMemberCount().Return(3).Times(1)
+				mockMemberMgr.EXPECT().GetAllPeerClients().Return(nil, errors.New("mock error")).Times(1)
 			},
 			request:      &rpc.RequestVoteRequest{Term: 1},
 			expectedResp: nil,
@@ -101,8 +87,8 @@ func TestRequestVoteSendForConsensus(t *testing.T) {
 		{
 			name: "Not enough peer clients",
 			mockSetup: func() {
-				mockMemberMgr.EXPECT().GetMemberCount().Return(3)
-				mockMemberMgr.EXPECT().GetAllPeerClients().Return(nil, nil) // Fixed undefined peerClients
+				mockMemberMgr.EXPECT().GetMemberCount().Return(3).Times(1)
+				mockMemberMgr.EXPECT().GetAllPeerClients().Return(nil, nil).Times(1) // Fixed undefined peerClients
 			},
 			request:      &rpc.RequestVoteRequest{Term: 1},
 			expectedResp: nil,
@@ -111,8 +97,22 @@ func TestRequestVoteSendForConsensus(t *testing.T) {
 		{
 			name: "Majority vote granted",
 			mockSetup: func() {
-				mockMemberMgr.EXPECT().GetAllPeerClients().Return(peerClients, nil)
-				mockMemberMgr.EXPECT().GetMemberCount().Return(3)
+
+				respChan := make(chan rpc.RPCRespWrapper[*rpc.RequestVoteResponse], 1)
+				respChan <- rpc.RPCRespWrapper[*rpc.RequestVoteResponse]{
+					Err:  nil,
+					Resp: &rpc.RequestVoteResponse{Term: 1, VoteGranted: true},
+				}
+				mockClient1 := rpc.NewMockInternalClientIface(ctrl)
+				mockClient1.EXPECT().SendRequestVote(
+					gomock.Any(), gomock.Any()).Return(respChan).Times(1)
+
+				peerClients := make([]rpc.InternalClientIface, 1)
+				peerClients[0] = mockClient1
+				fmt.Printf("%d\n", len(peerClients))
+
+				mockMemberMgr.EXPECT().GetAllPeerClients().Return(peerClients, nil).Times(1)
+				mockMemberMgr.EXPECT().GetMemberCount().Return(3).Times(1)
 			},
 			request: &rpc.RequestVoteRequest{Term: 1},
 			expectedResp: &MajorityRequestVoteResp{
@@ -121,28 +121,82 @@ func TestRequestVoteSendForConsensus(t *testing.T) {
 			},
 			expectedErr: nil,
 		},
-		// {
-		// 	name: "Higher term received",
-		// 	mockSetup: func() {
-		// 		mockMemberMgr.EXPECT().GetAllPeerClients().Return(majorityClients, nil)
-		// 		mockMemberMgr.EXPECT().GetMemberCount().Return(3)
-		// 	},
-		// 	request: &rpc.RequestVoteRequest{Term: 1},
-		// 	expectedResp: &MajorityRequestVoteResp{
-		// 		Term:        2,
-		// 		VoteGranted: false,
-		// 	},
-		// 	expectedErr: nil,
-		// },
+		{
+			name: "Higher term received",
+			mockSetup: func() {
+				respChan := make(chan rpc.RPCRespWrapper[*rpc.RequestVoteResponse], 1)
+				respChan <- rpc.RPCRespWrapper[*rpc.RequestVoteResponse]{
+					Err:  nil,
+					Resp: &rpc.RequestVoteResponse{Term: 2, VoteGranted: false},
+				}
+				mockClient1 := rpc.NewMockInternalClientIface(ctrl)
+				mockClient1.EXPECT().SendRequestVote(
+					gomock.Any(), gomock.Any()).Return(respChan).Times(1)
+
+				peerClients := make([]rpc.InternalClientIface, 1)
+				peerClients[0] = mockClient1
+				fmt.Printf("%d\n", len(peerClients))
+
+				mockMemberMgr.EXPECT().GetAllPeerClients().Return(peerClients, nil)
+				mockMemberMgr.EXPECT().GetMemberCount().Return(3)
+			},
+			request: &rpc.RequestVoteRequest{Term: 1},
+			expectedResp: &MajorityRequestVoteResp{
+				Term:        2,
+				VoteGranted: false,
+			},
+			expectedErr: nil,
+		},
+		{
+			name: "Majority failed to respond",
+			mockSetup: func() {
+				respChan := make(chan rpc.RPCRespWrapper[*rpc.RequestVoteResponse], 1)
+				respChan <- rpc.RPCRespWrapper[*rpc.RequestVoteResponse]{
+					Err:  errors.New("mock error"),
+					Resp: nil,
+				}
+				mockClient1 := rpc.NewMockInternalClientIface(ctrl)
+				mockClient1.EXPECT().SendRequestVote(
+					gomock.Any(), gomock.Any()).Return(respChan).Times(1)
+
+				peerClients := make([]rpc.InternalClientIface, 1)
+				peerClients[0] = mockClient1
+				fmt.Printf("%d\n", len(peerClients))
+
+				mockMemberMgr.EXPECT().GetAllPeerClients().Return(peerClients, nil)
+				mockMemberMgr.EXPECT().GetMemberCount().Return(3)
+			},
+			request:      &rpc.RequestVoteRequest{Term: 1},
+			expectedResp: nil,
+			expectedErr:  errors.New("majority of nodes failed to respond"),
+		},
+		{
+			name: "Context timeout",
+			mockSetup: func() {
+				respChan := make(chan rpc.RPCRespWrapper[*rpc.RequestVoteResponse], 1)
+				mockClient1 := rpc.NewMockInternalClientIface(ctrl)
+				mockClient1.EXPECT().SendRequestVote(
+					gomock.Any(), gomock.Any()).Return(respChan).Times(1)
+
+				peerClients := make([]rpc.InternalClientIface, 1)
+				peerClients[0] = mockClient1
+				fmt.Printf("%d\n", len(peerClients))
+
+				mockMemberMgr.EXPECT().GetAllPeerClients().Return(peerClients, nil)
+				mockMemberMgr.EXPECT().GetMemberCount().Return(3)
+			},
+			request:      &rpc.RequestVoteRequest{Term: 1},
+			expectedResp: nil,
+			expectedErr:  errors.New("context done"),
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			// Setup mocks
 			test.mockSetup()
-
-			// Call the function
-			ctx := context.Background()
+			ctx, _ := context.WithTimeout(context.Background(), 300*time.Millisecond)
+			// ctx := context.Background()
 			resp, err := RequestVoteSendForConsensus(ctx, test.request)
 
 			// Validate results

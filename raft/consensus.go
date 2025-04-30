@@ -11,7 +11,7 @@ import (
 var logger = util.GetSugarLogger()
 
 func calculateIfMajorityMet(total, peerVoteAccumulated int) bool {
-	return peerVoteAccumulated+peerVoteAccumulated >= total
+	return (peerVoteAccumulated + 1) >= total/2+1
 }
 
 // assumes total > peersCount
@@ -53,9 +53,7 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 		// maki: todo topic for go gynastics
 		go func() {
 			memberHandle := member
-			logger.Debugw("fan out to request vote", "member", memberHandle)
 			timeout := util.GetConfig().GetElectionTimeout()
-			logger.Debugw("send request vote", "timeout", timeout)
 			ctxWithTimeout, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 			// FAN-IN
@@ -110,12 +108,11 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 				}
 			}
 		case <-ctx.Done():
-			logger.Info("context canceled")
-			return nil, errors.New("context canceled")
+			logger.Info("context done")
+			return nil, errors.New("context done")
 		}
 	}
-	// todo: panic not safe here, cannot let the program crash
-	panic("this should not happen, the consensus algorithm is not implmented correctly")
+	return nil, errors.New("this should not happen, the consensus algorithm is not implmented correctly")
 }
 
 /*
@@ -204,5 +201,5 @@ func AppendEntriesSendForConsensus(
 			return nil, errors.New("context canceled")
 		}
 	}
-	panic("this should not happen, the consensus algorithm is not implmented correctly")
+	return nil, errors.New("this should not happen, the consensus algorithm is not implmented correctly")
 }
