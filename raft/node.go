@@ -62,8 +62,9 @@ type AppendEntriesInternal struct {
 }
 
 type ClientCommandInternal struct {
-	request []byte
-	// resChan chan []byte
+	request  []byte
+	respChan chan []byte
+	errChan  chan error
 }
 
 type TermRank int
@@ -78,9 +79,11 @@ type Node struct {
 	NodeId   string // maki: nodeID uuid or number or something else?
 	State    NodeState
 
-	// only leader handles this channel
-	// todo: others reject this directly
-	clientCommandChan chan *ClientCommandInternal
+	// leader only channels
+	// gracefully clean every time a leader degrades to a follower
+	// reset these 2 data structures everytime a new leader is elected
+	clientCommandChan     chan *ClientCommandInternal
+	leaderDegradationChan chan TermRank
 
 	// shared by all states
 	requestVoteChan chan *RequestVoteInternal
@@ -102,6 +105,11 @@ type Node struct {
 	// todo: in the logging part
 	// nextIndex  []int
 	// matchIndex []int
+}
+
+// todo: use this to replace all
+func (node *Node) GracefulShutdown(ctx context.Context) {
+	memberMgr.GracefulShutdown()
 }
 
 // maki: go gymnastics for sync values

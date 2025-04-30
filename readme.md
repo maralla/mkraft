@@ -11,10 +11,14 @@ https://raft.github.io/
 
 ## TODO List
 
+- [ ] (1) the biggest feature of append entries 
+- [ ] (2) after (1) add batching for requests of leaders
+- [ ] (3) after (2), (3) add rate limiter, no sure which layer it shall be added into, the out most? probably also the inner part of appendEntries to keep it from starting too many goroutines, but for sure the 2 points are rpc-server and raft-node-leader
+
 ### Week April 19-30 2025
 
 #### Bug List 
-- [ ]when 2 nodes run together, no one becomes the leader
+- [x]when 2 nodes run together, no one becomes the leader
 - [x]when 3 nodes run together, the first leader will panic because appendEntries return the incorrect term
 - [x]when running server-1, the rpc send doesn't get connection refused error -> not logged?
 - [x]cancel func deffered before assigned, probably the reason to panic;

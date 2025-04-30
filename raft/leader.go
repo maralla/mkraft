@@ -2,6 +2,7 @@ package raft
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/maki3cat/mkraft/rpc"
@@ -43,58 +44,48 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	if node.State != StateLeader {
 		panic("node is not in LEADER state")
 	}
-	sugarLogger.Info("acquiring the Semaphore as the LEADER state")
+	logger.Info("acquiring the Semaphore as the LEADER state")
 	node.sem.Acquire(ctx, 1)
-	sugarLogger.Info("acquired the Semaphore as the LEADER state")
+	logger.Info("acquired the Semaphore as the LEADER state")
 	defer node.sem.Release(1)
 
-	// THE COMPLEXITY OF THE LEADER IS MUCH HIGHER THAN THE CANDIDATE
-	// unlike the candidate which issues one request at a time
-	// the leader is more complex
-	// (1)
-	// because it shall send multiple AppendEntries requests at the same time
-	// and if any of them gets a response with a higher term
-	// the leader shall become a follower
-	// (2) (3)
-	// at the same time, it shall send heartbeats to all the followers
-	// at the same time, it shall handle the voting requests from other candidates
-	// (4)
-	// the leader itself shall be gracefully closed
+	// leader:
+	// (1) major task-1: handle client commands and send append entries
+	// (2) major task-2: send heartbeats to all the followers
+	// (3) common task-1: handle voting requests from other candidates
+	// (4) common task-2: handle append entries requests from other candidates
 
-	// maki: it is designed to be RENDEZVOUS
-	// so that we don't handle more than one possible degradation
-	degradationChan := make(chan TermRank)
-	defer close(degradationChan)
-	tickerForHeartbeat := time.NewTicker(util.GetConfig().GetLeaderHeartbeatPeriod())
+	node.clientCommandChan = make(chan *ClientCommandInternal, util.GetConfig().LeaderBufferSize)
+	node.leaderDegradationChan = make(chan TermRank, util.GetConfig().RaftNodeRequestBufferSize)
+	// these channels cannot be closed because they are created in the main thread but used in the worker
+	// we need to clean the channel when the leader quits,
+	// and reset the channels when the leader comes back
+
+	heartbeatDuration := util.GetConfig().GetLeaderHeartbeatPeriod()
+	tickerForHeartbeat := time.NewTicker(heartbeatDuration)
 	defer tickerForHeartbeat.Stop()
 
-	// respReaderCtx, respCancel := context.WithCancel(ctx)
-	// defer respCancel()
-	// appendEntriesRespChan := make(chan *MajorityAppendEntriesResp, util.GetConfig().LeaderBufferSize)
-	// defer close(appendEntriesRespChan) // todo: gorouting writing to it may panic the entire program
+	ctxForWorker, cancelWorker := context.WithCancel(ctx)
+	go node.leaderCommonTaskWorker(ctxForWorker)
+	defer cancelWorker()
 
-	// go node.workerForLeader(respReaderCtx, appendEntriesRespChan, degradationChan)
-
-	// // this timeout is one consensus timeout, the internal should be one rpc request timeout
 	for {
 		select {
 		case <-ctx.Done(): // give ctx higher priority
-			sugarLogger.Warn("raft node main context done, exiting")
+			logger.Warn("raft node main context done, exiting")
 			node.GracefulShutdown(ctx)
 			return
 		default:
 			select {
 			case <-ctx.Done():
-				sugarLogger.Warn("raft node main context done, exiting")
+				logger.Warn("raft node main context done, exiting")
 				node.GracefulShutdown(ctx)
 				return
-			case newTerm := <-degradationChan:
-				node.SetVoteForAndTerm(node.VotedFor, int32(newTerm))
-
-				node.leaderStopWorkers(ctx)
-				node.rejectAllClientRequests(ctx)
-
+			case newTerm := <-node.leaderDegradationChan:
 				node.State = StateFollower
+				node.SetVoteForAndTerm(node.VotedFor, int32(newTerm))
+				// shall first change the state, so that new client commands won't flood in when we close the channel
+				node.closeClientCommandChan(ctx)
 				go node.RunAsFollower(ctx)
 				return
 			case <-tickerForHeartbeat.C:
@@ -102,12 +93,10 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 					Term:     node.CurrentTerm,
 					LeaderId: node.NodeId,
 				}
-				go callAppendEntries(heartbeatReq)
-
+				go node.callAppendEntries(ctx, heartbeatReq)
 			case clientCmdReq := <-node.clientCommandChan:
-				// todo: should add rate limit the client command
-				// todo: add batching to appendEntries when we do logging
-				// todo: we don't handle single client command
+				// todo: the client command request, should go into the callAppendEntries to handle
+				// todo: we omit the client command for now
 				tickerForHeartbeat.Stop()
 				log := &rpc.LogEntry{
 					Data: clientCmdReq.request,
@@ -117,11 +106,27 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 					LeaderId: node.NodeId,
 					Entries:  []*rpc.LogEntry{log},
 				}
-				go callAppendEntries(appendEntryReq)
+				go node.callAppendEntries(ctx, appendEntryReq)
 				tickerForHeartbeat.Reset(heartbeatDuration)
+			}
+		}
+	}
+}
 
+func (node *Node) leaderCommonTaskWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Warn("leader's worker context done, exiting")
+			return
+		default:
+			select {
+			case <-ctx.Done():
+				logger.Warn("leader's worker context done, exiting")
+				return
 			case requestVote := <-node.requestVoteChan: // commonRule: same with candidate
 				if !requestVote.IsTimeout.Load() {
+					// no-IO operation
 					req := requestVote.Request
 					resChan := requestVote.RespWraper
 					resp := node.voting(req)
@@ -130,14 +135,13 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 						Err:  nil,
 					}
 					resChan <- wrapper
-					// this means other candiate has a higher term
 					if resp.VoteGranted {
-						node.State = StateFollower
-						go node.RunAsFollower(ctx)
+						node.leaderDegradationChan <- TermRank(resp.Term)
 						return
 					}
 				}
 			case req := <-node.appendEntryChan: // commonRule: same with candidate
+				// todo: shall add appendEntry operations which shall be a goroutine
 				resp := node.appendEntries(req.Request)
 				wrapper := rpc.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 					Resp: resp,
@@ -145,10 +149,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 				}
 				req.RespWraper <- &wrapper
 				if resp.Success {
-					// this means there is a leader there
-					node.State = StateFollower
-					node.CurrentTerm = req.Request.Term
-					go node.RunAsFollower(ctx)
+					node.leaderDegradationChan <- TermRank(resp.Term)
 					return
 				}
 			}
@@ -156,109 +157,43 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	}
 }
 
+// synchronous, should be called in a goroutine
+// todo: suppose we don't need response now
 func (node *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) {
-
 	errChan := make(chan error, 1)
 	respChan := make(chan *AppendEntriesConsensusResp, 1)
-	call := func(ctx context.Context) {
+	go func(ctx context.Context) {
 		ctxTimeout, cancel := context.WithTimeout(ctx, util.GetConfig().GetRPCRequestTimeout())
 		defer cancel()
-		consensusResp, err := AppendEntriesSendForConsensus(ctxTimeout, req, respChan)
+		consensusResp, err := AppendEntriesSendForConsensus(ctxTimeout, req)
 		if err != nil {
 			errChan <- err
-		}else{
+		} else {
 			respChan <- consensusResp
 		}
-	}
-	call(ctx)
+	}(ctx)
 
 	select {
 	case <-ctx.Done():
-		sugarLogger.Warn("raft node main context done, exiting")
+		logger.Warn("raft node main context done, exiting")
 	case err := <-errChan:
-		sugarLogger.Error("error in sending append entries to one node", err)
+		logger.Error("error in sending append entries to one node", err)
 	case resp := <-respChan:
 		if resp.Success {
-			sugarLogger.Info("append entries success")
+			logger.Info("append entries success")
+			// todo: shall deliver the result
 		} else {
-			sugarLogger.Warn("append entries failed")
+			node.leaderDegradationChan <- TermRank(resp.Term)
+			logger.Warn("append entries failed")
 		}
-	
-
-}
-
-func (node *Node) GracefulShutdown(ctx context.Context) {
-	// todo: to add more
-	if node.State == StateLeader {
-		sugarLogger.Info("leader is shutting down")
-		node.leaderStopWorkers(ctx)
 	}
-
-	// same to all
-	memberMgr.GracefulShutdown()
 }
 
-// three responsibilities for the workers:
-// (1) handle appendEntries from other possible leaders
-// (2) handle requestVote from other possible leaders
-// (3) handle client command and send appendEntries from others
-// and we use 2 workers for these
-// the workers respond to the main for the following messages:
-// (1) the main shall quit as leader and degrade into a follower and gracefully shutdown all the workers
-// (2) the main shall tune the ticker when the appendEntries is already sent
-func (node *Node) handlerPeers(ctx context.Context) {
-	// if some new leader send this, the current node shall become a follower
-	panic("not implemented yet")
-}
-
-func (node *Node) handleClient(ctx context.Context) {
-	// if some new leader send this, the current node shall become a follower
-	panic("not implemented yet")
-}
-
-func (node *Node) leaderStopWorkers(ctx context.Context) {
-	// if some new leader send this, the current node shall become a follower
-	panic("not implemented yet")
-}
-
-func (node *Node) rejectAllClientRequests(ctx context.Context) {
-	// if some new leader send this, the current node shall become a follower
-	panic("not implemented yet")
-}
-
-func (node *Node) workerForLeader(
-	ctx context.Context, appendEntriesRespChan chan *MajorityAppendEntriesResp,
-	leaderRecedeToFollowerChan chan TermRank,
-) {
-	for {
-		select {
-		case <-ctx.Done():
-			sugarLogger.Warn("raft node main context done")
-			memberMgr.GracefulShutdown()
-			return
-		case response := <-appendEntriesRespChan:
-			// BATCHING, BATCHING takes all in buffer now, we'll see if we need a batch-size config
-			remainingSize := len(appendEntriesRespChan)
-			responseBatch := make([]*MajorityAppendEntriesResp, remainingSize+1)
-			responseBatch[0] = response
-			for i := range remainingSize {
-				responseBatch[i] = <-appendEntriesRespChan
-			}
-
-			highestTerm := node.CurrentTerm
-			for _, resp := range responseBatch {
-				if resp.Term > node.CurrentTerm {
-					highestTerm = max(resp.Term, highestTerm)
-				}
-			}
-			if highestTerm > node.CurrentTerm {
-				sugarLogger.Warn("term is greater than current term")
-				leaderRecedeToFollowerChan <- TermRank(highestTerm)
-				return
-			} else {
-				// calculate the committed index
-				// todo: not impletmented yet
-			}
+func (node *Node) closeClientCommandChan(ctx context.Context) {
+	close(node.clientCommandChan)
+	for request := range node.clientCommandChan {
+		if request != nil {
+			request.errChan <- errors.New("raft node is not in leader state")
 		}
 	}
 }
