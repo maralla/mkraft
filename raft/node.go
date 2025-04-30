@@ -332,3 +332,74 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 		}
 	}
 }
+
+// TODO: THE WHOLE MODULE SHALL BE REFACTORED TO BE AN INTEGRAL OF THE CONSENSUS ALGORITHM
+// The decision of consensus upon receiving a request
+// can be independent of the current state of the node
+
+// maki: jthis method should be a part of the consensus algorithm
+// todo: right now this method doesn't check the current state of the node
+// todo: checks the voting works correctly for any state of the node, candidate or leader or follower
+// todo: not sure what state shall be changed inside or outside in the caller
+func (node *Node) voting(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
+	sugarLogger := util.GetSugarLogger()
+	sugarLogger.Debugw("consensus module handling voting request", "request", req)
+	var response rpc.RequestVoteResponse
+	if req.Term > node.CurrentTerm {
+		node.VotedFor = req.CandidateId
+		node.CurrentTerm = req.Term
+		response = rpc.RequestVoteResponse{
+			Term:        req.Term,
+			VoteGranted: true,
+		}
+	} else if req.Term < node.CurrentTerm {
+		response = rpc.RequestVoteResponse{
+			Term:        node.CurrentTerm,
+			VoteGranted: false,
+		}
+	} else {
+		if node.VotedFor == "" || node.VotedFor == req.CandidateId {
+			node.VotedFor = req.CandidateId
+			response = rpc.RequestVoteResponse{
+				Term:        node.CurrentTerm,
+				VoteGranted: true,
+			}
+		} else {
+			response = rpc.RequestVoteResponse{
+				Term:        node.CurrentTerm,
+				VoteGranted: false,
+			}
+		}
+	}
+	sugarLogger.Debugw(
+		"consensus returns voting response",
+		"response.term", response.Term, "response.voteGranted", response.VoteGranted)
+	return &response
+}
+
+// maki: jthis method should be a part of the consensus algorithm
+// todo: right now this method doesn't check the current state of the node
+// todo: not sure what state shall be changed inside or outside in the caller
+func (node *Node) appendEntries(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
+	var response rpc.AppendEntriesResponse
+	reqTerm := int32(req.Term)
+	if reqTerm > node.CurrentTerm {
+		// todo: tell the leader/candidate to change the state to follower
+		response = rpc.AppendEntriesResponse{
+			Term:    node.CurrentTerm,
+			Success: true,
+		}
+	} else if reqTerm < node.CurrentTerm {
+		response = rpc.AppendEntriesResponse{
+			Term:    node.CurrentTerm,
+			Success: false,
+		}
+	} else {
+		// should accecpet it directly?
+		response = rpc.AppendEntriesResponse{
+			Term:    node.CurrentTerm,
+			Success: true,
+		}
+	}
+	return &response
+}

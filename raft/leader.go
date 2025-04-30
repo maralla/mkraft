@@ -157,21 +157,33 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 }
 
 func (node *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) {
-	respChan := make(chan *rpc.RPCRespWrapper[*rpc.AppendEntriesResponse], 1)
-	ctxTimeout, cancel := context.WithTimeout(ctx, util.GetConfig().GetRPCRequestTimeout())
-	defer cancel()
-	AppendEntriesSendForConsensus(ctxTimeout, req, respChan)
+
+	errChan := make(chan error, 1)
+	respChan := make(chan *AppendEntriesConsensusResp, 1)
+	call := func(ctx context.Context) {
+		ctxTimeout, cancel := context.WithTimeout(ctx, util.GetConfig().GetRPCRequestTimeout())
+		defer cancel()
+		consensusResp, err := AppendEntriesSendForConsensus(ctxTimeout, req, respChan)
+		if err != nil {
+			errChan <- err
+		}else{
+			respChan <- consensusResp
+		}
+	}
+	call(ctx)
+
 	select {
 	case <-ctx.Done():
 		sugarLogger.Warn("raft node main context done, exiting")
+	case err := <-errChan:
+		sugarLogger.Error("error in sending append entries to one node", err)
 	case resp := <-respChan:
-		if resp.Err != nil {
-			sugarLogger.Error("error in sending append entries to one node", resp.Err)
-			return
+		if resp.Success {
+			sugarLogger.Info("append entries success")
+		} else {
+			sugarLogger.Warn("append entries failed")
 		}
-		response := resp.Resp
-		if response.Term > req.Term {
-			sugarLogger.Info("term is greater than current term")
+	
 
 }
 
