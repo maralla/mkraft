@@ -30,30 +30,21 @@ type AppendEntriesConsensusResp struct {
 }
 
 type MajorityRequestVoteResp struct {
-	Term            int32
-	VoteGranted     bool
-	SingleResponses []rpc.RequestVoteResponse
-	OriginalRequest rpc.RequestVoteRequest
-	Error           error
+	Term        int32
+	VoteGranted bool
 }
 
-func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest, resultChannel chan *MajorityRequestVoteResp) {
+func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest) (*MajorityRequestVoteResp, error) {
 
 	total := memberMgr.GetMemberCount()
 	peerClients, err := memberMgr.GetAllPeerClients()
 	if err != nil {
 		logger.Error("error in getting all peer clients", err)
-		resultChannel <- &MajorityRequestVoteResp{
-			Error: err,
-		}
-		return
+		return nil, err
 	}
 	if !calculateIfMajorityMet(total, len(peerClients)) {
 		logger.Error("no member clients found")
-		resultChannel <- &MajorityRequestVoteResp{
-			Error: errors.New("no member clients found"),
-		}
-		return
+		return nil, err
 	}
 
 	peersCount := len(peerClients)
@@ -83,11 +74,7 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 				voteFailed++
 				logger.Errorf("error in sending request vote to one node: %v", err)
 				if calculateIfAlreadyFail(total, peersCount, peerVoteAccumulated, voteFailed) {
-					resultChannel <- &MajorityRequestVoteResp{
-						VoteGranted: false,
-						Error:       errors.New("majority of nodes failed to respond"),
-					}
-					return
+					return nil, errors.New("majority of nodes failed to respond")
 				} else {
 					continue
 				}
@@ -96,31 +83,25 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 				// if someone responds with a term greater than the current term
 				if resp.Term > request.Term {
 					logger.Info("peer's term is greater than the node's current term")
-					resultChannel <- &MajorityRequestVoteResp{
+					return &MajorityRequestVoteResp{
 						Term:        resp.Term,
 						VoteGranted: false,
-					}
-					return
+					}, nil
 				}
 				if resp.Term == request.Term {
 					if resp.VoteGranted {
 						// won the election
 						peerVoteAccumulated++
 						if calculateIfMajorityMet(total, peerVoteAccumulated) {
-							resultChannel <- &MajorityRequestVoteResp{
+							return &MajorityRequestVoteResp{
 								Term:        request.Term,
 								VoteGranted: true,
-							}
-							return
+							}, nil
 						}
 					} else {
 						voteFailed++
 						if calculateIfAlreadyFail(total, peersCount, peerVoteAccumulated, voteFailed) {
-							resultChannel <- &MajorityRequestVoteResp{
-								VoteGranted: false,
-								Error:       errors.New("majority of nodes failed to respond"),
-							}
-							return
+							return nil, errors.New("majority of nodes failed to respond")
 						}
 					}
 				}
@@ -131,10 +112,11 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 			}
 		case <-ctx.Done():
 			logger.Info("context canceled")
-			// right now we don't send to the result channel when timeout
-			return
+			return nil, errors.New("context canceled")
 		}
 	}
+	// todo: panic not safe here, cannot let the program crash
+	panic("this should not happen, the consensus algorithm is not implmented correctly")
 }
 
 /*
