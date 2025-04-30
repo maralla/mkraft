@@ -14,6 +14,8 @@ func calculateIfMajorityMet(total, peerVoteAccumulated int) bool {
 	return peerVoteAccumulated+peerVoteAccumulated >= total
 }
 
+// assumes total > peersCount
+// todo should make sure this is guaranteed somewhere else
 func calculateIfAlreadyFail(total, peersCount, peerVoteAccumulated, voteFailed int) bool {
 	majority := total/2 + 1
 	majorityNeeded := majority - 1

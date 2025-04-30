@@ -14,7 +14,8 @@ protogen:
 	@echo "Protocol buffer files generated successfully."
 
 mockgen:
-	@mockgen -source=rpc/service_grpc.pb.go -destination=./rpc/mock_client.go -package rpc
+	@mockgen -source=raft/membership.go -destination=./raft/membership_mock.go -package raft
+	@mockgen -source=rpc/service_grpc.pb.go -destination=./rpc/grpc_mock.go -package rpc
 
 build:
 	@echo "Building the project..."
