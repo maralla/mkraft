@@ -85,7 +85,7 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 				node.State = StateFollower
 				node.SetVoteForAndTerm(node.VotedFor, int32(newTerm))
 				// shall first change the state, so that new client commands won't flood in when we close the channel
-				node.closeClientCommandChan(ctx)
+				node.closeClientCommandChan()
 				go node.RunAsFollower(ctx)
 				return
 			case <-tickerForHeartbeat.C:
@@ -129,7 +129,7 @@ func (node *Node) leaderCommonTaskWorker(ctx context.Context) {
 					// no-IO operation
 					req := requestVote.Request
 					resChan := requestVote.RespWraper
-					resp := node.voting(req)
+					resp := node.receiveVoteRequest(req)
 					wrapper := &rpc.RPCRespWrapper[*rpc.RequestVoteResponse]{
 						Resp: resp,
 						Err:  nil,
@@ -142,7 +142,7 @@ func (node *Node) leaderCommonTaskWorker(ctx context.Context) {
 				}
 			case req := <-node.appendEntryChan: // commonRule: same with candidate
 				// todo: shall add appendEntry operations which shall be a goroutine
-				resp := node.appendEntries(req.Request)
+				resp := node.receiveAppendEntires(req.Request)
 				wrapper := rpc.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 					Resp: resp,
 					Err:  nil,
@@ -189,7 +189,7 @@ func (node *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesR
 	}
 }
 
-func (node *Node) closeClientCommandChan(ctx context.Context) {
+func (node *Node) closeClientCommandChan() {
 	close(node.clientCommandChan)
 	for request := range node.clientCommandChan {
 		if request != nil {
