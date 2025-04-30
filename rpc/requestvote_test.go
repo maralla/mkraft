@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	gomock "github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	gomock "go.uber.org/mock/gomock"
 )
 
 func TestSyncCallRequestVote_Success(t *testing.T) {
