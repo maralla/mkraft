@@ -15,7 +15,6 @@ type MajorityAppendEntriesResp struct {
 	Success         bool
 	SingleResponses []rpc.AppendEntriesResponse
 	OriginalRequest rpc.AppendEntriesRequest
-	Error           error
 }
 
 type MajorityRequestVoteResp struct {
@@ -113,9 +112,7 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 						}
 					} else {
 						voteFailed++
-						remains := peersCount - voteFailed - voteAccumulated
-						needs := majority - voteAccumulated
-						if remains < needs {
+						if calculateIfAlreadyFail(total, peersCount, voteAccumulated, voteFailed) {
 							resultChannel <- &MajorityRequestVoteResp{
 								VoteGranted: false,
 								Error:       errors.New("majority of nodes failed to respond"),
@@ -137,23 +134,38 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 	}
 }
 
-func AppendEntriesSendForConsensus(
-	ctx context.Context, request *rpc.AppendEntriesRequest, respChan chan *MajorityAppendEntriesResp) {
+func calculateIfAlreadyFail(total, peersCount, voteAccumulated, voteFailed int) bool {
+	majority := total/2 + 1
+	majorityNeeded := majority - 1
+	needed := majorityNeeded - voteAccumulated
+	possibleRespondant := peersCount - voteFailed - voteAccumulated
+	return possibleRespondant < needed
+}
 
-	// maki: patten, the majority doesn't fail is not fail
-	// todo: this is not the right solution, we should just use the clients left as long as they reach the majority
-	memberChan, err := memberMgr.GetAllPeerClients()
+/*
+* send append entries to all peers
+* and wait for the majority of them to respond
+ */
+func AppendEntriesSendForConsensus(
+	ctx context.Context, request *rpc.AppendEntriesRequest) (*MajorityAppendEntriesResp, error) {
+
+	logger := util.GetSugarLogger()
+	total := memberMgr.GetMemberCount()
+	majority := total/2 + 1
+	logger.Debugw("AppendEntriesSendForConsensus", "request", request, "total", total, "majority", majority)
+
+	peerClients, err := memberMgr.GetAllPeerClients()
 	if err != nil {
 		sugarLogger.Error("error in getting all peer clients", err)
-		respChan <- &MajorityAppendEntriesResp{
-			Error: err,
-		}
-		return
+		return nil, err
+	}
+	if len(peerClients)+1 < majority {
+		sugarLogger.Error("not enough peer clients found")
+		return nil, errors.New("not enough peer clients found")
 	}
 
-	memberCount := memberMgr.GetMemberCount()
-	allRespChan := make(chan rpc.RPCRespWrapper[*rpc.AppendEntriesResponse], memberCount)
-	for _, member := range memberChan {
+	allRespChan := make(chan rpc.RPCRespWrapper[*rpc.AppendEntriesResponse], len(peerClients))
+	for _, member := range peerClients {
 		memberHandle := member
 		// FAN-OUT
 		go func() {
@@ -165,8 +177,6 @@ func AppendEntriesSendForConsensus(
 	}
 
 	// STOPPING SHORT
-	total := memberCount
-	majority := memberCount/2 + 1 - 1 // -1 because the leader doesn't need to send to itself
 	successAccumulated := 0
 	failAccumulated := 0
 	sugarLogger.Debugw("current setup of membership", "majority", majority, "total", total, "memberCount", memberCount)
@@ -181,31 +191,28 @@ func AppendEntriesSendForConsensus(
 				resp := res.Resp
 				if resp.Term > request.Term {
 					sugarLogger.Info("term is greater than current term")
-					respChan <- &MajorityAppendEntriesResp{
+					return &MajorityAppendEntriesResp{
 						Term:    resp.Term,
 						Success: false,
 					}
-					return
 				}
 				if resp.Term == request.Term {
 					if resp.Success {
 						successAccumulated++
 						if successAccumulated >= majority {
-							respChan <- &MajorityAppendEntriesResp{
+							return &MajorityAppendEntriesResp{
 								Term:    request.Term,
 								Success: true,
 							}
-							return
 						}
 					} else {
 						failAccumulated++
 						if failAccumulated > total-majority {
 							sugarLogger.Warn("another node with same term becomes the leader")
-							respChan <- &MajorityAppendEntriesResp{
+							return &MajorityAppendEntriesResp{
 								Term:    request.Term,
 								Success: false,
 							}
-							return
 						}
 					}
 				}
@@ -219,9 +226,12 @@ func AppendEntriesSendForConsensus(
 			}
 		case <-ctx.Done():
 			sugarLogger.Info("context canceled")
-			return
+			return &MajorityAppendEntriesResp{
+				Error: errors.New("context canceled"),
+			}
 		}
 	}
+	panic("this should not happen, the consensus algorithm is not implmented correctly")
 }
 
 // TODO: THE WHOLE MODULE SHALL BE REFACTORED TO BE AN INTEGRAL OF THE CONSENSUS ALGORITHM

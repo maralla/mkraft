@@ -22,6 +22,7 @@ func GetConfig() *Config {
 
 func CreateDefaultConf() *Config {
 	return &Config{
+		RaftNodeRequestBufferSize: RAFT_NODE_REQUEST_BUFFER_SIZE,
 		RPCRequestTimeoutInMs:     RPC_REUQEST_TIMEOUT_IN_MS,
 		ElectionTimeoutMinInMs:    ELECTION_TIMEOUT_MIN_IN_MS,
 		ElectionTimeoutMaxInMs:    ELECTION_TIMEOUT_MAX_IN_MS,
@@ -33,6 +34,7 @@ func CreateDefaultConf() *Config {
 }
 
 // DEFAULT VALUES of configuration
+const RAFT_NODE_REQUEST_BUFFER_SIZE = 500
 const CLIENT_COMMAND_BATCH_SIZE = 10
 const CLIENT_COMMAND_BUFFER_SIZE = 1000
 
@@ -45,6 +47,7 @@ const ELECTION_TIMEOUT_MIN_IN_MS = 350
 const ELECTION_TIMEOUT_MAX_IN_MS = 550
 
 type Config struct {
+	RaftNodeRequestBufferSize int `json:"raft_node_request_buffer_size"`
 	// RPC timeout
 	RPCRequestTimeoutInMs int `json:"rpc_request_timeout_in_ms"`
 
@@ -69,6 +72,10 @@ func (c *Config) GetElectionTimeout() time.Duration {
 	diff := c.ElectionTimeoutMaxInMs - c.ElectionTimeoutMinInMs
 	randomMs := rand.Intn(diff) + ELECTION_TIMEOUT_MIN_IN_MS
 	return time.Duration(randomMs) * time.Millisecond
+}
+
+func (c *Config) GetRaftNodeRequestBuffer() int {
+	return c.RaftNodeRequestBufferSize
 }
 
 func (c *Config) GetLeaderHeartbeatPeriod() time.Duration {
