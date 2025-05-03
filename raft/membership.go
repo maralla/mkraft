@@ -40,8 +40,11 @@ func GetCurrentNodeID() string {
 func InitGlobalMembershipWithStaticConfig(staticMembership *Membership) {
 	once.Do(func() {
 		// check sanity
-		if staticMembership.AllMembers == nil || len(staticMembership.AllMembers) == 0 {
-			util.GetSugarLogger().Fatal("static membership is empty")
+		if len(staticMembership.AllMembers) == 0 {
+			logger.Fatal("static membership is empty")
+		}
+		if len(staticMembership.CurrentNodeID)%2 == 0 {
+			logger.Fatal("the member count should be odd")
 		}
 		for _, node := range staticMembership.AllMembers {
 			if node.NodeID == "" || node.NodeURI == "" {
@@ -69,9 +72,12 @@ func InitGlobalMembershipWithStaticConfig(staticMembership *Membership) {
 type MembershipMgrIface interface {
 	GetCurrentNodeID() string
 	GetPeerClient(nodeID string) (rpc.InternalClientIface, error)
+
+	// todo: should merge the two together so that the data are guaranteed to be atomic
 	// if the memebrship is dynamic, the count and peer change and may not be consistent
 	GetMemberCount() int
 	GetAllPeerClients() ([]rpc.InternalClientIface, error)
+
 	GracefulShutdown()
 }
 

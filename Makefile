@@ -1,6 +1,6 @@
 
 
-all: build test
+all: clean build
 
 test:
 	@go test -v ./...
@@ -14,7 +14,10 @@ protogen:
 	@echo "Protocol buffer files generated successfully."
 
 mockgen:
-	@mockgen -source=rpc/service_grpc.pb.go -destination=./rpc/mock_client.go -package rpc
+	@mockgen -source=raft/membership.go -destination=./raft/membership_mock.go -package raft
+	@mockgen -source=rpc/service_grpc.pb.go -destination=./rpc/service_mock.go -package rpc
+	@mockgen -source=rpc/client.go -destination=./rpc/client_mock.go -package rpc
+	@mockgen -source=util/config.go -destination=./util/config_mock.go -package util
 
 build:
 	@echo "Building the project..."

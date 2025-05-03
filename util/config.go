@@ -8,7 +8,7 @@ import (
 
 // current design: membership is not a part of the configuration
 var (
-	theConf *Config
+	theConf ConfigIface
 )
 
 func InitConf() {
@@ -16,20 +16,20 @@ func InitConf() {
 	sugarLogger.Infof("init the config to %s", theConf)
 }
 
-func GetConfig() *Config {
+func GetConfig() ConfigIface {
 	return theConf
 }
 
 func CreateDefaultConf() *Config {
 	return &Config{
-		RaftNodeRequestBufferSize: RAFT_NODE_REQUEST_BUFFER_SIZE,
-		RPCRequestTimeoutInMs:     RPC_REUQEST_TIMEOUT_IN_MS,
-		ElectionTimeoutMinInMs:    ELECTION_TIMEOUT_MIN_IN_MS,
-		ElectionTimeoutMaxInMs:    ELECTION_TIMEOUT_MAX_IN_MS,
-		LeaderHeartbeatPeriodInMs: LEADER_HEARTBEAT_PERIOD_IN_MS,
-		LeaderBufferSize:          LEADER_BUFFER_SIZE,
-		ClientCommandBufferSize:   CLIENT_COMMAND_BUFFER_SIZE,
-		ClientCommandBatchSize:    CLIENT_COMMAND_BATCH_SIZE,
+		RaftNodeRequestBufferSize:  RAFT_NODE_REQUEST_BUFFER_SIZE,
+		RPCRequestTimeoutInMs:      RPC_REUQEST_TIMEOUT_IN_MS,
+		ElectionTimeoutMinInMs:     ELECTION_TIMEOUT_MIN_IN_MS,
+		ElectionTimeoutMaxInMs:     ELECTION_TIMEOUT_MAX_IN_MS,
+		LeaderHeartbeatPeriodInMs:  LEADER_HEARTBEAT_PERIOD_IN_MS,
+		ClientCommandBufferSize:    CLIENT_COMMAND_BUFFER_SIZE,
+		ClientCommandBatchSize:     CLIENT_COMMAND_BATCH_SIZE,
+		MinRemainingTimeForRPCInMs: MIN_REMAINING_TIME_FOR_RPC_IN_MS,
 	}
 }
 
@@ -46,8 +46,25 @@ const RPC_REUQEST_TIMEOUT_IN_MS = 200
 const ELECTION_TIMEOUT_MIN_IN_MS = 350
 const ELECTION_TIMEOUT_MAX_IN_MS = 550
 
+const MIN_REMAINING_TIME_FOR_RPC_IN_MS = 50
+
+type ConfigIface interface {
+	GetRPCRequestTimeout() time.Duration
+	GetElectionTimeout() time.Duration
+
+	GetLeaderHeartbeatPeriod() time.Duration
+	GetRaftNodeRequestBufferSize() int
+
+	GetClientCommandBufferSize() int
+	GetClientCommandBatchSize() int
+	String() string
+
+	GetMinRemainingTimeForRPC() time.Duration
+}
+
 type Config struct {
 	RaftNodeRequestBufferSize int `json:"raft_node_request_buffer_size"`
+
 	// RPC timeout
 	RPCRequestTimeoutInMs int `json:"rpc_request_timeout_in_ms"`
 
@@ -57,11 +74,17 @@ type Config struct {
 
 	// Leader
 	LeaderHeartbeatPeriodInMs int `json:"leader_heartbeat_period_in_ms"`
-	LeaderBufferSize          int `json:"leader_buffer_size"`
 
 	// Client
 	ClientCommandBufferSize int `json:"client_command_buffer_size"`
 	ClientCommandBatchSize  int `json:"client_command_batch_size"`
+
+	// internal
+	MinRemainingTimeForRPCInMs int `json:"min_remaining_time_for_rpc_in_ms"`
+}
+
+func (c *Config) GetMinRemainingTimeForRPC() time.Duration {
+	return time.Duration(c.MinRemainingTimeForRPCInMs) * time.Millisecond
 }
 
 func (c *Config) GetRPCRequestTimeout() time.Duration {
@@ -74,16 +97,12 @@ func (c *Config) GetElectionTimeout() time.Duration {
 	return time.Duration(randomMs) * time.Millisecond
 }
 
-func (c *Config) GetRaftNodeRequestBuffer() int {
+func (c *Config) GetRaftNodeRequestBufferSize() int {
 	return c.RaftNodeRequestBufferSize
 }
 
 func (c *Config) GetLeaderHeartbeatPeriod() time.Duration {
 	return time.Duration(c.LeaderHeartbeatPeriodInMs) * time.Millisecond
-}
-
-func (c *Config) GetLeaderBufferSize() int {
-	return c.LeaderBufferSize
 }
 
 func (c *Config) GetClientCommandBufferSize() int {

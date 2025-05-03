@@ -3,8 +3,8 @@ module github.com/maki3cat/mkraft
 go 1.24
 
 require (
-	github.com/golang/mock v1.6.0
 	github.com/stretchr/testify v1.10.0
+	go.uber.org/mock v0.5.2
 	go.uber.org/zap v1.27.0
 	golang.org/x/sync v0.13.0
 	google.golang.org/grpc v1.71.1

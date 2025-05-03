@@ -55,8 +55,8 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	// (3) common task-1: handle voting requests from other candidates
 	// (4) common task-2: handle append entries requests from other candidates
 
-	node.clientCommandChan = make(chan *ClientCommandInternal, util.GetConfig().LeaderBufferSize)
-	node.leaderDegradationChan = make(chan TermRank, util.GetConfig().RaftNodeRequestBufferSize)
+	node.clientCommandChan = make(chan *ClientCommandInternal, util.GetConfig().GetRaftNodeRequestBufferSize())
+	node.leaderDegradationChan = make(chan TermRank, util.GetConfig().GetRaftNodeRequestBufferSize())
 	// these channels cannot be closed because they are created in the main thread but used in the worker
 	// we need to clean the channel when the leader quits,
 	// and reset the channels when the leader comes back
