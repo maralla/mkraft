@@ -197,7 +197,7 @@ func TestRequestVoteSendForConsensus(t *testing.T) {
 			test.mockSetup()
 			ctx, _ := context.WithTimeout(context.Background(), 300*time.Millisecond)
 			// ctx := context.Background()
-			resp, err := RequestVoteSendForConsensus(ctx, test.request)
+			resp, err := consensus.RequestVoteSendForConsensus(ctx, test.request)
 
 			// Validate results
 			if resp != nil && test.expectedResp != nil {
@@ -255,7 +255,7 @@ func TestAppendEntriesSendForConsensus(t *testing.T) {
 			mockSetup: func() {
 				var term int32 = 3
 				mockClient1 := mockSendAppendEntries(ctrl, term)
-				mockClient2 := mockSendAppendEntries(ctrl, term)
+				mockClient2 := mockSendAppendEntriesError(ctrl)
 				mockClient3 := mockSendAppendEntries(ctrl, term)
 
 				peerClients := []rpc.InternalClientIface{mockClient1, mockClient2, mockClient3}
@@ -277,7 +277,7 @@ func TestAppendEntriesSendForConsensus(t *testing.T) {
 			// Setup mocks
 			test.mockSetup()
 			ctx, _ := context.WithTimeout(context.Background(), 300*time.Millisecond)
-			resp, err := AppendEntriesSendForConsensus(ctx, test.request)
+			resp, err := consensus.AppendEntriesSendForConsensus(ctx, test.request)
 
 			// Validate results
 			if resp != nil && test.expectedResp != nil {
@@ -303,5 +303,16 @@ func mockSendAppendEntries(ctrl *gomock.Controller, term int32) *rpc.MockInterna
 	mockClient1 := rpc.NewMockInternalClientIface(ctrl)
 	mockClient1.EXPECT().SendAppendEntries(
 		gomock.Any(), gomock.Any()).Return(rpcWrapper).Times(1)
+	return mockClient1
+}
+
+func mockSendAppendEntriesError(ctrl *gomock.Controller) *rpc.MockInternalClientIface {
+	rpcWrapper := rpc.RPCRespWrapper[*rpc.AppendEntriesResponse]{
+		Err:  errors.New("mock error"),
+		Resp: nil,
+	}
+	mockClient1 := rpc.NewMockInternalClientIface(ctrl)
+	mockClient1.EXPECT().SendAppendEntries(
+		gomock.Any(), gomock.Any()).Return(rpcWrapper).AnyTimes()
 	return mockClient1
 }

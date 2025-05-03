@@ -18,6 +18,7 @@ mockgen:
 	@mockgen -source=rpc/service_grpc.pb.go -destination=./rpc/service_mock.go -package rpc
 	@mockgen -source=rpc/client.go -destination=./rpc/client_mock.go -package rpc
 	@mockgen -source=util/config.go -destination=./util/config_mock.go -package util
+	@mockgen -source=raft/consensus.go -destination=./raft/consensus_mock.go -package raft
 
 build:
 	@echo "Building the project..."
