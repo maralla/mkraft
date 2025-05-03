@@ -24,7 +24,7 @@ type InternalClientIface interface {
 	// send request vote is keep retrying until the context is done or the response is received
 	SendRequestVoteWithRetries(ctx context.Context, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse]
 
-	// send append entries is a simple sync rpc call
+	// send append entries is one simple sync rpc call with rpc timeout
 	SendAppendEntries(ctx context.Context, req *AppendEntriesRequest) RPCRespWrapper[*AppendEntriesResponse]
 
 	SayHello(ctx context.Context, req *HelloRequest) (*HelloReply, error)
@@ -54,9 +54,18 @@ func (rc *InternalClientImpl) SayHello(ctx context.Context, req *HelloRequest) (
 	return rc.rawClient.SayHello(ctx, req)
 }
 
-func (rc *InternalClientImpl) SendAppendEntries(
-	ctx context.Context, req *AppendEntriesRequest) RPCRespWrapper[*AppendEntriesResponse] {
-	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, time.Millisecond*(util.RPC_REUQEST_TIMEOUT_IN_MS-10))
+func (rc *InternalClientImpl) SendAppendEntries(ctx context.Context, req *AppendEntriesRequest) RPCRespWrapper[*AppendEntriesResponse] {
+	resp, err := rc.syncCallAppendEntries(ctx, req)
+	wrapper := RPCRespWrapper[*AppendEntriesResponse]{
+		Resp: resp,
+		Err:  err,
+	}
+	return wrapper
+}
+
+func (rc *InternalClientImpl) syncCallAppendEntries(ctx context.Context, req *AppendEntriesRequest) (*AppendEntriesResponse, error) {
+	rpcTimeout := util.GetConfig().GetRPCRequestTimeout()
+	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, rpcTimeout)
 	defer singleCallCancel()
 
 	resp, err := rc.rawClient.AppendEntries(singleCallCtx, req)
@@ -65,12 +74,7 @@ func (rc *InternalClientImpl) SendAppendEntries(
 	} else {
 		logger.Debugw("single RPC SendAppendEntries response:", "member", rc, "response", resp)
 	}
-
-	wrapper := RPCRespWrapper[*AppendEntriesResponse]{
-		Resp: resp,
-		Err:  err,
-	}
-	return wrapper
+	return resp, err
 }
 
 // the context shall be timed out in election timeout period
@@ -79,22 +83,25 @@ func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, re
 	out := make(chan RPCRespWrapper[*RequestVoteResponse], 1)
 
 	retriedRPC := func() {
-		singleResChan := AsyncCallRequestVote(ctx, rc.rawClient, req)
+		singleResChan := rc.asyncCallRequestVote(ctx, req)
 		for {
 			select {
 			case <-ctx.Done():
 				out <- RPCRespWrapper[*RequestVoteResponse]{
-					Err: fmt.Errorf("%s", "election timeout for request votes")}
+					Err: fmt.Errorf("%s", "election timeout to receive any non-error response")}
 				return
 			case resp := <-singleResChan:
 				if resp.Err != nil {
 					deadline, ok := ctx.Deadline()
-					if ok && time.Until(deadline) < util.GetConfig().GetRPCRequestTimeout() {
-						out <- resp
+					// todo: move to config
+					logger.Debugw("retrying RPC, deadline:", "deadline", deadline)
+					if ok && time.Until(deadline) < util.GetConfig().GetMinRemainingTimeForRPC() {
+						out <- RPCRespWrapper[*RequestVoteResponse]{
+							Err: fmt.Errorf("%s", "election timeout to receive any non-error response")}
 						return
 					} else {
 						logger.Errorw("need retry, RPC error:", "to", rc, "error", resp.Err)
-						singleResChan = AsyncCallRequestVote(ctx, rc.rawClient, req)
+						singleResChan = rc.asyncCallRequestVote(ctx, req)
 						continue
 					}
 				} else {
@@ -110,10 +117,12 @@ func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, re
 
 // https://grpc.io/docs/guides/deadlines/
 // https://github.com/grpc/grpc-go/blob/master/examples/features/deadline/client/main.go
-func SyncCallRequestVote(ctx context.Context, rc RaftServiceClient, req *RequestVoteRequest) (*RequestVoteResponse, error) {
-	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, time.Millisecond*(util.RPC_REUQEST_TIMEOUT_IN_MS-10))
+func (rc *InternalClientImpl) syncCallRequestVote(ctx context.Context, req *RequestVoteRequest) (*RequestVoteResponse, error) {
+	rpcTimeout := util.GetConfig().GetRPCRequestTimeout()
+	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, rpcTimeout)
 	defer singleCallCancel()
-	resp, err := rc.RequestVote(singleCallCtx, req)
+
+	resp, err := rc.rawClient.RequestVote(singleCallCtx, req)
 	if err != nil {
 		logger.Errorw("single RPC error:", "to", rc, "error", err)
 	} else {
@@ -122,10 +131,10 @@ func SyncCallRequestVote(ctx context.Context, rc RaftServiceClient, req *Request
 	return resp, err
 }
 
-func AsyncCallRequestVote(ctx context.Context, rc RaftServiceClient, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse] {
+func (rc *InternalClientImpl) asyncCallRequestVote(ctx context.Context, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse] {
 	singleResChan := make(chan RPCRespWrapper[*RequestVoteResponse], 1) // must be buffered
 	go func() {
-		resp, err := SyncCallRequestVote(ctx, rc, req)
+		resp, err := rc.syncCallRequestVote(ctx, req)
 		wrapper := RPCRespWrapper[*RequestVoteResponse]{
 			Resp: resp,
 			Err:  err,

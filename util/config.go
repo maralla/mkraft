@@ -22,13 +22,14 @@ func GetConfig() ConfigIface {
 
 func CreateDefaultConf() *Config {
 	return &Config{
-		RaftNodeRequestBufferSize: RAFT_NODE_REQUEST_BUFFER_SIZE,
-		RPCRequestTimeoutInMs:     RPC_REUQEST_TIMEOUT_IN_MS,
-		ElectionTimeoutMinInMs:    ELECTION_TIMEOUT_MIN_IN_MS,
-		ElectionTimeoutMaxInMs:    ELECTION_TIMEOUT_MAX_IN_MS,
-		LeaderHeartbeatPeriodInMs: LEADER_HEARTBEAT_PERIOD_IN_MS,
-		ClientCommandBufferSize:   CLIENT_COMMAND_BUFFER_SIZE,
-		ClientCommandBatchSize:    CLIENT_COMMAND_BATCH_SIZE,
+		RaftNodeRequestBufferSize:  RAFT_NODE_REQUEST_BUFFER_SIZE,
+		RPCRequestTimeoutInMs:      RPC_REUQEST_TIMEOUT_IN_MS,
+		ElectionTimeoutMinInMs:     ELECTION_TIMEOUT_MIN_IN_MS,
+		ElectionTimeoutMaxInMs:     ELECTION_TIMEOUT_MAX_IN_MS,
+		LeaderHeartbeatPeriodInMs:  LEADER_HEARTBEAT_PERIOD_IN_MS,
+		ClientCommandBufferSize:    CLIENT_COMMAND_BUFFER_SIZE,
+		ClientCommandBatchSize:     CLIENT_COMMAND_BATCH_SIZE,
+		MinRemainingTimeForRPCInMs: MIN_REMAINING_TIME_FOR_RPC_IN_MS,
 	}
 }
 
@@ -45,6 +46,8 @@ const RPC_REUQEST_TIMEOUT_IN_MS = 200
 const ELECTION_TIMEOUT_MIN_IN_MS = 350
 const ELECTION_TIMEOUT_MAX_IN_MS = 550
 
+const MIN_REMAINING_TIME_FOR_RPC_IN_MS = 50
+
 type ConfigIface interface {
 	GetRPCRequestTimeout() time.Duration
 	GetElectionTimeout() time.Duration
@@ -55,6 +58,8 @@ type ConfigIface interface {
 	GetClientCommandBufferSize() int
 	GetClientCommandBatchSize() int
 	String() string
+
+	GetMinRemainingTimeForRPC() time.Duration
 }
 
 type Config struct {
@@ -73,6 +78,13 @@ type Config struct {
 	// Client
 	ClientCommandBufferSize int `json:"client_command_buffer_size"`
 	ClientCommandBatchSize  int `json:"client_command_batch_size"`
+
+	// internal
+	MinRemainingTimeForRPCInMs int `json:"min_remaining_time_for_rpc_in_ms"`
+}
+
+func (c *Config) GetMinRemainingTimeForRPC() time.Duration {
+	return time.Duration(c.MinRemainingTimeForRPCInMs) * time.Millisecond
 }
 
 func (c *Config) GetRPCRequestTimeout() time.Duration {

@@ -2,233 +2,141 @@ package rpc
 
 import (
 	"context"
-	"errors"
-	"math/rand"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/maki3cat/mkraft/util"
 	"github.com/stretchr/testify/assert"
 	gomock "go.uber.org/mock/gomock"
 )
 
-func TestSyncCallRequestVote_Success(t *testing.T) {
+func TestInternalClientImpl_SayHello(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockClient := NewMockRaftServiceClient(ctrl)
+	client := NewInternalClient(mockClient, "node1", "localhost:8080")
 
-	ctx := context.Background()
-	req := &RequestVoteRequest{
-		// fill necessary fields if needed
-	}
-	expectedResp := &RequestVoteResponse{
-		Term:        int32(rand.Int()),
-		VoteGranted: true,
-	}
-
-	// Set up expectation
+	req := &HelloRequest{}
+	expectedResp := &HelloReply{Message: "mkraft it is!"}
 	mockClient.EXPECT().
-		RequestVote(gomock.Any(), req).
-		Return(expectedResp, nil)
-
-	resp, err := SyncCallRequestVote(ctx, mockClient, req)
-
+		SayHello(gomock.Any(), req).Return(expectedResp, nil).Times(1)
+	resp, err := client.SayHello(context.Background(), req)
 	assert.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.True(t, resp.VoteGranted)
+	assert.Equal(t, expectedResp, resp)
 }
-
-func TestSyncCallRequestVote_Error(t *testing.T) {
+func TestInternalClientImpl_SendAppendEntries(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockClient := NewMockRaftServiceClient(ctrl)
+	client := NewInternalClient(mockClient, "node1", "localhost:8080")
 
-	ctx := context.Background()
-	req := &RequestVoteRequest{
-		// fill necessary fields if needed
-	}
-	expectedErr := errors.New("RPC failed")
-
-	// Set up expectation
+	req := &AppendEntriesRequest{}
+	expectedResp := &AppendEntriesResponse{}
 	mockClient.EXPECT().
-		RequestVote(gomock.Any(), req).
-		Return(nil, expectedErr)
+		AppendEntries(gomock.Any(), req).Return(expectedResp, nil).Times(1)
 
-	resp, err := SyncCallRequestVote(ctx, mockClient, req)
+	respWrapper := client.SendAppendEntries(context.Background(), req)
 
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, expectedErr, err)
+	assert.NoError(t, respWrapper.Err)
+	assert.Equal(t, expectedResp, respWrapper.Resp)
 }
 
-func TestAsyncCallRequestVote_Success(t *testing.T) {
+func TestInternalClientImpl_SendAppendEntries_Error(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockClient := NewMockRaftServiceClient(ctrl)
+	client := NewInternalClient(mockClient, "node1", "localhost:8080")
 
-	ctx := context.Background()
+	req := &AppendEntriesRequest{}
+	expectedErr := fmt.Errorf("RPC error")
+	mockClient.EXPECT().
+		AppendEntries(gomock.Any(), req).Return(nil, expectedErr).Times(1)
+
+	respWrapper := client.SendAppendEntries(context.Background(), req)
+
+	assert.Error(t, respWrapper.Err)
+	assert.Nil(t, respWrapper.Resp)
+	assert.Equal(t, expectedErr, respWrapper.Err)
+}
+func TestInternalClientImpl_SendRequestVoteWithRetries_Success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := NewMockRaftServiceClient(ctrl)
+	client := NewInternalClient(mockClient, "node1", "localhost:8080")
+
 	req := &RequestVoteRequest{}
-	expectedResp := &RequestVoteResponse{
-		Term:        int32(rand.Int()),
-		VoteGranted: true,
-	}
-
-	// Expect the SyncCallRequestVote to call RequestVote
+	expectedResp := &RequestVoteResponse{}
 	mockClient.EXPECT().
-		RequestVote(gomock.Any(), req).
-		Return(expectedResp, nil)
+		RequestVote(gomock.Any(), req).Return(expectedResp, nil).Times(1)
 
-	respChan := AsyncCallRequestVote(ctx, mockClient, req)
-
-	select {
-	case wrapper := <-respChan:
-		assert.NoError(t, wrapper.Err)
-		assert.NotNil(t, wrapper.Resp)
-		assert.True(t, wrapper.Resp.VoteGranted)
-		assert.Equal(t, wrapper.Resp.Term, expectedResp.Term)
-	case <-time.After(time.Second): // 1s timeout just in case of deadlock
-		t.Fatal("Timeout waiting for AsyncCallRequestVote response")
-	}
-}
-
-func TestAsyncCallRequestVote_Error(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockClient := NewMockRaftServiceClient(ctrl)
-
-	ctx := context.Background()
-	req := &RequestVoteRequest{}
-	expectedErr := errors.New("RPC failed")
-
-	mockClient.EXPECT().
-		RequestVote(gomock.Any(), req).
-		Return(nil, expectedErr)
-
-	respChan := AsyncCallRequestVote(ctx, mockClient, req)
-
-	select {
-	case wrapper := <-respChan:
-		assert.Error(t, wrapper.Err)
-		assert.Nil(t, wrapper.Resp)
-		assert.Equal(t, expectedErr, wrapper.Err)
-	case <-time.After(time.Second):
-		t.Fatal("Timeout waiting for AsyncCallRequestVote response")
-	}
-}
-
-func TestSendRequestVote_Success(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockClient := NewMockRaftServiceClient(ctrl)
-
-	cli := &InternalClientImpl{
-		rawClient: mockClient,
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	req := &RequestVoteRequest{}
-	expectedResp := &RequestVoteResponse{
-		VoteGranted: true,
-		Term:        int32(rand.Int()),
-	}
+	respChan := client.SendRequestVoteWithRetries(ctx, req)
+	respWrapper := <-respChan
 
-	// Expect first call to succeed
-	mockClient.EXPECT().
-		RequestVote(gomock.Any(), req).
-		Return(expectedResp, nil)
-
-	respChan := cli.SendRequestVoteWithRetries(ctx, req)
-
-	select {
-	case wrapper := <-respChan:
-		assert.NoError(t, wrapper.Err)
-		assert.NotNil(t, wrapper.Resp)
-		assert.True(t, wrapper.Resp.VoteGranted)
-		assert.Equal(t, wrapper.Resp.Term, expectedResp.Term)
-	case <-time.After(time.Second):
-		t.Fatal("Timeout waiting for SendRequestVote response")
-	}
+	assert.NoError(t, respWrapper.Err)
+	assert.Equal(t, expectedResp, respWrapper.Resp)
 }
 
-func TestSendRequestVote_RetrySuccess(t *testing.T) {
+func TestInternalClientImpl_SendRequestVoteWithRetries_Error(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockClient := NewMockRaftServiceClient(ctrl)
+	client := NewInternalClient(mockClient, "node1", "localhost:8080")
 
-	cli := &InternalClientImpl{
-		rawClient: mockClient,
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
+	minTime := util.GetConfig().GetMinRemainingTimeForRPC()
 
 	req := &RequestVoteRequest{}
-	expectedResp := &RequestVoteResponse{
-		Term:        int32(rand.Int()),
-		VoteGranted: true}
+	expectedErr := fmt.Errorf("RPC error")
+	mockClient.EXPECT().
+		RequestVote(gomock.Any(), req).DoAndReturn(
+		func(ctx context.Context, req *RequestVoteRequest, opts ...interface{}) (*RequestVoteResponse, error) {
+			time.Sleep(time.Duration(float64(minTime) / 2))
+			return nil, expectedErr
+		},
+	).MinTimes(2)
 
-	// First call fails, second call succeeds
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(float64(minTime)*2))
+	defer cancel()
+
+	respChan := client.SendRequestVoteWithRetries(ctx, req)
+	respWrapper := <-respChan
+
+	assert.Error(t, respWrapper.Err)
+	assert.Nil(t, respWrapper.Resp)
+}
+
+func TestInternalClientImpl_SendRequestVoteWithRetries_RetrySuccess(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := NewMockRaftServiceClient(ctrl)
+	client := NewInternalClient(mockClient, "node1", "localhost:8080")
+
+	req := &RequestVoteRequest{}
+	expectedErr := fmt.Errorf("RPC error")
+	expectedResp := &RequestVoteResponse{}
+
 	gomock.InOrder(
 		mockClient.EXPECT().
-			RequestVote(gomock.Any(), req).
-			Return(nil, errors.New("temporary RPC error")),
+			RequestVote(gomock.Any(), req).Return(nil, expectedErr).Times(2),
 		mockClient.EXPECT().
-			RequestVote(gomock.Any(), req).
-			Return(expectedResp, nil),
+			RequestVote(gomock.Any(), req).Return(expectedResp, nil).Times(1),
 	)
 
-	respChan := cli.SendRequestVoteWithRetries(ctx, req)
-
-	select {
-	case wrapper := <-respChan:
-		assert.NoError(t, wrapper.Err)
-		assert.NotNil(t, wrapper.Resp)
-		assert.True(t, wrapper.Resp.VoteGranted)
-		assert.Equal(t, wrapper.Resp.Term, expectedResp.Term)
-	case <-time.After(2 * time.Second):
-		t.Fatal("Timeout waiting for SendRequestVote response")
-	}
-}
-
-func TestSendRequestVote_ContextTimeout(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockClient := NewMockRaftServiceClient(ctrl)
-
-	cli := &InternalClientImpl{
-		rawClient: mockClient,
-	}
-
-	// Very short timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
 	defer cancel()
 
-	req := &RequestVoteRequest{}
+	respChan := client.SendRequestVoteWithRetries(ctx, req)
+	respWrapper := <-respChan
 
-	// Make the mock delay to simulate slowness
-	mockClient.EXPECT().
-		RequestVote(gomock.Any(), req).
-		DoAndReturn(func(ctx context.Context, req *RequestVoteRequest, opts ...interface{}) (*RequestVoteResponse, error) {
-			time.Sleep(50 * time.Millisecond) // sleep longer than ctx timeout
-			return nil, context.DeadlineExceeded
-		})
-
-	respChan := cli.SendRequestVoteWithRetries(ctx, req)
-
-	select {
-	case wrapper := <-respChan:
-		assert.Error(t, wrapper.Err)
-		assert.Nil(t, wrapper.Resp)
-		assert.Contains(t, wrapper.Err.Error(), "election timeout")
-	case <-time.After(1 * time.Second):
-		t.Fatal("Timeout waiting for SendRequestVote response")
-	}
+	assert.NoError(t, respWrapper.Err)
+	assert.Equal(t, expectedResp, respWrapper.Resp)
 }
