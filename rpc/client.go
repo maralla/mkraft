@@ -21,6 +21,7 @@ type RPCResponse interface {
 // the real RPC wrapper used directly for the server
 type InternalClientIface interface {
 	SendRequestVote(ctx context.Context, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse]
+	// todo: why the response is not a channel?
 	SendAppendEntries(ctx context.Context, req *AppendEntriesRequest) RPCRespWrapper[*AppendEntriesResponse]
 	SayHello(ctx context.Context, req *HelloRequest) (*HelloReply, error)
 	String() string

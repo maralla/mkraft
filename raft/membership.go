@@ -72,9 +72,12 @@ func InitGlobalMembershipWithStaticConfig(staticMembership *Membership) {
 type MembershipMgrIface interface {
 	GetCurrentNodeID() string
 	GetPeerClient(nodeID string) (rpc.InternalClientIface, error)
+
+	// todo: should merge the two together so that the data are guaranteed to be atomic
 	// if the memebrship is dynamic, the count and peer change and may not be consistent
 	GetMemberCount() int
 	GetAllPeerClients() ([]rpc.InternalClientIface, error)
+
 	GracefulShutdown()
 }
 
