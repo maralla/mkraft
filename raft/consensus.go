@@ -8,6 +8,9 @@ import (
 	"github.com/maki3cat/mkraft/util"
 )
 
+// todo: to merge this into raft.init
+var consensus ConsensusIface = &ConsensusImpl{}
+
 var logger = util.GetSugarLogger()
 
 func calculateIfMajorityMet(total, peerVoteAccumulated int) bool {
