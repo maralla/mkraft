@@ -174,7 +174,7 @@ func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteR
 	ctxTimeout, _ := context.WithTimeout(
 		ctx, time.Duration(util.GetConfig().GetElectionTimeout()))
 	go func() {
-		resp, err := RequestVoteSendForConsensus(ctxTimeout, req)
+		resp, err := consensus.RequestVoteSendForConsensus(ctxTimeout, req)
 		if err != nil {
 			logger.Error("error in RequestVoteSendForConsensus", err)
 			return

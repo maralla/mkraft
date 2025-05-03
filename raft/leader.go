@@ -165,7 +165,7 @@ func (node *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesR
 	go func(ctx context.Context) {
 		ctxTimeout, cancel := context.WithTimeout(ctx, util.GetConfig().GetRPCRequestTimeout())
 		defer cancel()
-		consensusResp, err := AppendEntriesSendForConsensus(ctxTimeout, req)
+		consensusResp, err := consensus.AppendEntriesSendForConsensus(ctxTimeout, req)
 		if err != nil {
 			errChan <- err
 		} else {

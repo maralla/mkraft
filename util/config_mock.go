@@ -96,6 +96,20 @@ func (mr *MockConfigIfaceMockRecorder) GetLeaderHeartbeatPeriod() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeaderHeartbeatPeriod", reflect.TypeOf((*MockConfigIface)(nil).GetLeaderHeartbeatPeriod))
 }
 
+// GetMinRemainingTimeForRPC mocks base method.
+func (m *MockConfigIface) GetMinRemainingTimeForRPC() time.Duration {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetMinRemainingTimeForRPC")
+	ret0, _ := ret[0].(time.Duration)
+	return ret0
+}
+
+// GetMinRemainingTimeForRPC indicates an expected call of GetMinRemainingTimeForRPC.
+func (mr *MockConfigIfaceMockRecorder) GetMinRemainingTimeForRPC() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMinRemainingTimeForRPC", reflect.TypeOf((*MockConfigIface)(nil).GetMinRemainingTimeForRPC))
+}
+
 // GetRPCRequestTimeout mocks base method.
 func (m *MockConfigIface) GetRPCRequestTimeout() time.Duration {
 	m.ctrl.T.Helper()

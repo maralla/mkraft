@@ -34,7 +34,17 @@ type MajorityRequestVoteResp struct {
 	VoteGranted bool
 }
 
-func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest) (*MajorityRequestVoteResp, error) {
+var consensus ConsensusIface = &ConsensusImpl{}
+
+type ConsensusIface interface {
+	RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest) (*MajorityRequestVoteResp, error)
+	AppendEntriesSendForConsensus(ctx context.Context, request *rpc.AppendEntriesRequest) (*AppendEntriesConsensusResp, error)
+}
+
+type ConsensusImpl struct {
+}
+
+func (c *ConsensusImpl) RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest) (*MajorityRequestVoteResp, error) {
 
 	total := memberMgr.GetMemberCount()
 	peerClients, err := memberMgr.GetAllPeerClients()
@@ -121,7 +131,7 @@ func RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRe
 * and wait for the majority of them to respond
 * the expected timeout is just simple one-round trip timeout configuration
  */
-func AppendEntriesSendForConsensus(
+func (c *ConsensusImpl) AppendEntriesSendForConsensus(
 	ctx context.Context, request *rpc.AppendEntriesRequest) (*AppendEntriesConsensusResp, error) {
 
 	total := memberMgr.GetMemberCount()
