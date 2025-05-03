@@ -143,7 +143,7 @@ func TestSendRequestVote_Success(t *testing.T) {
 		RequestVote(gomock.Any(), req).
 		Return(expectedResp, nil)
 
-	respChan := cli.SendRequestVote(ctx, req)
+	respChan := cli.SendRequestVoteWithRetries(ctx, req)
 
 	select {
 	case wrapper := <-respChan:
@@ -184,7 +184,7 @@ func TestSendRequestVote_RetrySuccess(t *testing.T) {
 			Return(expectedResp, nil),
 	)
 
-	respChan := cli.SendRequestVote(ctx, req)
+	respChan := cli.SendRequestVoteWithRetries(ctx, req)
 
 	select {
 	case wrapper := <-respChan:
@@ -221,7 +221,7 @@ func TestSendRequestVote_ContextTimeout(t *testing.T) {
 			return nil, context.DeadlineExceeded
 		})
 
-	respChan := cli.SendRequestVote(ctx, req)
+	respChan := cli.SendRequestVoteWithRetries(ctx, req)
 
 	select {
 	case wrapper := <-respChan:

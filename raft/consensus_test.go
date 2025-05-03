@@ -104,7 +104,7 @@ func TestRequestVoteSendForConsensus(t *testing.T) {
 					Resp: &rpc.RequestVoteResponse{Term: 1, VoteGranted: true},
 				}
 				mockClient1 := rpc.NewMockInternalClientIface(ctrl)
-				mockClient1.EXPECT().SendRequestVote(
+				mockClient1.EXPECT().SendRequestVoteWithRetries(
 					gomock.Any(), gomock.Any()).Return(respChan).Times(1)
 
 				peerClients := make([]rpc.InternalClientIface, 1)
@@ -130,7 +130,7 @@ func TestRequestVoteSendForConsensus(t *testing.T) {
 					Resp: &rpc.RequestVoteResponse{Term: 2, VoteGranted: false},
 				}
 				mockClient1 := rpc.NewMockInternalClientIface(ctrl)
-				mockClient1.EXPECT().SendRequestVote(
+				mockClient1.EXPECT().SendRequestVoteWithRetries(
 					gomock.Any(), gomock.Any()).Return(respChan).Times(1)
 
 				peerClients := make([]rpc.InternalClientIface, 1)
@@ -156,7 +156,7 @@ func TestRequestVoteSendForConsensus(t *testing.T) {
 					Resp: nil,
 				}
 				mockClient1 := rpc.NewMockInternalClientIface(ctrl)
-				mockClient1.EXPECT().SendRequestVote(
+				mockClient1.EXPECT().SendRequestVoteWithRetries(
 					gomock.Any(), gomock.Any()).Return(respChan).Times(1)
 
 				peerClients := make([]rpc.InternalClientIface, 1)
@@ -175,7 +175,7 @@ func TestRequestVoteSendForConsensus(t *testing.T) {
 			mockSetup: func() {
 				respChan := make(chan rpc.RPCRespWrapper[*rpc.RequestVoteResponse], 1)
 				mockClient1 := rpc.NewMockInternalClientIface(ctrl)
-				mockClient1.EXPECT().SendRequestVote(
+				mockClient1.EXPECT().SendRequestVoteWithRetries(
 					gomock.Any(), gomock.Any()).Return(respChan).Times(1)
 
 				peerClients := make([]rpc.InternalClientIface, 1)
