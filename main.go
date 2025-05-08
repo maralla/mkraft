@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/maki3cat/mkraft/raft"
-	pb "github.com/maki3cat/mkraft/rpc"
 	"github.com/maki3cat/mkraft/util"
 	"google.golang.org/grpc"
 	"gopkg.in/yaml.v2"
@@ -27,9 +26,7 @@ func startRPCServer(ctx context.Context, port int) {
 		logger.Fatalw("failed to listen", "error", err)
 	}
 
-	s := grpc.NewServer()
-	pb.RegisterRaftServiceServer(s, &Server{})
-
+	s := NewServer()
 	go func() {
 		logger.Infof("serving gRPC at %v...", port)
 		if err := s.Serve(lis); err != nil {

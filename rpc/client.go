@@ -123,7 +123,6 @@ func (rc *InternalClientImpl) syncCallAppendEntries(ctx context.Context, req *Ap
 
 	resp, err := rc.rawClient.AppendEntries(singleCallCtx, req)
 	if err != nil {
-		// todo: add metrics to all resp codes
 		code := status.Code(err)
 		logger.Errorw("single RPC error in SendAppendEntries:", "to", rc.rawClient, "error", err, "code", code)
 	} else {
@@ -140,7 +139,6 @@ func (rc *InternalClientImpl) syncCallRequestVote(ctx context.Context, req *Requ
 
 	resp, err := rc.rawClient.RequestVote(singleCallCtx, req)
 	if err != nil {
-		// todo: add metrics to all resp codes
 		code := status.Code(err)
 		logger.Errorw("single RPC error in SendAppendEntries:", "to", rc.rawClient, "error", err, "code", code)
 	} else {

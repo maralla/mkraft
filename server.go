@@ -2,12 +2,10 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"time"
 
 	"github.com/maki3cat/mkraft/raft"
 	pb "github.com/maki3cat/mkraft/rpc"
-	"github.com/maki3cat/mkraft/util"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -17,52 +15,27 @@ type Server struct {
 }
 
 func (s *Server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
-	if ctx.Err() == context.Canceled {
-		return nil, status.New(codes.Canceled, "client canceled, abandoning").Err()
-	}
-	logger.Infof("Received: %v", in)
 	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
 }
 
-// timeout handling guideline: https://grpc.io/docs/guides/deadlines/
 func (s *Server) RequestVote(ctx context.Context, in *pb.RequestVoteRequest) (*pb.RequestVoteResponse, error) {
-
-	if ctx.Err() == context.Canceled {
-		return nil, status.New(codes.Canceled, "client canceled, abandoning").Err()
-	}
-
-	logger.Infof("RPC Server RequestVote received: %v", in)
 	respChan := make(chan *pb.RPCRespWrapper[*pb.RequestVoteResponse], 1)
 	internalReq := &raft.RequestVoteInternal{
 		Request:    in,
 		RespWraper: respChan,
 	}
-
+	// todo: should send the ctx into raft server so that it can notice the context is done
 	raft.GetRaftNode().VoteRequest(internalReq)
-	timeout := util.GetConfig().GetRPCRequestTimeout()
-	timeoutTimer := time.NewTimer(timeout)
-	select {
-	case <-timeoutTimer.C:
-		logger.Error("vote request, timeout getting response from raft server")
-		internalReq.IsTimeout.Store(true)
-		return nil, fmt.Errorf("server timeout")
-	case resp := <-respChan:
-		if resp.Err != nil {
-			logger.Error("error in getting response from raft server", resp.Err)
-			return nil, resp.Err
-		}
-		logger.Infof("RPC Server RequestVote respond: %v", resp.Resp)
-		return resp.Resp, nil
+	resp := <-respChan
+	if resp.Err != nil {
+		logger.Error("error in getting response from raft server", resp.Err)
+		return nil, resp.Err
 	}
+	logger.Infof("RPC Server RequestVote respond: %v", resp.Resp)
+	return resp.Resp, nil
 }
 
 func (s *Server) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {
-
-	if ctx.Err() == context.Canceled {
-		return nil, status.New(codes.Canceled, "client canceled, abandoning").Err()
-	}
-
-	logger.Infof("RPC Server, AppendEntries, Received: %v", in)
 	respChan := make(chan *pb.RPCRespWrapper[*pb.AppendEntriesResponse], 1)
 	internalReq := &raft.AppendEntriesInternal{
 		Request:    in,
@@ -71,19 +44,39 @@ func (s *Server) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest)
 	node := raft.GetRaftNode()
 	node.AppendEntryRequest(internalReq)
 
-	timeout := util.GetConfig().GetRPCRequestTimeout()
-	timeoutTimer := time.NewTimer(timeout)
-	select {
-	case <-timeoutTimer.C:
-		logger.Error("appendEntries, timeout getting response from raft server")
-		internalReq.IsTimeout.Store(true)
-		return nil, fmt.Errorf("server timeout")
-	case resp := <-respChan:
-		if resp.Err != nil {
-			logger.Error("error in getting response from raft server", resp.Err)
-			return nil, resp.Err
-		}
-		logger.Infof("RPC Server, AppendEntries, Respond: %v", resp.Resp)
-		return resp.Resp, nil
+	// todo: should send the ctx into raft server so that it can notice the context is done
+	resp := <-respChan
+	if resp.Err != nil {
+		logger.Error("error in getting response from raft server", resp.Err)
+		return nil, resp.Err
 	}
+	logger.Infof("RPC Server, AppendEntries, Respond: %v", resp.Resp)
+	return resp.Resp, nil
+}
+
+func contextCheckInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, status.New(codes.Canceled, "context done").Err()
+	}
+	return handler(ctx, req)
+}
+
+func loggerInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	logger.Infof("gRPC request: %v", req)
+	resp, err := handler(ctx, req)
+	if err != nil {
+		logger.Errorf("gRPC response error: %v", err)
+	} else {
+		logger.Infof("gRPC response: %v", resp)
+	}
+	return resp, err
+}
+
+func NewServer() *grpc.Server {
+	serverOptions := grpc.ChainUnaryInterceptor(
+		contextCheckInterceptor,
+		loggerInterceptor)
+	grpcServer := grpc.NewServer(serverOptions)
+	pb.RegisterRaftServiceServer(grpcServer, &Server{})
+	return grpcServer
 }
