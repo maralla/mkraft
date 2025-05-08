@@ -8,7 +8,6 @@ import (
 	"github.com/maki3cat/mkraft/rpc"
 	"github.com/stretchr/testify/assert"
 	gomock "go.uber.org/mock/gomock"
-	"google.golang.org/grpc"
 )
 
 func TestInitStatisMembership(t *testing.T) {
@@ -120,7 +119,7 @@ func TestStaticMembershipMgr_GetAllPeerClients(t *testing.T) {
 		peerAddrs:     map[string]string{"node2": "localhost:5002", "node3": "localhost:5003"},
 		peerInitLocks: map[string]*sync.Mutex{"node2": &sync.Mutex{}, "node3": &sync.Mutex{}},
 		clients:       &sync.Map{},
-		conns:         &sync.Map{},
+		// conns:         &sync.Map{},
 	}
 
 	ctrl := gomock.NewController(t)
@@ -146,14 +145,14 @@ func TestStaticMembershipMgr_getPeerClient(t *testing.T) {
 		peerAddrs:     map[string]string{"node2": "localhost:5002"},
 		peerInitLocks: map[string]*sync.Mutex{"node2": &sync.Mutex{}},
 		clients:       &sync.Map{},
-		conns:         &sync.Map{},
+		// conns:         &sync.Map{},
 	}
 
 	// Mock gRPC connection and client creation
-	mockConn := &grpc.ClientConn{}
+	// mockConn := &grpc.ClientConn{}
 	ctrl := gomock.NewController(t)
 	mockClient := rpc.NewMockInternalClientIface(ctrl)
-	mgr.conns.Store("node2", mockConn)
+	// mgr.conns.Store("node2", mockConn)
 	mgr.clients.Store("node2", mockClient)
 
 	client, err := mgr.getPeerClient("node2")

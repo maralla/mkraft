@@ -83,21 +83,6 @@ func (mr *MockMembershipMgrIfaceMockRecorder) GetMemberCount() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMemberCount", reflect.TypeOf((*MockMembershipMgrIface)(nil).GetMemberCount))
 }
 
-// GetPeerClient mocks base method.
-func (m *MockMembershipMgrIface) GetPeerClient(nodeID string) (rpc.InternalClientIface, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetPeerClient", nodeID)
-	ret0, _ := ret[0].(rpc.InternalClientIface)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetPeerClient indicates an expected call of GetPeerClient.
-func (mr *MockMembershipMgrIfaceMockRecorder) GetPeerClient(nodeID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPeerClient", reflect.TypeOf((*MockMembershipMgrIface)(nil).GetPeerClient), nodeID)
-}
-
 // GracefulShutdown mocks base method.
 func (m *MockMembershipMgrIface) GracefulShutdown() {
 	m.ctrl.T.Helper()

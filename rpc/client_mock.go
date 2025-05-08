@@ -40,6 +40,20 @@ func (m *MockInternalClientIface) EXPECT() *MockInternalClientIfaceMockRecorder 
 	return m.recorder
 }
 
+// Close mocks base method.
+func (m *MockInternalClientIface) Close() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Close")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Close indicates an expected call of Close.
+func (mr *MockInternalClientIfaceMockRecorder) Close() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockInternalClientIface)(nil).Close))
+}
+
 // SayHello mocks base method.
 func (m *MockInternalClientIface) SayHello(ctx context.Context, req *HelloRequest) (*HelloReply, error) {
 	m.ctrl.T.Helper()

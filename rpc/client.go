@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	grpc "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
 	util "github.com/maki3cat/mkraft/util"
@@ -32,20 +34,42 @@ type InternalClientIface interface {
 	SayHello(ctx context.Context, req *HelloRequest) (*HelloReply, error)
 
 	String() string
+
+	Close() error
 }
 
 type InternalClientImpl struct {
 	nodeId    string
 	nodeAddr  string
 	rawClient RaftServiceClient
+	conn      *grpc.ClientConn
 }
 
-func NewInternalClient(raftServiceClient RaftServiceClient, nodeID, nodeAddr string) InternalClientIface {
+func NewInternalClient(nodeID, nodeAddr string) (InternalClientIface, error) {
+	conn, err := NewClientConn(&nodeAddr)
+	if err != nil {
+		logger.Errorw("failed to create gRPC connection", "nodeID", nodeID, "error", err)
+		return nil, err
+	}
+	raftServiceClient := NewRaftServiceClient(conn)
 	return &InternalClientImpl{
 		nodeId:    nodeID,
 		nodeAddr:  nodeAddr,
 		rawClient: raftServiceClient,
+		conn:      conn,
+	}, nil
+}
+
+func (rc *InternalClientImpl) Close() error {
+	if rc.conn != nil {
+		err := rc.conn.Close()
+		if err != nil {
+			logger.Errorw("failed to close gRPC connection", "nodeID", rc.nodeId, "error", err)
+		}
+		return err
 	}
+	logger.Warn("gRPC connection is nil, cannot close")
+	return nil
 }
 
 func (rc *InternalClientImpl) String() string {
@@ -145,4 +169,36 @@ func (rc *InternalClientImpl) syncCallRequestVote(ctx context.Context, req *Requ
 		logger.Debugw("single RPC response:", "member", rc, "response", resp)
 	}
 	return resp, err
+}
+
+func loggerClientInterceptor(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	logger.Debugf("RPC call: %s, request: %v", method, req)
+	start := time.Now()
+	err := invoker(ctx, method, req, reply, cc, opts...)
+	end := time.Now()
+	logger.Infof("RPC call: %s, duration: %v, error: %v", method, end.Sub(start), err)
+	return err
+}
+
+func timeoutClientInterceptor(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	rpcTimeout := util.GetConfig().GetRPCRequestTimeout()
+	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, rpcTimeout)
+	defer singleCallCancel()
+	err := invoker(singleCallCtx, method, req, reply, cc, opts...)
+	return err
+}
+
+func NewClientConn(addr *string) (*grpc.ClientConn, error) {
+	clientOptions := []grpc.DialOption{
+		// todo: add creds
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(loggerClientInterceptor),
+		grpc.WithUnaryInterceptor(timeoutClientInterceptor),
+	}
+	conn, err := grpc.NewClient(*addr, clientOptions...)
+	if err != nil {
+		logger.Errorw("failed to connect to gRPC server", "target", addr, "error", err)
+		return nil, err
+	}
+	return conn, nil
 }
