@@ -8,19 +8,29 @@ import (
 	"github.com/maki3cat/mkraft/raft"
 	pb "github.com/maki3cat/mkraft/rpc"
 	"github.com/maki3cat/mkraft/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type Server struct {
 	pb.UnimplementedRaftServiceServer
 }
 
-func (s *Server) SayHello(_ context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
+func (s *Server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
+	if ctx.Err() == context.Canceled {
+		return nil, status.New(codes.Canceled, "client canceled, abandoning").Err()
+	}
 	logger.Infof("Received: %v", in)
 	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
 }
 
 // timeout handling guideline: https://grpc.io/docs/guides/deadlines/
-func (s *Server) RequestVote(_ context.Context, in *pb.RequestVoteRequest) (*pb.RequestVoteResponse, error) {
+func (s *Server) RequestVote(ctx context.Context, in *pb.RequestVoteRequest) (*pb.RequestVoteResponse, error) {
+
+	if ctx.Err() == context.Canceled {
+		return nil, status.New(codes.Canceled, "client canceled, abandoning").Err()
+	}
+
 	logger.Infof("RPC Server RequestVote received: %v", in)
 	respChan := make(chan *pb.RPCRespWrapper[*pb.RequestVoteResponse], 1)
 	internalReq := &raft.RequestVoteInternal{
@@ -46,7 +56,12 @@ func (s *Server) RequestVote(_ context.Context, in *pb.RequestVoteRequest) (*pb.
 	}
 }
 
-func (s *Server) AppendEntries(_ context.Context, in *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {
+func (s *Server) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {
+
+	if ctx.Err() == context.Canceled {
+		return nil, status.New(codes.Canceled, "client canceled, abandoning").Err()
+	}
+
 	logger.Infof("RPC Server, AppendEntries, Received: %v", in)
 	respChan := make(chan *pb.RPCRespWrapper[*pb.AppendEntriesResponse], 1)
 	internalReq := &raft.AppendEntriesInternal{

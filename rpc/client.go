@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"google.golang.org/grpc/status"
+
 	util "github.com/maki3cat/mkraft/util"
 )
 
@@ -63,20 +65,6 @@ func (rc *InternalClientImpl) SendAppendEntries(ctx context.Context, req *Append
 	return wrapper
 }
 
-func (rc *InternalClientImpl) syncCallAppendEntries(ctx context.Context, req *AppendEntriesRequest) (*AppendEntriesResponse, error) {
-	rpcTimeout := util.GetConfig().GetRPCRequestTimeout()
-	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, rpcTimeout)
-	defer singleCallCancel()
-
-	resp, err := rc.rawClient.AppendEntries(singleCallCtx, req)
-	if err != nil {
-		logger.Errorw("single RPC error in SendAppendEntries:", "to", rc.rawClient, "error", err)
-	} else {
-		logger.Debugw("single RPC SendAppendEntries response:", "member", rc, "response", resp)
-	}
-	return resp, err
-}
-
 // the context shall be timed out in election timeout period
 func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse] {
 	logger.Debugw("send SendRequestVote", "req", req)
@@ -93,7 +81,6 @@ func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, re
 			case resp := <-singleResChan:
 				if resp.Err != nil {
 					deadline, ok := ctx.Deadline()
-					// todo: move to config
 					logger.Debugw("retrying RPC, deadline:", "deadline", deadline)
 					if ok && time.Until(deadline) < util.GetConfig().GetMinRemainingTimeForRPC() {
 						out <- RPCRespWrapper[*RequestVoteResponse]{
@@ -115,22 +102,6 @@ func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, re
 	return out
 }
 
-// https://grpc.io/docs/guides/deadlines/
-// https://github.com/grpc/grpc-go/blob/master/examples/features/deadline/client/main.go
-func (rc *InternalClientImpl) syncCallRequestVote(ctx context.Context, req *RequestVoteRequest) (*RequestVoteResponse, error) {
-	rpcTimeout := util.GetConfig().GetRPCRequestTimeout()
-	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, rpcTimeout)
-	defer singleCallCancel()
-
-	resp, err := rc.rawClient.RequestVote(singleCallCtx, req)
-	if err != nil {
-		logger.Errorw("single RPC error:", "to", rc, "error", err)
-	} else {
-		logger.Debugw("single RPC response:", "member", rc, "response", resp)
-	}
-	return resp, err
-}
-
 func (rc *InternalClientImpl) asyncCallRequestVote(ctx context.Context, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse] {
 	singleResChan := make(chan RPCRespWrapper[*RequestVoteResponse], 1) // must be buffered
 	go func() {
@@ -142,4 +113,38 @@ func (rc *InternalClientImpl) asyncCallRequestVote(ctx context.Context, req *Req
 		singleResChan <- wrapper
 	}()
 	return singleResChan
+}
+
+// should be called when ctx.deadline can handle the rpc timeout
+func (rc *InternalClientImpl) syncCallAppendEntries(ctx context.Context, req *AppendEntriesRequest) (*AppendEntriesResponse, error) {
+	rpcTimeout := util.GetConfig().GetRPCRequestTimeout()
+	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, rpcTimeout)
+	defer singleCallCancel()
+
+	resp, err := rc.rawClient.AppendEntries(singleCallCtx, req)
+	if err != nil {
+		// todo: add metrics to all resp codes
+		code := status.Code(err)
+		logger.Errorw("single RPC error in SendAppendEntries:", "to", rc.rawClient, "error", err, "code", code)
+	} else {
+		logger.Debugw("single RPC SendAppendEntries response:", "member", rc, "response", resp)
+	}
+	return resp, err
+}
+
+// should be called when ctx.deadline can handle the rpc timeout
+func (rc *InternalClientImpl) syncCallRequestVote(ctx context.Context, req *RequestVoteRequest) (*RequestVoteResponse, error) {
+	rpcTimeout := util.GetConfig().GetRPCRequestTimeout()
+	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, rpcTimeout)
+	defer singleCallCancel()
+
+	resp, err := rc.rawClient.RequestVote(singleCallCtx, req)
+	if err != nil {
+		// todo: add metrics to all resp codes
+		code := status.Code(err)
+		logger.Errorw("single RPC error in SendAppendEntries:", "to", rc.rawClient, "error", err, "code", code)
+	} else {
+		logger.Debugw("single RPC response:", "member", rc, "response", resp)
+	}
+	return resp, err
 }

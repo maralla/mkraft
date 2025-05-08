@@ -12,7 +12,7 @@ import (
 
 var (
 	memberMgr MembershipMgrIface
-	once      sync.Once
+	// once      sync.Once
 )
 
 type Membership struct {

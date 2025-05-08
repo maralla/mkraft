@@ -8,6 +8,14 @@ https://raft.github.io/
 ## External Frameworks/Dependencies
 - gRPC
 
+### Features of gRPC Used in This Repo
+
+| Number | Feature Topic          | Details                                                  |
+| ------ | ---------------------- | -------------------------------------------------------- |
+| 1      | deadline/timeout       | 1) deadlines on the client; rpc/client.go; 2)            |
+| 2      | Streaming support      | [gRPC Streaming](https://grpc.io/docs/guides/streaming/) |
+| 3      | Multi-language support | [gRPC Languages](https://grpc.io/docs/languages/)        |
+
 
 ## TODO List
 
