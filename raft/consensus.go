@@ -8,6 +8,8 @@ import (
 	"github.com/maki3cat/mkraft/util"
 )
 
+// todo: to merge this into raft.init
+var consensus ConsensusIface = &ConsensusImpl{}
 var logger = util.GetSugarLogger()
 
 func calculateIfMajorityMet(total, peerVoteAccumulated int) bool {
@@ -33,8 +35,6 @@ type MajorityRequestVoteResp struct {
 	Term        int32
 	VoteGranted bool
 }
-
-var consensus ConsensusIface = &ConsensusImpl{}
 
 type ConsensusIface interface {
 	RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest) (*MajorityRequestVoteResp, error)

@@ -104,7 +104,10 @@ func main() {
 	}
 	logger.Infof("Config: %v", membershipConfig)
 
-	raft.InitGlobalMembershipWithStaticConfig(membershipConfig)
+	err = raft.InitStatisMembership(membershipConfig)
+	if err != nil {
+		panic(err)
+	}
 
 	// signal handling
 	signalChan := make(chan os.Signal, 1)

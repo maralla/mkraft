@@ -15,72 +15,6 @@ var (
 	once      sync.Once
 )
 
-// EXPOSED APIS
-func GetAllPeerClients() ([]rpc.InternalClientIface, error) {
-	if memberMgr == nil {
-		return nil, errors.New("membership manager is not initialized")
-	}
-	return memberMgr.GetAllPeerClients()
-}
-
-func GetPeerClient(nodeID string) (rpc.InternalClientIface, error) {
-	if memberMgr == nil {
-		return nil, errors.New("membership manager is not initialized")
-	}
-	return memberMgr.GetPeerClient(nodeID)
-}
-
-func GetCurrentNodeID() string {
-	if memberMgr == nil {
-		return ""
-	}
-	return memberMgr.GetCurrentNodeID()
-}
-
-func InitGlobalMembershipWithStaticConfig(staticMembership *Membership) {
-	once.Do(func() {
-		// check sanity
-		if len(staticMembership.AllMembers) == 0 {
-			logger.Fatal("static membership is empty")
-		}
-		if len(staticMembership.CurrentNodeID)%2 == 0 {
-			logger.Fatal("the member count should be odd")
-		}
-		for _, node := range staticMembership.AllMembers {
-			if node.NodeID == "" || node.NodeURI == "" {
-				util.GetSugarLogger().Fatal("static membership is invalid")
-			}
-		}
-
-		// init
-		util.GetSugarLogger().Info("Initializing static membership manager")
-		staticMembershipMgr := &StaticMembershipMgr{
-			membership:    staticMembership,
-			clients:       &sync.Map{},
-			conns:         &sync.Map{},
-			peerAddrs:     make(map[string]string),
-			peerInitLocks: make(map[string]*sync.Mutex),
-		}
-		for _, node := range staticMembership.AllMembers {
-			staticMembershipMgr.peerAddrs[node.NodeID] = node.NodeURI
-			staticMembershipMgr.peerInitLocks[node.NodeID] = &sync.Mutex{}
-		}
-		memberMgr = staticMembershipMgr
-	})
-}
-
-type MembershipMgrIface interface {
-	GetCurrentNodeID() string
-	GetPeerClient(nodeID string) (rpc.InternalClientIface, error)
-
-	// todo: should merge the two together so that the data are guaranteed to be atomic
-	// if the memebrship is dynamic, the count and peer change and may not be consistent
-	GetMemberCount() int
-	GetAllPeerClients() ([]rpc.InternalClientIface, error)
-
-	GracefulShutdown()
-}
-
 type Membership struct {
 	CurrentNodeID   string     `json:"current_node_id" yaml:"current_node_id"`
 	CurrentPort     int        `json:"current_port" yaml:"current_port"`
@@ -91,6 +25,50 @@ type Membership struct {
 type NodeAddr struct {
 	NodeID  string `json:"node_id" yaml:"node_id"`
 	NodeURI string `json:"node_uri" yaml:"node_uri"`
+}
+
+type MembershipMgrIface interface {
+	GetCurrentNodeID() string
+	GetMemberCount() int
+
+	// todo: GetMemberCount, GetAllPeerClients may diverge
+	// todo: may need to be re-constructed when dynamic membership is added
+	GetAllPeerClients() ([]rpc.InternalClientIface, error)
+	GracefulShutdown()
+}
+
+// using the a static
+func InitStatisMembership(staticMembership *Membership) error {
+	// once.Do(func() {
+	// check sanity
+	if len(staticMembership.AllMembers) < 3 {
+		return errors.New("smallest cluster size is 3")
+	}
+	if len(staticMembership.AllMembers)%2 == 0 {
+		return errors.New("the member count should be odd")
+	}
+	for _, node := range staticMembership.AllMembers {
+		if node.NodeID == "" || node.NodeURI == "" {
+			return errors.New("node id and uri should not be empty")
+		}
+	}
+
+	// init
+	util.GetSugarLogger().Info("Initializing static membership manager")
+	staticMembershipMgr := &StaticMembershipMgr{
+		membership:    staticMembership,
+		clients:       &sync.Map{},
+		conns:         &sync.Map{},
+		peerAddrs:     make(map[string]string),
+		peerInitLocks: make(map[string]*sync.Mutex),
+	}
+	for _, node := range staticMembership.AllMembers {
+		staticMembershipMgr.peerAddrs[node.NodeID] = node.NodeURI
+		staticMembershipMgr.peerInitLocks[node.NodeID] = &sync.Mutex{}
+	}
+	memberMgr = staticMembershipMgr
+	return nil
+	// })
 }
 
 type StaticMembershipMgr struct {
@@ -107,9 +85,7 @@ func (mgr *StaticMembershipMgr) GetCurrentNodeID() string {
 }
 
 func (mgr *StaticMembershipMgr) GracefulShutdown() {
-	logger := util.GetSugarLogger()
 	logger.Info("graceful shutdown of membership manager")
-	// close all connections
 	for _, nodeInfo := range mgr.membership.AllMembers {
 		if nodeInfo.NodeID == mgr.membership.CurrentNodeID {
 			// self
@@ -124,7 +100,7 @@ func (mgr *StaticMembershipMgr) GracefulShutdown() {
 	}
 }
 
-func (mgr *StaticMembershipMgr) GetPeerClient(nodeID string) (rpc.InternalClientIface, error) {
+func (mgr *StaticMembershipMgr) getPeerClient(nodeID string) (rpc.InternalClientIface, error) {
 	client, ok := mgr.clients.Load(nodeID)
 	if ok {
 		return client.(rpc.InternalClientIface), nil
@@ -163,7 +139,7 @@ func (mgr *StaticMembershipMgr) GetAllPeerClients() ([]rpc.InternalClientIface, 
 	peers := make([]rpc.InternalClientIface, 0)
 	for _, nodeInfo := range mgr.membership.AllMembers {
 		if nodeInfo.NodeID != mgr.membership.CurrentNodeID {
-			client, err := mgr.GetPeerClient(nodeInfo.NodeID)
+			client, err := mgr.getPeerClient(nodeInfo.NodeID)
 			if err != nil {
 				util.GetSugarLogger().Errorw(
 					"failed to get peer client, omit this one", "nodeID", nodeInfo.NodeID, "error", err)
