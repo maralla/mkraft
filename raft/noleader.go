@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
+	util "github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/rpc"
-	"github.com/maki3cat/mkraft/util"
 )
 
 // todo, maki: shall check if we need priority of a speicifc channel in our select

@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
+	util "github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/rpc"
-	"github.com/maki3cat/mkraft/util"
 )
 
 // todo: to merge this into raft.init

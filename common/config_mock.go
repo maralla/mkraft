@@ -7,7 +7,7 @@
 //
 
 // Package util is a generated GoMock package.
-package util
+package common
 
 import (
 	reflect "reflect"

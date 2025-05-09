@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	util "github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/rpc"
-	"github.com/maki3cat/mkraft/util"
 	gomock "go.uber.org/mock/gomock"
 )
 

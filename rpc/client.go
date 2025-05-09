@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/status"
 
-	util "github.com/maki3cat/mkraft/util"
+	util "github.com/maki3cat/mkraft/common"
 )
 
 var logger = util.GetSugarLogger()

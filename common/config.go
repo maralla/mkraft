@@ -1,4 +1,4 @@
-package util
+package common
 
 import (
 	"encoding/json"
@@ -147,4 +147,22 @@ func GrpcServiceConfigDialOptionFromYAML(filePath string) (grpc.DialOption, erro
 	}
 
 	return grpc.WithDefaultServiceConfig(string(grpcJSON)), nil
+}
+
+type (
+	ConfigV2 struct {
+		Membership Membership ``
+	}
+)
+
+type Membership struct {
+	CurrentNodeID   string     `json:"current_node_id" yaml:"current_node_id"`
+	CurrentPort     int        `json:"current_port" yaml:"current_port"`
+	CurrentNodeAddr string     `json:"current_node_addr" yaml:"current_node_addr"`
+	AllMembers      []NodeAddr `json:"all_members" yaml:"all_members"`
+}
+
+type NodeAddr struct {
+	NodeID  string `json:"node_id" yaml:"node_id"`
+	NodeURI string `json:"node_uri" yaml:"node_uri"`
 }

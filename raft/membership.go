@@ -4,8 +4,8 @@ import (
 	"errors"
 	"sync"
 
+	util "github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/rpc"
-	"github.com/maki3cat/mkraft/util"
 )
 
 var (

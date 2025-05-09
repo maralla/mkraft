@@ -8,12 +8,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/raft"
-	"github.com/maki3cat/mkraft/util"
 	"gopkg.in/yaml.v2"
 )
 
-var logger = util.GetSugarLogger()
+var logger = common.GetSugarLogger()
 
 func main() {
 
