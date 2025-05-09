@@ -2,10 +2,7 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
-	"fmt"
-	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,46 +10,15 @@ import (
 
 	"github.com/maki3cat/mkraft/raft"
 	"github.com/maki3cat/mkraft/util"
-	"google.golang.org/grpc"
 	"gopkg.in/yaml.v2"
 )
 
 var logger = util.GetSugarLogger()
 
-// maki: gogymnastics pattern serving and gracefully shutdown
-func startRPCServer(ctx context.Context, port int) {
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		logger.Fatalw("failed to listen", "error", err)
-	}
-
-	s := NewServer()
-	go func() {
-		logger.Infof("serving gRPC at %v...", port)
-		if err := s.Serve(lis); err != nil {
-			if errors.Is(err, grpc.ErrServerStopped) {
-				logger.Info("gRPC server stopped")
-				return
-			} else {
-				logger.Errorw("failed to serve", "error", err)
-				panic(err)
-			}
-		}
-	}()
-
-	go func() {
-		logger.Info("waiting for context cancellation or server quit...")
-		<-ctx.Done()
-		logger.Info("context canceled, stopping gRPC server...")
-		s.GracefulStop() // or s.Stop() for immediate stop
-	}()
-}
-
 func main() {
-	logger := util.GetSugarLogger()
-	defaultPath := "./config/config1.yaml"
 
 	// read config from the yaml file
+	defaultPath := "./config/config1.yaml"
 	configPath := flag.String("c", "", "the path of the config file")
 	if *configPath == "" {
 		*configPath = defaultPath
@@ -79,18 +45,16 @@ func main() {
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
 
-	// maki: gogymnastics pattern can wait on multiple context
-	// start raft and rpc servers
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	startRPCServer(ctx, membershipConfig.CurrentPort)
-	// go PingMembers(ctx)
 
+	// all use the same root ctx
+	ServerStart(ctx, membershipConfig.CurrentPort)
 	raft.StartRaftNode(ctx)
 
 	sig := <-signalChan
 	logger.Warn("\nReceived signal: %s\n", sig)
 	cancel()
-	time.Sleep(2 * time.Second)
+	time.Sleep(10 * time.Second)
 	logger.Warn("Main exiting")
 }

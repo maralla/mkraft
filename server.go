@@ -2,6 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"log"
+	"net"
+	"time"
 
 	"github.com/maki3cat/mkraft/raft"
 	pb "github.com/maki3cat/mkraft/rpc"
@@ -79,4 +84,43 @@ func NewServer() *grpc.Server {
 	grpcServer := grpc.NewServer(serverOptions)
 	pb.RegisterRaftServiceServer(grpcServer, &Server{})
 	return grpcServer
+}
+
+func ServerGracefulShutdown(s *grpc.Server, waitingDuration time.Duration) {
+	log.Println("Initiating grpc server graceful shutdown...")
+	timer := time.AfterFunc(waitingDuration, func() {
+		logger.Info("Server couldn't stop gracefully in time. Doing force stop.")
+		s.Stop()
+	})
+	defer timer.Stop()
+	s.GracefulStop()
+	log.Println("Server stopped gracefully.")
+}
+
+func ServerStart(ctx context.Context, port int) {
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		logger.Fatalw("failed to listen", "error", err)
+	}
+
+	s := NewServer()
+	go func() {
+		logger.Infof("serving gRPC at %v...", port)
+		if err := s.Serve(lis); err != nil {
+			if errors.Is(err, grpc.ErrServerStopped) {
+				logger.Info("gRPC server stopped")
+				return
+			} else {
+				logger.Errorw("failed to serve", "error", err)
+				panic(err)
+			}
+		}
+	}()
+
+	go func() {
+		logger.Info("waiting for context cancellation or server quit...")
+		<-ctx.Done()
+		ServerGracefulShutdown(s, 5*time.Second)
+		logger.Info("context canceled, stopping gRPC server...")
+	}()
 }
