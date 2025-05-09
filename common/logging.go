@@ -5,6 +5,10 @@ import zap "go.uber.org/zap"
 var logger *zap.Logger
 var sugarLogger *zap.SugaredLogger
 
+func init() {
+	InitLogger()
+}
+
 func InitLogger() {
 	// Initialize the logger
 	var err error

@@ -1,48 +1,92 @@
 package common
 
 import (
-	"fmt"
 	"os"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
-func TestGrpcServiceConfigDialOptionFromYAML(t *testing.T) {
-	dialOption, err := GrpcServiceConfigDialOptionFromYAML("../server.yaml")
-	if err != nil {
-		t.Fatalf("GrpcServiceConfigDialOptionFromYAML returned an error: %v", err)
-	}
-	fmt.Printf("Dial option string: %s\n", dialOption)
+func TestLoadConfig_FileNotFound(t *testing.T) {
+	_, err := LoadConfig("non_existent_file.yaml")
+	assert.Error(t, err)
 }
 
-func TestGrpcServiceConfigDialOptionFromYAML_FileNotFound(t *testing.T) {
-	_, err := GrpcServiceConfigDialOptionFromYAML("non_existent_file.yaml")
-	if err == nil {
-		t.Error("Expected an error for non-existent file, but got nil")
-	}
-}
-
-func TestGrpcServiceConfigDialOptionFromYAML_InvalidYAML(t *testing.T) {
-	tempFile, err := os.CreateTemp("", "test_invalid_*.yaml")
-	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
-	}
-	defer os.Remove(tempFile.Name())
-
-	invalidYAMLContent := `
-  loadBalancingPolicy: "round_robin"
-  methodConfig:
-	name:
-	service: "example.Service"
-	retryPolicy:
-	maxAttempts: "invalid_number"
+func TestLoadConfig_ValidYAML(t *testing.T) {
+	yamlContent := `
+basic_config:
+  raft_node_request_buffer_size: 123
+  rpc_request_timeout_in_ms: 456
+  election_timeout_min_in_ms: 1000
+  election_timeout_max_in_ms: 2000
+  leader_heartbeat_period_in_ms: 50
+  client_command_buffer_size: 789
+  client_command_batch_size: 5
+  min_remaining_time_for_rpc_in_ms: 20
+membership:
+  current_node_id: "node1"
+  current_port: 8080
+  current_node_addr: "127.0.0.1"
+  all_members:
+    - node_id: "node1"
+      node_uri: "127.0.0.1:8080"
+    - node_id: "node2"
+      node_uri: "127.0.0.1:8081"
+    - node_id: "node3"
+      node_uri: "127.0.0.1:8082"
+grpc:
+  service: "test"
 `
-	if _, err := tempFile.Write([]byte(invalidYAMLContent)); err != nil {
-		t.Fatalf("Failed to write to temp file: %v", err)
-	}
-	tempFile.Close()
+	tmpfile, err := os.CreateTemp("", "config-*.yaml")
+	assert.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
 
-	_, err = GrpcServiceConfigDialOptionFromYAML(tempFile.Name())
-	if err == nil {
-		t.Error("Expected an error for invalid YAML, but got nil")
-	}
+	_, err = tmpfile.Write([]byte(yamlContent))
+	assert.NoError(t, err)
+	tmpfile.Close()
+
+	cfgIface, err := LoadConfig(tmpfile.Name())
+	assert.NoError(t, err)
+	cfg := cfgIface.(*Config)
+
+	assert.Equal(t, 123, cfg.BasicConfig.RaftNodeRequestBufferSize)
+	assert.Equal(t, 456*time.Millisecond, cfg.GetRPCRequestTimeout())
+	assert.Equal(t, "node1", cfg.Membership.CurrentNodeID)
+	assert.Equal(t, 3, len(cfg.Membership.AllMembers))
+	assert.Equal(t, "test", cfg.GRPC["service"])
+}
+
+func TestLoadConfig_Default(t *testing.T) {
+	yamlContent := `
+membership:
+  current_node_id: "node1"
+  current_port: 8080
+  current_node_addr: "127.0.0.1"
+  all_members:
+    - node_id: "node1"
+      node_uri: "127.0.0.1:8080"
+    - node_id: "node2"
+      node_uri: "127.0.0.1:8081"
+    - node_id: "node3"
+      node_uri: "127.0.0.1:8082"
+grpc:
+  service: "test"
+`
+	tmpfile, err := os.CreateTemp("", "config-*.yaml")
+	assert.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	_, err = tmpfile.Write([]byte(yamlContent))
+	assert.NoError(t, err)
+	tmpfile.Close()
+
+	cfgIface, err := LoadConfig(tmpfile.Name())
+	assert.NoError(t, err)
+	cfg := cfgIface.(*Config)
+
+	assert.Equal(t, RAFT_NODE_REQUEST_BUFFER_SIZE, cfg.BasicConfig.RaftNodeRequestBufferSize)
+	assert.Equal(t, RPC_REUQEST_TIMEOUT_IN_MS*time.Millisecond, cfg.GetRPCRequestTimeout())
+	assert.Equal(t, ELECTION_TIMEOUT_MIN_IN_MS, cfg.BasicConfig.ElectionTimeoutMinInMs)
+
 }

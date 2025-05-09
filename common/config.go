@@ -1,32 +1,59 @@
 package common
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
 	"time"
 
-	"google.golang.org/grpc"
-	"gopkg.in/yaml.v3"
+	jsoniter "github.com/json-iterator/go"
+	"gopkg.in/validator.v2"
+	"gopkg.in/yaml.v2"
 )
 
-// current design: membership is not a part of the configuration
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
+
+type ConfigIface interface {
+	GetRPCRequestTimeout() time.Duration
+	GetElectionTimeout() time.Duration
+	GetLeaderHeartbeatPeriod() time.Duration
+	GetRaftNodeRequestBufferSize() int
+	GetClientCommandBufferSize() int
+	GetClientCommandBatchSize() int
+	String() string
+	GetMinRemainingTimeForRPC() time.Duration
+	GetgRPCServiceConf() string
+	Validate() error
+}
+
+func LoadConfig(filePath string) (ConfigIface, error) {
+	// start with default config
+	cfg := &Config{BasicConfig: *defaultBasicConfig}
+
+	// yaml config
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, err
+	}
+
+	// validate
+	err = validator.Validate(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err = cfg.Validate(); err != nil {
+		fmt.Println("err", err)
+		return nil, err
+	}
+	return cfg, nil
+}
+
 var (
-	theConf ConfigIface
-)
-
-func InitConf() {
-	theConf = CreateDefaultConf()
-	sugarLogger.Infof("init the config to %s", theConf)
-}
-
-func GetConfig() ConfigIface {
-	return theConf
-}
-
-func CreateDefaultConf() *Config {
-	return &Config{
+	defaultBasicConfig = &BasicConfig{
 		RaftNodeRequestBufferSize:  RAFT_NODE_REQUEST_BUFFER_SIZE,
 		RPCRequestTimeoutInMs:      RPC_REUQEST_TIMEOUT_IN_MS,
 		ElectionTimeoutMinInMs:     ELECTION_TIMEOUT_MIN_IN_MS,
@@ -36,133 +63,124 @@ func CreateDefaultConf() *Config {
 		ClientCommandBatchSize:     CLIENT_COMMAND_BATCH_SIZE,
 		MinRemainingTimeForRPCInMs: MIN_REMAINING_TIME_FOR_RPC_IN_MS,
 	}
+)
+
+const (
+	RAFT_NODE_REQUEST_BUFFER_SIZE = 500
+	CLIENT_COMMAND_BATCH_SIZE     = 10
+	CLIENT_COMMAND_BUFFER_SIZE    = 1000
+
+	LEADER_BUFFER_SIZE            = 1000
+	LEADER_HEARTBEAT_PERIOD_IN_MS = 100
+
+	RPC_REUQEST_TIMEOUT_IN_MS = 200
+
+	ELECTION_TIMEOUT_MIN_IN_MS = 350
+	ELECTION_TIMEOUT_MAX_IN_MS = 550
+
+	MIN_REMAINING_TIME_FOR_RPC_IN_MS = 50
+)
+
+type (
+	Config struct {
+		BasicConfig BasicConfig    `yaml:"basic_config" json:"basic_config"`
+		Membership  Membership     `yaml:"membership" json:"membership" validate:"nonzero"`
+		GRPC        map[string]any `yaml:"grpc" json:"grpc"`
+	}
+
+	Membership struct {
+		CurrentNodeID   string     `yaml:"current_node_id" json:"current_node_id" validate:"nonzero"`
+		CurrentPort     int        `yaml:"current_port" json:"current_port" validate:"nonzero"`
+		CurrentNodeAddr string     `yaml:"current_node_addr" json:"current_node_addr" validate:"nonzero"`
+		AllMembers      []NodeAddr `yaml:"all_members" json:"all_members" validate:"nonzero"`
+	}
+
+	NodeAddr struct {
+		NodeID  string `yaml:"node_id" json:"node_id" validate:"nonzero"`
+		NodeURI string `yaml:"node_uri" json:"node_uri" validate:"nonzero"`
+	}
+
+	BasicConfig struct {
+		RaftNodeRequestBufferSize int `yaml:"raft_node_request_buffer_size" json:"raft_node_request_buffer_size" validate:"min=1"`
+
+		// RPC timeout
+		RPCRequestTimeoutInMs int `yaml:"rpc_request_timeout_in_ms" json:"rpc_request_timeout_in_ms" validate:"min=1"`
+
+		// Election timeout
+		ElectionTimeoutMinInMs int `yaml:"election_timeout_min_in_ms" json:"election_timeout_min_in_ms" validate:"min=1"`
+		ElectionTimeoutMaxInMs int `yaml:"election_timeout_max_in_ms" json:"election_timeout_max_in_ms" validate:"min=1"`
+
+		// Leader
+		LeaderHeartbeatPeriodInMs int `yaml:"leader_heartbeat_period_in_ms" json:"leader_heartbeat_period_in_ms" validate:"min=1"`
+
+		// Client
+		ClientCommandBufferSize int `yaml:"client_command_buffer_size" json:"client_command_buffer_size" validate:"min=1"`
+		ClientCommandBatchSize  int `yaml:"client_command_batch_size" json:"client_command_batch_size" validate:"min=1"`
+
+		// internal
+		MinRemainingTimeForRPCInMs int `yaml:"min_remaining_time_for_rpc_in_ms" json:"min_remaining_time_for_rpc_in_ms" validate:"min=1"`
+	}
+)
+
+func (c *Config) Validate() error {
+
+	_, err := json.Marshal(c.GRPC)
+	fmt.Println("err", err)
+	if err != nil {
+		return err
+	}
+	if len(c.Membership.AllMembers)%2 == 0 {
+		return errors.New("number of members must be odd")
+	}
+	if (c.BasicConfig.ElectionTimeoutMinInMs > c.BasicConfig.ElectionTimeoutMaxInMs) ||
+		(c.BasicConfig.ElectionTimeoutMinInMs <= 0) ||
+		(c.BasicConfig.ElectionTimeoutMaxInMs <= 0) {
+		return errors.New("election timeout min must be less than max and both must be positive")
+	}
+	return nil
 }
 
-// DEFAULT VALUES of configuration
-const RAFT_NODE_REQUEST_BUFFER_SIZE = 500
-const CLIENT_COMMAND_BATCH_SIZE = 10
-const CLIENT_COMMAND_BUFFER_SIZE = 1000
-
-const LEADER_BUFFER_SIZE = 1000
-const LEADER_HEARTBEAT_PERIOD_IN_MS = 100
-
-const RPC_REUQEST_TIMEOUT_IN_MS = 200
-
-const ELECTION_TIMEOUT_MIN_IN_MS = 350
-const ELECTION_TIMEOUT_MAX_IN_MS = 550
-
-const MIN_REMAINING_TIME_FOR_RPC_IN_MS = 50
-
-type ConfigIface interface {
-	GetRPCRequestTimeout() time.Duration
-	GetElectionTimeout() time.Duration
-
-	GetLeaderHeartbeatPeriod() time.Duration
-	GetRaftNodeRequestBufferSize() int
-
-	GetClientCommandBufferSize() int
-	GetClientCommandBatchSize() int
-	String() string
-
-	GetMinRemainingTimeForRPC() time.Duration
-}
-
-type Config struct {
-	RaftNodeRequestBufferSize int `json:"raft_node_request_buffer_size"`
-
-	// RPC timeout
-	RPCRequestTimeoutInMs int `json:"rpc_request_timeout_in_ms"`
-
-	// Election timeout
-	ElectionTimeoutMinInMs int `json:"election_timeout_min_in_ms"`
-	ElectionTimeoutMaxInMs int `json:"election_timeout_max_in_ms"`
-
-	// Leader
-	LeaderHeartbeatPeriodInMs int `json:"leader_heartbeat_period_in_ms"`
-
-	// Client
-	ClientCommandBufferSize int `json:"client_command_buffer_size"`
-	ClientCommandBatchSize  int `json:"client_command_batch_size"`
-
-	// internal
-	MinRemainingTimeForRPCInMs int `json:"min_remaining_time_for_rpc_in_ms"`
+func (c *Config) GetgRPCServiceConf() string {
+	grpcJSON, _ := json.Marshal(c.GRPC)
+	return string(grpcJSON)
 }
 
 func (c *Config) GetMinRemainingTimeForRPC() time.Duration {
-	return time.Duration(c.MinRemainingTimeForRPCInMs) * time.Millisecond
+	return time.Duration(c.BasicConfig.MinRemainingTimeForRPCInMs) * time.Millisecond
 }
 
 func (c *Config) GetRPCRequestTimeout() time.Duration {
-	return time.Duration(c.RPCRequestTimeoutInMs) * time.Millisecond
+	return time.Duration(c.BasicConfig.RPCRequestTimeoutInMs) * time.Millisecond
 }
 
 func (c *Config) GetElectionTimeout() time.Duration {
-	diff := c.ElectionTimeoutMaxInMs - c.ElectionTimeoutMinInMs
-	randomMs := rand.Intn(diff) + ELECTION_TIMEOUT_MIN_IN_MS
+	b := c.BasicConfig
+	timeoutRange := b.ElectionTimeoutMaxInMs - b.ElectionTimeoutMinInMs
+	randomMs := rand.Intn(timeoutRange) + ELECTION_TIMEOUT_MIN_IN_MS
 	return time.Duration(randomMs) * time.Millisecond
 }
 
 func (c *Config) GetRaftNodeRequestBufferSize() int {
-	return c.RaftNodeRequestBufferSize
+	b := c.BasicConfig
+	return b.RaftNodeRequestBufferSize
 }
 
 func (c *Config) GetLeaderHeartbeatPeriod() time.Duration {
-	return time.Duration(c.LeaderHeartbeatPeriodInMs) * time.Millisecond
+	b := c.BasicConfig
+	return time.Duration(b.LeaderHeartbeatPeriodInMs) * time.Millisecond
 }
 
 func (c *Config) GetClientCommandBufferSize() int {
-	return c.ClientCommandBufferSize
+	b := c.BasicConfig
+	return b.ClientCommandBufferSize
 }
 
 func (c *Config) GetClientCommandBatchSize() int {
-	return c.ClientCommandBatchSize
+	b := c.BasicConfig
+	return b.ClientCommandBatchSize
 }
 
 func (c *Config) String() string {
 	jsonStr, _ := json.Marshal(c)
 	return string(jsonStr)
-}
-
-// GrpcServiceConfigDialOptionFromYAML reads a YAML file, extracts the grpc block,
-// and returns a grpc.DialOption with WithDefaultServiceConfig.
-func GrpcServiceConfigDialOptionFromYAML(filePath string) (grpc.DialOption, error) {
-	type config struct {
-		GRPC map[string]interface{} `yaml:"grpc"`
-	}
-
-	yamlData, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read YAML file: %w", err)
-	}
-
-	var cfg config
-	if err := yaml.Unmarshal(yamlData, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse YAML: %w", err)
-	}
-	sugarLogger.Debug("grpc config: %s", cfg.GRPC)
-
-	grpcJSON, err := json.Marshal(cfg.GRPC)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal grpc config to JSON: %w", err)
-	}
-
-	return grpc.WithDefaultServiceConfig(string(grpcJSON)), nil
-}
-
-type (
-	ConfigV2 struct {
-		Membership Membership ``
-	}
-)
-
-type Membership struct {
-	CurrentNodeID   string     `json:"current_node_id" yaml:"current_node_id"`
-	CurrentPort     int        `json:"current_port" yaml:"current_port"`
-	CurrentNodeAddr string     `json:"current_node_addr" yaml:"current_node_addr"`
-	AllMembers      []NodeAddr `json:"all_members" yaml:"all_members"`
-}
-
-type NodeAddr struct {
-	NodeID  string `json:"node_id" yaml:"node_id"`
-	NodeURI string `json:"node_uri" yaml:"node_uri"`
 }
