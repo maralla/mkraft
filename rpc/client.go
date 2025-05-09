@@ -190,6 +190,12 @@ func timeoutClientInterceptor(ctx context.Context, method string, req, reply any
 }
 
 func NewClientConn(addr *string) (*grpc.ClientConn, error) {
+	retryOption, err := util.GrpcServiceConfigDialOptionFromYAML("server.yaml")
+	if err != nil {
+		logger.Errorw("failed to read gRPC service config from YAML", "error", err)
+		return nil, err
+	}
+
 	clientOptions := []grpc.DialOption{
 		// todo: add creds
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -197,6 +203,7 @@ func NewClientConn(addr *string) (*grpc.ClientConn, error) {
 		grpc.WithUnaryInterceptor(timeoutClientInterceptor),
 		// gzip compression
 		grpc.WithDefaultCallOptions(grpc.UseCompressor(gzip.Name)),
+		retryOption,
 	}
 
 	conn, err := grpc.NewClient(*addr, clientOptions...)

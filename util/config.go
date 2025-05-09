@@ -2,8 +2,13 @@ package util
 
 import (
 	"encoding/json"
+	"fmt"
 	"math/rand"
+	"os"
 	"time"
+
+	"google.golang.org/grpc"
+	"gopkg.in/yaml.v3"
 )
 
 // current design: membership is not a part of the configuration
@@ -116,4 +121,30 @@ func (c *Config) GetClientCommandBatchSize() int {
 func (c *Config) String() string {
 	jsonStr, _ := json.Marshal(c)
 	return string(jsonStr)
+}
+
+// GrpcServiceConfigDialOptionFromYAML reads a YAML file, extracts the grpc block,
+// and returns a grpc.DialOption with WithDefaultServiceConfig.
+func GrpcServiceConfigDialOptionFromYAML(filePath string) (grpc.DialOption, error) {
+	type config struct {
+		GRPC map[string]interface{} `yaml:"grpc"`
+	}
+
+	yamlData, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read YAML file: %w", err)
+	}
+
+	var cfg config
+	if err := yaml.Unmarshal(yamlData, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML: %w", err)
+	}
+	sugarLogger.Debug("grpc config: %s", cfg.GRPC)
+
+	grpcJSON, err := json.Marshal(cfg.GRPC)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal grpc config to JSON: %w", err)
+	}
+
+	return grpc.WithDefaultServiceConfig(string(grpcJSON)), nil
 }
