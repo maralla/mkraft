@@ -10,10 +10,16 @@ https://raft.github.io/
 
 ### Features of gRPC Used in This Repo
 
+https://grpc.io/docs/guides/performance/
+- [ ] try to change to streaming RPCs (with keep alive) or keep both and do a benchmarking
+- [ ] channel optimization
+- [ ] error handling
+
 | Number | Feature Topic                                                        |
 | ------ | -------------------------------------------------------------------- |
 | 1      | deadline/timeout                                                     |
 | 2      | graceful shutdown (https://grpc.io/docs/guides/server-graceful-stop) |
+| 3      | server/client interceptors                                           |
 
 
 ## TODO List

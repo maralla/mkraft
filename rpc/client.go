@@ -7,6 +7,7 @@ import (
 
 	grpc "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/status"
 
 	util "github.com/maki3cat/mkraft/util"
@@ -194,7 +195,10 @@ func NewClientConn(addr *string) (*grpc.ClientConn, error) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithUnaryInterceptor(loggerClientInterceptor),
 		grpc.WithUnaryInterceptor(timeoutClientInterceptor),
+		// gzip compression
+		grpc.WithDefaultCallOptions(grpc.UseCompressor(gzip.Name)),
 	}
+
 	conn, err := grpc.NewClient(*addr, clientOptions...)
 	if err != nil {
 		logger.Errorw("failed to connect to gRPC server", "target", addr, "error", err)

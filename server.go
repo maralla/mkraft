@@ -8,6 +8,8 @@ import (
 	"net"
 	"time"
 
+	_ "google.golang.org/grpc/encoding/gzip"
+
 	"github.com/maki3cat/mkraft/raft"
 	pb "github.com/maki3cat/mkraft/rpc"
 	"google.golang.org/grpc"
