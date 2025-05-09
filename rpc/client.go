@@ -5,6 +5,11 @@ import (
 	"fmt"
 	"time"
 
+	grpc "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/encoding/gzip"
+	"google.golang.org/grpc/status"
+
 	util "github.com/maki3cat/mkraft/util"
 )
 
@@ -30,20 +35,42 @@ type InternalClientIface interface {
 	SayHello(ctx context.Context, req *HelloRequest) (*HelloReply, error)
 
 	String() string
+
+	Close() error
 }
 
 type InternalClientImpl struct {
 	nodeId    string
 	nodeAddr  string
 	rawClient RaftServiceClient
+	conn      *grpc.ClientConn
 }
 
-func NewInternalClient(raftServiceClient RaftServiceClient, nodeID, nodeAddr string) InternalClientIface {
+func NewInternalClient(nodeID, nodeAddr string) (InternalClientIface, error) {
+	conn, err := NewClientConn(&nodeAddr)
+	if err != nil {
+		logger.Errorw("failed to create gRPC connection", "nodeID", nodeID, "error", err)
+		return nil, err
+	}
+	raftServiceClient := NewRaftServiceClient(conn)
 	return &InternalClientImpl{
 		nodeId:    nodeID,
 		nodeAddr:  nodeAddr,
 		rawClient: raftServiceClient,
+		conn:      conn,
+	}, nil
+}
+
+func (rc *InternalClientImpl) Close() error {
+	if rc.conn != nil {
+		err := rc.conn.Close()
+		if err != nil {
+			logger.Errorw("failed to close gRPC connection", "nodeID", rc.nodeId, "error", err)
+		}
+		return err
 	}
+	logger.Warn("gRPC connection is nil, cannot close")
+	return nil
 }
 
 func (rc *InternalClientImpl) String() string {
@@ -63,20 +90,6 @@ func (rc *InternalClientImpl) SendAppendEntries(ctx context.Context, req *Append
 	return wrapper
 }
 
-func (rc *InternalClientImpl) syncCallAppendEntries(ctx context.Context, req *AppendEntriesRequest) (*AppendEntriesResponse, error) {
-	rpcTimeout := util.GetConfig().GetRPCRequestTimeout()
-	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, rpcTimeout)
-	defer singleCallCancel()
-
-	resp, err := rc.rawClient.AppendEntries(singleCallCtx, req)
-	if err != nil {
-		logger.Errorw("single RPC error in SendAppendEntries:", "to", rc.rawClient, "error", err)
-	} else {
-		logger.Debugw("single RPC SendAppendEntries response:", "member", rc, "response", resp)
-	}
-	return resp, err
-}
-
 // the context shall be timed out in election timeout period
 func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse] {
 	logger.Debugw("send SendRequestVote", "req", req)
@@ -93,7 +106,6 @@ func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, re
 			case resp := <-singleResChan:
 				if resp.Err != nil {
 					deadline, ok := ctx.Deadline()
-					// todo: move to config
 					logger.Debugw("retrying RPC, deadline:", "deadline", deadline)
 					if ok && time.Until(deadline) < util.GetConfig().GetMinRemainingTimeForRPC() {
 						out <- RPCRespWrapper[*RequestVoteResponse]{
@@ -115,22 +127,6 @@ func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, re
 	return out
 }
 
-// https://grpc.io/docs/guides/deadlines/
-// https://github.com/grpc/grpc-go/blob/master/examples/features/deadline/client/main.go
-func (rc *InternalClientImpl) syncCallRequestVote(ctx context.Context, req *RequestVoteRequest) (*RequestVoteResponse, error) {
-	rpcTimeout := util.GetConfig().GetRPCRequestTimeout()
-	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, rpcTimeout)
-	defer singleCallCancel()
-
-	resp, err := rc.rawClient.RequestVote(singleCallCtx, req)
-	if err != nil {
-		logger.Errorw("single RPC error:", "to", rc, "error", err)
-	} else {
-		logger.Debugw("single RPC response:", "member", rc, "response", resp)
-	}
-	return resp, err
-}
-
 func (rc *InternalClientImpl) asyncCallRequestVote(ctx context.Context, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse] {
 	singleResChan := make(chan RPCRespWrapper[*RequestVoteResponse], 1) // must be buffered
 	go func() {
@@ -142,4 +138,78 @@ func (rc *InternalClientImpl) asyncCallRequestVote(ctx context.Context, req *Req
 		singleResChan <- wrapper
 	}()
 	return singleResChan
+}
+
+// should be called when ctx.deadline can handle the rpc timeout
+func (rc *InternalClientImpl) syncCallAppendEntries(ctx context.Context, req *AppendEntriesRequest) (*AppendEntriesResponse, error) {
+	rpcTimeout := util.GetConfig().GetRPCRequestTimeout()
+	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, rpcTimeout)
+	defer singleCallCancel()
+
+	resp, err := rc.rawClient.AppendEntries(singleCallCtx, req)
+	if err != nil {
+		code := status.Code(err)
+		logger.Errorw("single RPC error in SendAppendEntries:", "to", rc.rawClient, "error", err, "code", code)
+	} else {
+		logger.Debugw("single RPC SendAppendEntries response:", "member", rc, "response", resp)
+	}
+	return resp, err
+}
+
+// should be called when ctx.deadline can handle the rpc timeout
+func (rc *InternalClientImpl) syncCallRequestVote(ctx context.Context, req *RequestVoteRequest) (*RequestVoteResponse, error) {
+	rpcTimeout := util.GetConfig().GetRPCRequestTimeout()
+	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, rpcTimeout)
+	defer singleCallCancel()
+
+	resp, err := rc.rawClient.RequestVote(singleCallCtx, req)
+	if err != nil {
+		code := status.Code(err)
+		logger.Errorw("single RPC error in SendAppendEntries:", "to", rc.rawClient, "error", err, "code", code)
+	} else {
+		logger.Debugw("single RPC response:", "member", rc, "response", resp)
+	}
+	return resp, err
+}
+
+func loggerClientInterceptor(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	logger.Debugf("RPC call: %s, request: %v", method, req)
+	start := time.Now()
+	err := invoker(ctx, method, req, reply, cc, opts...)
+	end := time.Now()
+	logger.Infof("RPC call: %s, duration: %v, error: %v", method, end.Sub(start), err)
+	return err
+}
+
+func timeoutClientInterceptor(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	rpcTimeout := util.GetConfig().GetRPCRequestTimeout()
+	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, rpcTimeout)
+	defer singleCallCancel()
+	err := invoker(singleCallCtx, method, req, reply, cc, opts...)
+	return err
+}
+
+func NewClientConn(addr *string) (*grpc.ClientConn, error) {
+	retryOption, err := util.GrpcServiceConfigDialOptionFromYAML("server.yaml")
+	if err != nil {
+		logger.Errorw("failed to read gRPC service config from YAML", "error", err)
+		return nil, err
+	}
+
+	clientOptions := []grpc.DialOption{
+		// todo: add creds
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(loggerClientInterceptor),
+		grpc.WithUnaryInterceptor(timeoutClientInterceptor),
+		// gzip compression
+		grpc.WithDefaultCallOptions(grpc.UseCompressor(gzip.Name)),
+		retryOption,
+	}
+
+	conn, err := grpc.NewClient(*addr, clientOptions...)
+	if err != nil {
+		logger.Errorw("failed to connect to gRPC server", "target", addr, "error", err)
+		return nil, err
+	}
+	return conn, nil
 }

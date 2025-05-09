@@ -62,9 +62,8 @@ type AppendEntriesInternal struct {
 }
 
 type ClientCommandInternal struct {
-	request  []byte
-	respChan chan []byte
-	errChan  chan error
+	request []byte
+	errChan chan error
 }
 
 type TermRank int

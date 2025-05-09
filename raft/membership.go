@@ -6,13 +6,11 @@ import (
 
 	"github.com/maki3cat/mkraft/rpc"
 	"github.com/maki3cat/mkraft/util"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 var (
 	memberMgr MembershipMgrIface
-	once      sync.Once
+	// once      sync.Once
 )
 
 type Membership struct {
@@ -56,9 +54,9 @@ func InitStatisMembership(staticMembership *Membership) error {
 	// init
 	util.GetSugarLogger().Info("Initializing static membership manager")
 	staticMembershipMgr := &StaticMembershipMgr{
-		membership:    staticMembership,
-		clients:       &sync.Map{},
-		conns:         &sync.Map{},
+		membership: staticMembership,
+		clients:    &sync.Map{},
+		// conns:         &sync.Map{},
 		peerAddrs:     make(map[string]string),
 		peerInitLocks: make(map[string]*sync.Mutex),
 	}
@@ -77,7 +75,7 @@ type StaticMembershipMgr struct {
 	peerAddrs     map[string]string
 	peerInitLocks map[string]*sync.Mutex
 	clients       *sync.Map
-	conns         *sync.Map
+	// conns         *sync.Map
 }
 
 func (mgr *StaticMembershipMgr) GetCurrentNodeID() string {
@@ -91,11 +89,10 @@ func (mgr *StaticMembershipMgr) GracefulShutdown() {
 			// self
 			continue
 		}
-		conn, ok := mgr.conns.Load(nodeInfo.NodeID)
+		client, ok := mgr.clients.Load(nodeInfo.NodeID)
 		if ok {
 			logger.Infof("closing connection to %s", nodeInfo.NodeID)
-			clientConn, _ := conn.(*grpc.ClientConn)
-			clientConn.Close()
+			client.(rpc.InternalClientIface).Close()
 		}
 	}
 }
@@ -116,17 +113,13 @@ func (mgr *StaticMembershipMgr) getPeerClient(nodeID string) (rpc.InternalClient
 
 	// todo: insecure credentials now
 	addr := mgr.peerAddrs[nodeID]
-	util.GetSugarLogger().Debugw("creating new connection to", "nodeID", nodeID, "peerAddr", addr)
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	logger.Debugw("creating new connection to", "nodeID", nodeID, "peerAddr", addr)
+
+	newClient, err := rpc.NewInternalClient(nodeID, addr)
 	if err != nil {
-		util.GetSugarLogger().Errorw("failed to connect to server", "nodeID", nodeID, "error", err)
+		logger.Errorw("failed to create new client", "nodeID", nodeID, "error", err)
 		return nil, err
 	}
-	mgr.conns.Store(nodeID, conn)
-
-	rpcClient := rpc.NewRaftServiceClient(conn)
-	newClient := rpc.NewInternalClient(
-		rpcClient, nodeID, addr)
 	mgr.clients.Store(nodeID, newClient)
 	return newClient, nil
 }
