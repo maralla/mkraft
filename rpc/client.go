@@ -5,15 +5,15 @@ import (
 	"fmt"
 	"time"
 
+	"go.uber.org/zap"
 	grpc "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding/gzip"
-	"google.golang.org/grpc/status"
 
 	util "github.com/maki3cat/mkraft/common"
 )
 
-var logger = util.GetSugarLogger()
+var _ InternalClientIface = (*InternalClientImpl)(nil)
 
 type RPCRespWrapper[T RPCResponse] struct {
 	Err  error
@@ -39,6 +39,8 @@ type InternalClientIface interface {
 	Close() error
 }
 
+var logger *zap.Logger = util.GetLogger()
+
 type InternalClientImpl struct {
 	nodeId    string
 	nodeAddr  string
@@ -49,7 +51,7 @@ type InternalClientImpl struct {
 func NewInternalClient(nodeID, nodeAddr string) (InternalClientIface, error) {
 	conn, err := NewClientConn(&nodeAddr)
 	if err != nil {
-		logger.Errorw("failed to create gRPC connection", "nodeID", nodeID, "error", err)
+		logger.Error("failed to create gRPC connection", zap.String("nodeID", nodeID), zap.String("nodeAddr", nodeAddr), zap.Error(err))
 		return nil, err
 	}
 	raftServiceClient := NewRaftServiceClient(conn)
@@ -65,7 +67,7 @@ func (rc *InternalClientImpl) Close() error {
 	if rc.conn != nil {
 		err := rc.conn.Close()
 		if err != nil {
-			logger.Errorw("failed to close gRPC connection", "nodeID", rc.nodeId, "error", err)
+			logger.Error("failed to close gRPC connection", zap.String("nodeID", rc.nodeId), zap.Error(err))
 		}
 		return err
 	}
@@ -112,7 +114,7 @@ func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, re
 							Err: fmt.Errorf("%s", "election timeout to receive any non-error response")}
 						return
 					} else {
-						logger.Errorw("need retry, RPC error:", "to", rc, "error", resp.Err)
+						logger.Error("need retry, RPC error:", zap.String("to", rc.String()), zap.Error(resp.Err))
 						singleResChan = rc.asyncCallRequestVote(ctx, req)
 						continue
 					}
@@ -148,10 +150,7 @@ func (rc *InternalClientImpl) syncCallAppendEntries(ctx context.Context, req *Ap
 
 	resp, err := rc.rawClient.AppendEntries(singleCallCtx, req)
 	if err != nil {
-		code := status.Code(err)
-		logger.Errorw("single RPC error in SendAppendEntries:", "to", rc.rawClient, "error", err, "code", code)
-	} else {
-		logger.Debugw("single RPC SendAppendEntries response:", "member", rc, "response", resp)
+		logger.Error("single RPC error in SendAppendEntries:", zap.Error(err))
 	}
 	return resp, err
 }
@@ -164,20 +163,20 @@ func (rc *InternalClientImpl) syncCallRequestVote(ctx context.Context, req *Requ
 
 	resp, err := rc.rawClient.RequestVote(singleCallCtx, req)
 	if err != nil {
-		code := status.Code(err)
-		logger.Errorw("single RPC error in SendAppendEntries:", "to", rc.rawClient, "error", err, "code", code)
-	} else {
-		logger.Debugw("single RPC response:", "member", rc, "response", resp)
+		logger.Error("single RPC error in SendAppendEntries:", zap.String("to", rc.String()), zap.Error(err))
 	}
 	return resp, err
 }
 
 func loggerClientInterceptor(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-	logger.Debugf("RPC call: %s, request: %v", method, req)
+	logger.Debug("RPC call", zap.String("method", method), zap.Any("request", req))
 	start := time.Now()
 	err := invoker(ctx, method, req, reply, cc, opts...)
 	end := time.Now()
-	logger.Infof("RPC call: %s, duration: %v, error: %v", method, end.Sub(start), err)
+	if err != nil {
+		logger.Error("RPC call error", zap.String("method", method), zap.Error(err))
+	}
+	logger.Debug("RPC call finished", zap.String("method", method), zap.Duration("duration", end.Sub(start)), zap.Any("response", reply))
 	return err
 }
 
@@ -192,7 +191,7 @@ func timeoutClientInterceptor(ctx context.Context, method string, req, reply any
 func NewClientConn(addr *string) (*grpc.ClientConn, error) {
 	retryOption, err := util.GrpcServiceConfigDialOptionFromYAML("server.yaml")
 	if err != nil {
-		logger.Errorw("failed to read gRPC service config from YAML", "error", err)
+		logger.Error("failed to create gRPC connection", zap.String("target", *addr), zap.Error(err))
 		return nil, err
 	}
 
@@ -208,7 +207,7 @@ func NewClientConn(addr *string) (*grpc.ClientConn, error) {
 
 	conn, err := grpc.NewClient(*addr, clientOptions...)
 	if err != nil {
-		logger.Errorw("failed to connect to gRPC server", "target", addr, "error", err)
+		logger.Error("failed to create gRPC connection", zap.String("target", *addr), zap.Error(err))
 		return nil, err
 	}
 	return conn, nil

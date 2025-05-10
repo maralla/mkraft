@@ -8,10 +8,6 @@ import (
 	"github.com/maki3cat/mkraft/rpc"
 )
 
-// todo: to merge this into raft.init
-var consensus ConsensusIface = &ConsensusImpl{}
-var logger = util.GetSugarLogger()
-
 func calculateIfMajorityMet(total, peerVoteAccumulated int) bool {
 	return (peerVoteAccumulated + 1) >= total/2+1
 }

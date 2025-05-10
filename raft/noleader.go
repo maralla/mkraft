@@ -6,6 +6,7 @@ import (
 
 	util "github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/rpc"
+	"go.uber.org/zap"
 )
 
 // todo, maki: shall check if we need priority of a speicifc channel in our select
@@ -144,10 +145,9 @@ func (node *Node) RunAsCandidate(ctx context.Context) {
 							go node.RunAsFollower(ctx)
 							return
 						} else {
-							logger.Infof(
-								"not enough votes, re-elect again, current term: %d, candidateID: %d",
-								node.CurrentTerm, node.NodeId,
-							)
+							logger.Info(
+								"not enough votes, re-elect again",
+								zap.Int("term", int(node.CurrentTerm)), zap.String("nodeId", node.NodeId))
 						}
 					}
 				case <-ticker.C: // last election timeout withno response

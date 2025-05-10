@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+var _ ConfigIface = (*Config)(nil)
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 type ConfigIface interface {

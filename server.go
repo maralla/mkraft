@@ -8,6 +8,7 @@ import (
 	"net"
 	"time"
 
+	"go.uber.org/zap"
 	_ "google.golang.org/grpc/encoding/gzip"
 
 	"github.com/maki3cat/mkraft/raft"
@@ -35,10 +36,10 @@ func (s *Server) RequestVote(ctx context.Context, in *pb.RequestVoteRequest) (*p
 	raft.GetRaftNode().VoteRequest(internalReq)
 	resp := <-respChan
 	if resp.Err != nil {
-		logger.Error("error in getting response from raft server", resp.Err)
+		logger.Error("error in getting response from raft server", zap.Error(resp.Err))
 		return nil, resp.Err
 	}
-	logger.Infof("RPC Server RequestVote respond: %v", resp.Resp)
+	logger.Info("RPC Server RequestVote respond", zap.Any("response", resp.Resp))
 	return resp.Resp, nil
 }
 
@@ -54,10 +55,10 @@ func (s *Server) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest)
 	// todo: should send the ctx into raft server so that it can notice the context is done
 	resp := <-respChan
 	if resp.Err != nil {
-		logger.Error("error in getting response from raft server", resp.Err)
+		logger.Error("error in getting response from raft server", zap.Error(resp.Err.(error)))
 		return nil, resp.Err
 	}
-	logger.Infof("RPC Server, AppendEntries, Respond: %v", resp.Resp)
+	logger.Info("RPC Server, AppendEntries, Respond", zap.Any("response", resp.Resp))
 	return resp.Resp, nil
 }
 
@@ -69,12 +70,12 @@ func contextCheckInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerIn
 }
 
 func loggerInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	logger.Infof("gRPC request: %v", req)
+	logger.Info("gRPC request", zap.Any("request", req))
 	resp, err := handler(ctx, req)
 	if err != nil {
-		logger.Errorf("gRPC response error: %v", err)
+		logger.Error("gRPC response error", zap.Error(err))
 	} else {
-		logger.Infof("gRPC response: %v", resp)
+		logger.Info("gRPC response", zap.Any("response", resp))
 	}
 	return resp, err
 }
@@ -102,18 +103,18 @@ func ServerGracefulShutdown(s *grpc.Server, waitingDuration time.Duration) {
 func ServerStart(ctx context.Context, port int) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
-		logger.Fatalw("failed to listen", "error", err)
+		logger.Fatal("failed to listen", zap.Error(err))
 	}
 
 	s := NewServer()
 	go func() {
-		logger.Infof("serving gRPC at %v...", port)
+		logger.Info("serving gRPC", zap.Int("port", port))
 		if err := s.Serve(lis); err != nil {
 			if errors.Is(err, grpc.ErrServerStopped) {
 				logger.Info("gRPC server stopped")
 				return
 			} else {
-				logger.Errorw("failed to serve", "error", err)
+				logger.Error("failed to serve", zap.Error(err))
 				panic(err)
 			}
 		}

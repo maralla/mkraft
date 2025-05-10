@@ -178,7 +178,6 @@ func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteR
 			logger.Error("error in RequestVoteSendForConsensus", err)
 			return
 		} else {
-			logger.Debugw("received request vote response", "response", resp)
 			consensusChan <- resp
 		}
 	}()
@@ -194,8 +193,6 @@ func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteR
 // todo: checks the receiveVoteRequest works correctly for any state of the node, candidate or leader or follower
 // todo: not sure what state shall be changed inside or outside in the caller
 func (node *Node) receiveVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
-	logger := util.GetSugarLogger()
-	logger.Debugw("consensus module handling voting request", "request", req)
 	var response rpc.RequestVoteResponse
 	if req.Term > node.CurrentTerm {
 		node.VotedFor = req.CandidateId
@@ -223,9 +220,6 @@ func (node *Node) receiveVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVo
 			}
 		}
 	}
-	logger.Debugw(
-		"consensus returns voting response",
-		"response.term", response.Term, "response.voteGranted", response.VoteGranted)
 	return &response
 }
 

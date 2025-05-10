@@ -10,12 +10,16 @@ import (
 
 	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/raft"
+	"go.uber.org/zap"
 	"gopkg.in/yaml.v2"
 )
 
-var logger = common.GetSugarLogger()
+var logger = common.GetLogger()
 
 func main() {
+
+	common.InitLogger()
+	defer logger.Sync()
 
 	// read config from the yaml file
 	defaultPath := "./config/config1.yaml"
@@ -24,17 +28,17 @@ func main() {
 		*configPath = defaultPath
 	}
 	flag.Parse()
-	logger.Info("config file path: ", *configPath)
+	logger.Info("config file path", zap.String("path", *configPath))
 	membershipConfig := &raft.Membership{}
 	yamlFile, err := os.ReadFile(*configPath)
 	if err != nil {
-		logger.Fatalf("yamlFile.Get err  #%v ", err)
+		logger.Error("yamlFile.Get error", zap.Error(err))
+		os.Exit(1)
 	}
 	err = yaml.Unmarshal(yamlFile, membershipConfig)
-	if err != nil {
-		logger.Fatalf("Unmarshal: %v", err)
-	}
-	logger.Infof("Config: %v", membershipConfig)
+	logger.Error("Unmarshal error", zap.Error(err))
+	os.Exit(1)
+	logger.Info("Config loaded", zap.Any("membershipConfig", membershipConfig))
 
 	err = raft.InitStatisMembership(membershipConfig)
 	if err != nil {
@@ -53,7 +57,7 @@ func main() {
 	raft.StartRaftNode(ctx)
 
 	sig := <-signalChan
-	logger.Warn("\nReceived signal: %s\n", sig)
+	logger.Warn("Received signal", zap.String("signal", sig.String()))
 	cancel()
 	time.Sleep(10 * time.Second)
 	logger.Warn("Main exiting")
