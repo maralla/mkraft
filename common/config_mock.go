@@ -82,6 +82,20 @@ func (mr *MockConfigIfaceMockRecorder) GetElectionTimeout() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetElectionTimeout", reflect.TypeOf((*MockConfigIface)(nil).GetElectionTimeout))
 }
 
+// GetGracefulShutdownTimeout mocks base method.
+func (m *MockConfigIface) GetGracefulShutdownTimeout() time.Duration {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetGracefulShutdownTimeout")
+	ret0, _ := ret[0].(time.Duration)
+	return ret0
+}
+
+// GetGracefulShutdownTimeout indicates an expected call of GetGracefulShutdownTimeout.
+func (mr *MockConfigIfaceMockRecorder) GetGracefulShutdownTimeout() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGracefulShutdownTimeout", reflect.TypeOf((*MockConfigIface)(nil).GetGracefulShutdownTimeout))
+}
+
 // GetLeaderHeartbeatPeriod mocks base method.
 func (m *MockConfigIface) GetLeaderHeartbeatPeriod() time.Duration {
 	m.ctrl.T.Helper()
@@ -94,6 +108,20 @@ func (m *MockConfigIface) GetLeaderHeartbeatPeriod() time.Duration {
 func (mr *MockConfigIfaceMockRecorder) GetLeaderHeartbeatPeriod() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLeaderHeartbeatPeriod", reflect.TypeOf((*MockConfigIface)(nil).GetLeaderHeartbeatPeriod))
+}
+
+// GetMembership mocks base method.
+func (m *MockConfigIface) GetMembership() Membership {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetMembership")
+	ret0, _ := ret[0].(Membership)
+	return ret0
+}
+
+// GetMembership indicates an expected call of GetMembership.
+func (mr *MockConfigIfaceMockRecorder) GetMembership() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMembership", reflect.TypeOf((*MockConfigIface)(nil).GetMembership))
 }
 
 // GetMinRemainingTimeForRPC mocks base method.

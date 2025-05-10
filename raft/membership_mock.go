@@ -55,20 +55,6 @@ func (mr *MockMembershipMgrIfaceMockRecorder) GetAllPeerClients() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllPeerClients", reflect.TypeOf((*MockMembershipMgrIface)(nil).GetAllPeerClients))
 }
 
-// GetCurrentNodeID mocks base method.
-func (m *MockMembershipMgrIface) GetCurrentNodeID() string {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetCurrentNodeID")
-	ret0, _ := ret[0].(string)
-	return ret0
-}
-
-// GetCurrentNodeID indicates an expected call of GetCurrentNodeID.
-func (mr *MockMembershipMgrIfaceMockRecorder) GetCurrentNodeID() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCurrentNodeID", reflect.TypeOf((*MockMembershipMgrIface)(nil).GetCurrentNodeID))
-}
-
 // GetMemberCount mocks base method.
 func (m *MockMembershipMgrIface) GetMemberCount() int {
 	m.ctrl.T.Helper()

@@ -18,7 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func NewServer(cfg common.ConfigIface, logger *zap.Logger) *Server {
+func NewServer(cfg common.ConfigIface, logger *zap.Logger) (*Server, error) {
 	server := &Server{
 		logger: logger,
 		cfg:    cfg,
@@ -29,15 +29,24 @@ func NewServer(cfg common.ConfigIface, logger *zap.Logger) *Server {
 	server.grpcServer = grpc.NewServer(serverOptions)
 
 	pb.RegisterRaftServiceServer(server.grpcServer, server.handler)
-	return server
+
+	membershipMgr, err := raft.NewStatisMembership(logger, cfg)
+	if err != nil {
+		return nil, err
+	}
+	server.membership = membershipMgr
+	return server, nil
 }
 
 type Server struct {
-	logger     *zap.Logger
-	cfg        common.ConfigIface
+	logger *zap.Logger
+	cfg    common.ConfigIface
+
 	grpcServer *grpc.Server
 	handler    *raft.Handlers
-	node       *raft.Node
+	membership raft.MembershipMgrIface
+
+	node *raft.Node
 }
 
 func (s *Server) contextCheckInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
@@ -59,12 +68,15 @@ func (s *Server) loggerInterceptor(ctx context.Context, req any, _ *grpc.UnarySe
 }
 
 func (s *Server) Stop() {
+
+	// grpc server graceful shutdown
 	waitingDuration := s.cfg.GetGracefulShutdownTimeout()
 	timer := time.AfterFunc(waitingDuration, func() {
 		s.grpcServer.Stop()
 	})
 	defer timer.Stop()
 	s.grpcServer.GracefulStop()
+
 }
 
 func (s *Server) Start(ctx context.Context) error {

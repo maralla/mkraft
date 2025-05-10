@@ -4,97 +4,67 @@ import (
 	"errors"
 	"sync"
 
-	util "github.com/maki3cat/mkraft/common"
+	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/rpc"
+	"go.uber.org/zap"
 )
 
-var (
-	memberMgr MembershipMgrIface
-	// once      sync.Once
-)
-
-type Membership struct {
-	CurrentNodeID   string     `json:"current_node_id" yaml:"current_node_id"`
-	CurrentPort     int        `json:"current_port" yaml:"current_port"`
-	CurrentNodeAddr string     `json:"current_node_addr" yaml:"current_node_addr"`
-	AllMembers      []NodeAddr `json:"all_members" yaml:"all_members"`
-}
-
-type NodeAddr struct {
-	NodeID  string `json:"node_id" yaml:"node_id"`
-	NodeURI string `json:"node_uri" yaml:"node_uri"`
-}
-
+// What is the functions of the membership manager
 type MembershipMgrIface interface {
-	GetCurrentNodeID() string
-	GetMemberCount() int
-
 	// todo: GetMemberCount, GetAllPeerClients may diverge
 	// todo: may need to be re-constructed when dynamic membership is added
+	GetMemberCount() int // current in use or set up ? setup shall be in the conf ?
 	GetAllPeerClients() ([]rpc.InternalClientIface, error)
 	GracefulShutdown()
 }
 
 // using the a static
-func InitStatisMembership(staticMembership *Membership) error {
-	// once.Do(func() {
-	// check sanity
+func NewStatisMembership(logger *zap.Logger, cfg common.ConfigIface) (MembershipMgrIface, error) {
+	staticMembership := cfg.GetMembership()
 	if len(staticMembership.AllMembers) < 3 {
-		return errors.New("smallest cluster size is 3")
+		return nil, errors.New("smallest cluster size is 3")
 	}
 	if len(staticMembership.AllMembers)%2 == 0 {
-		return errors.New("the member count should be odd")
+		return nil, errors.New("the member count should be odd")
 	}
 	for _, node := range staticMembership.AllMembers {
 		if node.NodeID == "" || node.NodeURI == "" {
-			return errors.New("node id and uri should not be empty")
+			return nil, errors.New("node id and uri should not be empty")
 		}
 	}
 
 	// init
-	util.GetSugarLogger().Info("Initializing static membership manager")
+	logger.Info("Initializing static membership manager")
 	staticMembershipMgr := &StaticMembershipMgr{
-		membership: staticMembership,
-		clients:    &sync.Map{},
+		clients: &sync.Map{},
 		// conns:         &sync.Map{},
 		peerAddrs:     make(map[string]string),
 		peerInitLocks: make(map[string]*sync.Mutex),
+		logger:        logger,
+		cfg:           cfg,
 	}
 	for _, node := range staticMembership.AllMembers {
 		staticMembershipMgr.peerAddrs[node.NodeID] = node.NodeURI
 		staticMembershipMgr.peerInitLocks[node.NodeID] = &sync.Mutex{}
 	}
-	memberMgr = staticMembershipMgr
-	return nil
-	// })
+	return staticMembershipMgr, nil
 }
 
 type StaticMembershipMgr struct {
-	membership *Membership
-
 	peerAddrs     map[string]string
 	peerInitLocks map[string]*sync.Mutex
 	clients       *sync.Map
 	// conns         *sync.Map
-}
-
-func (mgr *StaticMembershipMgr) GetCurrentNodeID() string {
-	return mgr.membership.CurrentNodeID
+	logger *zap.Logger
+	cfg    common.ConfigIface
 }
 
 func (mgr *StaticMembershipMgr) GracefulShutdown() {
-	logger.Info("graceful shutdown of membership manager")
-	for _, nodeInfo := range mgr.membership.AllMembers {
-		if nodeInfo.NodeID == mgr.membership.CurrentNodeID {
-			// self
-			continue
-		}
-		client, ok := mgr.clients.Load(nodeInfo.NodeID)
-		if ok {
-			logger.Infof("closing connection to %s", nodeInfo.NodeID)
-			client.(rpc.InternalClientIface).Close()
-		}
-	}
+	mgr.logger.Info("graceful shutdown of membership manager")
+	mgr.clients.Range(func(key, value interface{}) bool {
+		value.(rpc.InternalClientIface).Close()
+		return true
+	})
 }
 
 func (mgr *StaticMembershipMgr) getPeerClient(nodeID string) (rpc.InternalClientIface, error) {
@@ -111,13 +81,10 @@ func (mgr *StaticMembershipMgr) getPeerClient(nodeID string) (rpc.InternalClient
 		return client.(rpc.InternalClientIface), nil
 	}
 
-	// todo: insecure credentials now
 	addr := mgr.peerAddrs[nodeID]
-	logger.Debugw("creating new connection to", "nodeID", nodeID, "peerAddr", addr)
-
-	newClient, err := rpc.NewInternalClient(nodeID, addr)
+	newClient, err := rpc.NewInternalClient(nodeID, addr, mgr.logger, mgr.cfg)
 	if err != nil {
-		logger.Errorw("failed to create new client", "nodeID", nodeID, "error", err)
+		mgr.logger.Error("failed to create new client", zap.String("nodeID", nodeID), zap.Error(err))
 		return nil, err
 	}
 	mgr.clients.Store(nodeID, newClient)
@@ -125,17 +92,17 @@ func (mgr *StaticMembershipMgr) getPeerClient(nodeID string) (rpc.InternalClient
 }
 
 func (mgr *StaticMembershipMgr) GetMemberCount() int {
-	return len(mgr.membership.AllMembers)
+	return mgr.cfg.GetClusterSize()
 }
 
 func (mgr *StaticMembershipMgr) GetAllPeerClients() ([]rpc.InternalClientIface, error) {
+	membership := mgr.cfg.GetMembership()
 	peers := make([]rpc.InternalClientIface, 0)
-	for _, nodeInfo := range mgr.membership.AllMembers {
-		if nodeInfo.NodeID != mgr.membership.CurrentNodeID {
+	for _, nodeInfo := range membership.AllMembers {
+		if nodeInfo.NodeID != membership.CurrentNodeID {
 			client, err := mgr.getPeerClient(nodeInfo.NodeID)
 			if err != nil {
-				util.GetSugarLogger().Errorw(
-					"failed to get peer client, omit this one", "nodeID", nodeInfo.NodeID, "error", err)
+				mgr.logger.Error("failed to create new client", zap.String("nodeID", membership.CurrentNodeID), zap.Error(err))
 				continue
 			}
 			peers = append(peers, client)

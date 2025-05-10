@@ -26,7 +26,11 @@ type ConfigIface interface {
 	GetMinRemainingTimeForRPC() time.Duration
 	GetgRPCServiceConf() string
 	GetGracefulShutdownTimeout() time.Duration
+
+	// membership related
 	GetMembership() Membership
+	GetClusterSize() int
+
 	Validate() error
 }
 
@@ -99,6 +103,7 @@ type (
 		CurrentPort     int        `yaml:"current_port" json:"current_port" validate:"nonzero"`
 		CurrentNodeAddr string     `yaml:"current_node_addr" json:"current_node_addr" validate:"nonzero"`
 		AllMembers      []NodeAddr `yaml:"all_members" json:"all_members" validate:"nonzero"`
+		ClusterSize     int        `yaml:"cluster_size" json:"cluster_size" validate:"min=3"`
 	}
 
 	NodeAddr struct {
@@ -128,6 +133,10 @@ type (
 		MinRemainingTimeForRPCInMs int `yaml:"min_remaining_time_for_rpc_in_ms" json:"min_remaining_time_for_rpc_in_ms" validate:"min=1"`
 	}
 )
+
+func (c *Config) GetClusterSize() int {
+	return c.Membership.ClusterSize
+}
 
 func (c *Config) GetMembership() Membership {
 	return c.Membership

@@ -6,8 +6,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/maki3cat/mkraft/common"
 	util "github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/rpc"
+	"go.uber.org/zap"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -72,6 +74,11 @@ type TermRank int
 // maki: go gymnastics for sync values
 // todo: add sync for these values?
 type Node struct {
+	consensus  ConsensusIface
+	membership MembershipMgrIface
+	cfg        common.ConfigIface
+	logger     *zap.Logger
+
 	sem *semaphore.Weighted
 
 	LeaderId string
@@ -108,9 +115,9 @@ type Node struct {
 
 // todo: use this to replace all
 func (node *Node) GracefulShutdown(ctx context.Context) {
-	logger.Info("raft node starting graceful shutdown")
+	node.logger.Info("raft node starting graceful shutdown")
 	memberMgr.GracefulShutdown()
-	logger.Info("raft node has just finished graceful shutdown")
+	node.logger.Info("raft node has just finished graceful shutdown")
 }
 
 // maki: go gymnastics for sync values
@@ -175,7 +182,7 @@ func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteR
 	go func() {
 		resp, err := consensus.RequestVoteSendForConsensus(ctxTimeout, req)
 		if err != nil {
-			logger.Error("error in RequestVoteSendForConsensus", err)
+			node.logger.Error("error in RequestVoteSendForConsensus", err)
 			return
 		} else {
 			consensusChan <- resp
