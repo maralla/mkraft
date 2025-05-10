@@ -14,15 +14,30 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-var logger = common.GetLogger()
-
 func main() {
 
-	common.InitLogger()
+	// basics
+	logger, err := common.CreateLogger()
+	if err != nil {
+		panic(err)
+	}
 	defer logger.Sync()
 
-	// read config from the yaml file
-	defaultPath := "./config/config1.yaml"
+	// config
+	defaultPath := "./config/base.yaml"
+	path := os.Getenv("MKRAFT_CONFIG_PATH")
+	if path == "" {
+		path = defaultPath
+	}
+	cfg, err := common.LoadConfig(path)
+	if err != nil {
+		panic(err)
+	}
+
+	server := NewServer(cfg, logger)
+
+	// pass logger, config to server
+
 	configPath := flag.String("c", "", "the path of the config file")
 	if *configPath == "" {
 		*configPath = defaultPath

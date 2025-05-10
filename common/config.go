@@ -25,6 +25,8 @@ type ConfigIface interface {
 	String() string
 	GetMinRemainingTimeForRPC() time.Duration
 	GetgRPCServiceConf() string
+	GetGracefulShutdownTimeout() time.Duration
+	GetMembership() Membership
 	Validate() error
 }
 
@@ -55,14 +57,15 @@ func LoadConfig(filePath string) (ConfigIface, error) {
 
 var (
 	defaultBasicConfig = &BasicConfig{
-		RaftNodeRequestBufferSize:  RAFT_NODE_REQUEST_BUFFER_SIZE,
-		RPCRequestTimeoutInMs:      RPC_REUQEST_TIMEOUT_IN_MS,
-		ElectionTimeoutMinInMs:     ELECTION_TIMEOUT_MIN_IN_MS,
-		ElectionTimeoutMaxInMs:     ELECTION_TIMEOUT_MAX_IN_MS,
-		LeaderHeartbeatPeriodInMs:  LEADER_HEARTBEAT_PERIOD_IN_MS,
-		ClientCommandBufferSize:    CLIENT_COMMAND_BUFFER_SIZE,
-		ClientCommandBatchSize:     CLIENT_COMMAND_BATCH_SIZE,
-		MinRemainingTimeForRPCInMs: MIN_REMAINING_TIME_FOR_RPC_IN_MS,
+		RaftNodeRequestBufferSize:    RAFT_NODE_REQUEST_BUFFER_SIZE,
+		RPCRequestTimeoutInMs:        RPC_REUQEST_TIMEOUT_IN_MS,
+		ElectionTimeoutMinInMs:       ELECTION_TIMEOUT_MIN_IN_MS,
+		ElectionTimeoutMaxInMs:       ELECTION_TIMEOUT_MAX_IN_MS,
+		LeaderHeartbeatPeriodInMs:    LEADER_HEARTBEAT_PERIOD_IN_MS,
+		ClientCommandBufferSize:      CLIENT_COMMAND_BUFFER_SIZE,
+		ClientCommandBatchSize:       CLIENT_COMMAND_BATCH_SIZE,
+		MinRemainingTimeForRPCInMs:   MIN_REMAINING_TIME_FOR_RPC_IN_MS,
+		GracefulShutdownTimeoutInSec: GRACEFUL_SHUTDOWN_IN_SEC,
 	}
 )
 
@@ -80,6 +83,8 @@ const (
 	ELECTION_TIMEOUT_MAX_IN_MS = 550
 
 	MIN_REMAINING_TIME_FOR_RPC_IN_MS = 50
+
+	GRACEFUL_SHUTDOWN_IN_SEC = 10
 )
 
 type (
@@ -105,7 +110,8 @@ type (
 		RaftNodeRequestBufferSize int `yaml:"raft_node_request_buffer_size" json:"raft_node_request_buffer_size" validate:"min=1"`
 
 		// RPC timeout
-		RPCRequestTimeoutInMs int `yaml:"rpc_request_timeout_in_ms" json:"rpc_request_timeout_in_ms" validate:"min=1"`
+		RPCRequestTimeoutInMs        int `yaml:"rpc_request_timeout_in_ms" json:"rpc_request_timeout_in_ms" validate:"min=1"`
+		GracefulShutdownTimeoutInSec int `yaml:"graceful_shutdown_timeout_in_sec" json:"graceful_shutdown_timeout_in_sec" validate:"min=1"`
 
 		// Election timeout
 		ElectionTimeoutMinInMs int `yaml:"election_timeout_min_in_ms" json:"election_timeout_min_in_ms" validate:"min=1"`
@@ -122,6 +128,14 @@ type (
 		MinRemainingTimeForRPCInMs int `yaml:"min_remaining_time_for_rpc_in_ms" json:"min_remaining_time_for_rpc_in_ms" validate:"min=1"`
 	}
 )
+
+func (c *Config) GetMembership() Membership {
+	return c.Membership
+}
+
+func (c *Config) GetGracefulShutdownTimeout() time.Duration {
+	return time.Duration(c.BasicConfig.GracefulShutdownTimeoutInSec) * time.Second
+}
 
 func (c *Config) Validate() error {
 
