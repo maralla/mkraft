@@ -2,31 +2,14 @@ package raft
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/rpc"
-	"github.com/maki3cat/mkraft/util"
+	"go.uber.org/zap"
 	"golang.org/x/sync/semaphore"
 )
-
-var nodeInstance *Node
-var nodeInitOnce = &sync.Once{}
-
-func StartRaftNode(ctx context.Context) {
-	nodeInitOnce.Do(func() {
-		nodeInstance = NewNode(memberMgr.GetCurrentNodeID())
-		nodeInstance.Start(ctx)
-	})
-}
-
-func GetRaftNode() *Node {
-	if nodeInstance == nil {
-		panic("raft node is not initialized")
-	}
-	return nodeInstance
-}
 
 type NodeState int
 
@@ -68,10 +51,36 @@ type ClientCommandInternal struct {
 
 type TermRank int
 
+func NewNode(nodeId string, cfg common.ConfigIface, logger *zap.Logger, membership MembershipMgrIface) *Node {
+	bufferSize := cfg.GetRaftNodeRequestBufferSize()
+	consensus := NewConsensus(logger, membership, cfg)
+	return &Node{
+		cfg:        cfg,
+		membership: membership,
+		consensus:  consensus,
+		logger:     logger,
+
+		State:             StateFollower, // servers start up as followers
+		NodeId:            nodeId,
+		sem:               semaphore.NewWeighted(1),
+		CurrentTerm:       0,
+		VotedFor:          "",
+		clientCommandChan: make(chan *ClientCommandInternal, bufferSize),
+		requestVoteChan:   make(chan *RequestVoteInternal, bufferSize),
+		appendEntryChan:   make(chan *AppendEntriesInternal, bufferSize),
+		LeaderId:          "",
+	}
+}
+
 // the Raft Server Node
 // maki: go gymnastics for sync values
 // todo: add sync for these values?
 type Node struct {
+	consensus  ConsensusIface
+	membership MembershipMgrIface
+	cfg        common.ConfigIface
+	logger     *zap.Logger
+
 	sem *semaphore.Weighted
 
 	LeaderId string
@@ -106,13 +115,6 @@ type Node struct {
 	// matchIndex []int
 }
 
-// todo: use this to replace all
-func (node *Node) GracefulShutdown(ctx context.Context) {
-	logger.Info("raft node starting graceful shutdown")
-	memberMgr.GracefulShutdown()
-	logger.Info("raft node has just finished graceful shutdown")
-}
-
 // maki: go gymnastics for sync values
 // todo: add sync for these values?
 func (node *Node) SetVoteForAndTerm(voteFor string, term int32) {
@@ -136,21 +138,6 @@ func (node *Node) ClientCommandRequest(request []byte) {
 
 }
 
-func NewNode(nodeId string) *Node {
-	bufferSize := util.GetConfig().GetRaftNodeRequestBufferSize()
-	return &Node{
-		State:             StateFollower, // servers start up as followers
-		NodeId:            nodeId,
-		sem:               semaphore.NewWeighted(1),
-		CurrentTerm:       0,
-		VotedFor:          "",
-		clientCommandChan: make(chan *ClientCommandInternal, bufferSize),
-		requestVoteChan:   make(chan *RequestVoteInternal, bufferSize),
-		appendEntryChan:   make(chan *AppendEntriesInternal, bufferSize),
-		LeaderId:          "",
-	}
-}
-
 // servers start up as followers
 func (node *Node) Start(ctx context.Context) {
 	go node.RunAsFollower(ctx)
@@ -171,14 +158,14 @@ func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteR
 		CandidateId: node.NodeId,
 	}
 	ctxTimeout, _ := context.WithTimeout(
-		ctx, time.Duration(util.GetConfig().GetElectionTimeout()))
+		ctx, time.Duration(node.cfg.GetElectionTimeout()))
 	go func() {
-		resp, err := consensus.RequestVoteSendForConsensus(ctxTimeout, req)
+		resp, err := node.consensus.RequestVoteSendForConsensus(ctxTimeout, req)
 		if err != nil {
-			logger.Error("error in RequestVoteSendForConsensus", err)
+			node.logger.Error(
+				"error in RequestVoteSendForConsensus", zap.Error(err))
 			return
 		} else {
-			logger.Debugw("received request vote response", "response", resp)
 			consensusChan <- resp
 		}
 	}()
@@ -194,8 +181,6 @@ func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteR
 // todo: checks the receiveVoteRequest works correctly for any state of the node, candidate or leader or follower
 // todo: not sure what state shall be changed inside or outside in the caller
 func (node *Node) receiveVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
-	logger := util.GetSugarLogger()
-	logger.Debugw("consensus module handling voting request", "request", req)
 	var response rpc.RequestVoteResponse
 	if req.Term > node.CurrentTerm {
 		node.VotedFor = req.CandidateId
@@ -223,9 +208,6 @@ func (node *Node) receiveVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVo
 			}
 		}
 	}
-	logger.Debugw(
-		"consensus returns voting response",
-		"response.term", response.Term, "response.voteGranted", response.VoteGranted)
 	return &response
 }
 

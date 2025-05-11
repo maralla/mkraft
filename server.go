@@ -1,15 +1,16 @@
-package main
+package mkraft
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"time"
 
+	"go.uber.org/zap"
 	_ "google.golang.org/grpc/encoding/gzip"
 
+	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/raft"
 	pb "github.com/maki3cat/mkraft/rpc"
 	"google.golang.org/grpc"
@@ -17,112 +18,101 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+func NewServer(cfg common.ConfigIface, logger *zap.Logger) (*Server, error) {
+
+	membershipMgr, err := raft.NewMembershipMgrWithStaticConfig(logger, cfg)
+	if err != nil {
+		return nil, err
+	}
+	nodeID := cfg.GetMembership().CurrentNodeID
+	node := raft.NewNode(nodeID, cfg, logger, membershipMgr)
+	handlers := raft.NewHandlers(logger, node)
+
+	server := &Server{
+		logger:     logger,
+		cfg:        cfg,
+		node:       node,
+		membership: membershipMgr,
+		handler:    handlers,
+	}
+	serverOptions := grpc.ChainUnaryInterceptor(
+		server.contextCheckInterceptor,
+		server.loggerInterceptor)
+	server.grpcServer = grpc.NewServer(serverOptions)
+
+	pb.RegisterRaftServiceServer(server.grpcServer, server.handler)
+	return server, nil
+}
+
 type Server struct {
-	pb.UnimplementedRaftServiceServer
+	logger     *zap.Logger
+	cfg        common.ConfigIface
+	node       *raft.Node
+	membership raft.MembershipMgrIface
+
+	grpcServer *grpc.Server
+	handler    *raft.Handlers
 }
 
-func (s *Server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
-	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
-}
-
-func (s *Server) RequestVote(ctx context.Context, in *pb.RequestVoteRequest) (*pb.RequestVoteResponse, error) {
-	respChan := make(chan *pb.RPCRespWrapper[*pb.RequestVoteResponse], 1)
-	internalReq := &raft.RequestVoteInternal{
-		Request:    in,
-		RespWraper: respChan,
-	}
-	// todo: should send the ctx into raft server so that it can notice the context is done
-	raft.GetRaftNode().VoteRequest(internalReq)
-	resp := <-respChan
-	if resp.Err != nil {
-		logger.Error("error in getting response from raft server", resp.Err)
-		return nil, resp.Err
-	}
-	logger.Infof("RPC Server RequestVote respond: %v", resp.Resp)
-	return resp.Resp, nil
-}
-
-func (s *Server) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {
-	respChan := make(chan *pb.RPCRespWrapper[*pb.AppendEntriesResponse], 1)
-	internalReq := &raft.AppendEntriesInternal{
-		Request:    in,
-		RespWraper: respChan,
-	}
-	node := raft.GetRaftNode()
-	node.AppendEntryRequest(internalReq)
-
-	// todo: should send the ctx into raft server so that it can notice the context is done
-	resp := <-respChan
-	if resp.Err != nil {
-		logger.Error("error in getting response from raft server", resp.Err)
-		return nil, resp.Err
-	}
-	logger.Infof("RPC Server, AppendEntries, Respond: %v", resp.Resp)
-	return resp.Resp, nil
-}
-
-func contextCheckInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+func (s *Server) contextCheckInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, status.New(codes.Canceled, "context done").Err()
 	}
 	return handler(ctx, req)
 }
 
-func loggerInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	logger.Infof("gRPC request: %v", req)
+func (s *Server) loggerInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	s.logger.Debug("gRPC request", zap.Any("request", req))
 	resp, err := handler(ctx, req)
 	if err != nil {
-		logger.Errorf("gRPC response error: %v", err)
+		s.logger.Error("gRPC response error", zap.Error(err))
 	} else {
-		logger.Infof("gRPC response: %v", resp)
+		s.logger.Debug("gRPC response", zap.Any("response", resp))
 	}
 	return resp, err
 }
 
-func NewServer() *grpc.Server {
-	serverOptions := grpc.ChainUnaryInterceptor(
-		contextCheckInterceptor,
-		loggerInterceptor)
-	grpcServer := grpc.NewServer(serverOptions)
-	pb.RegisterRaftServiceServer(grpcServer, &Server{})
-	return grpcServer
-}
-
-func ServerGracefulShutdown(s *grpc.Server, waitingDuration time.Duration) {
-	log.Println("Initiating grpc server graceful shutdown...")
+func (s *Server) Stop() {
+	// grpc server graceful shutdown
+	waitingDuration := s.cfg.GetGracefulShutdownTimeout()
 	timer := time.AfterFunc(waitingDuration, func() {
-		logger.Info("Server couldn't stop gracefully in time. Doing force stop.")
-		s.Stop()
+		s.grpcServer.Stop()
 	})
 	defer timer.Stop()
-	s.GracefulStop()
-	log.Println("Server stopped gracefully.")
+	s.grpcServer.GracefulStop()
 }
 
-func ServerStart(ctx context.Context, port int) {
+// no blocking start
+func (s *Server) Start(ctx context.Context) error {
+	// start the gRPC server
+	port := s.cfg.GetMembership().CurrentPort
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
-		logger.Fatalw("failed to listen", "error", err)
+		return fmt.Errorf("failed to listen: %w", err)
 	}
 
-	s := NewServer()
 	go func() {
-		logger.Infof("serving gRPC at %v...", port)
-		if err := s.Serve(lis); err != nil {
+		s.logger.Info("gRPC server is starting...")
+		if err := s.grpcServer.Serve(lis); err != nil {
 			if errors.Is(err, grpc.ErrServerStopped) {
-				logger.Info("gRPC server stopped")
+				s.logger.Info("gRPC server has stopped")
 				return
 			} else {
-				logger.Errorw("failed to serve", "error", err)
+				s.logger.Error("failed to serve", zap.Error(err))
 				panic(err)
 			}
 		}
 	}()
 
 	go func() {
-		logger.Info("waiting for context cancellation or server quit...")
+		s.logger.Info("waiting for context cancellation or server quit...")
 		<-ctx.Done()
-		ServerGracefulShutdown(s, 5*time.Second)
-		logger.Info("context canceled, stopping gRPC server...")
+		s.Stop()
+		s.logger.Info("context canceled, stopping gRPC server...")
 	}()
+
+	// start the node
+	s.logger.Info("starting raft node...")
+	s.node.Start(ctx)
+	return nil
 }

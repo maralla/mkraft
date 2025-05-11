@@ -7,9 +7,10 @@ import (
 	"testing"
 	"time"
 
+	util "github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/rpc"
-	"github.com/maki3cat/mkraft/util"
 	gomock "go.uber.org/mock/gomock"
+	"go.uber.org/zap"
 )
 
 func TestCalculateIfMajorityMet(t *testing.T) {
@@ -65,7 +66,6 @@ func TestRequestVoteSendForConsensus(t *testing.T) {
 	mockConfig := util.NewMockConfigIface(ctrl)
 	mockConfig.EXPECT().GetElectionTimeout().Return(1000 * time.Millisecond).AnyTimes()
 	mockMemberMgr := NewMockMembershipMgrIface(ctrl)
-	memberMgr = mockMemberMgr
 
 	tests := []struct {
 		name         string
@@ -191,6 +191,9 @@ func TestRequestVoteSendForConsensus(t *testing.T) {
 		},
 	}
 
+	logger := zap.NewNop()
+	consensus := NewConsensus(logger, mockMemberMgr, mockConfig)
+
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			// Setup mocks
@@ -221,7 +224,8 @@ func TestAppendEntriesSendForConsensus(t *testing.T) {
 	mockConfig := util.NewMockConfigIface(ctrl)
 	mockConfig.EXPECT().GetElectionTimeout().Return(1000 * time.Millisecond).AnyTimes()
 	mockMemberMgr := NewMockMembershipMgrIface(ctrl)
-	memberMgr = mockMemberMgr
+	logger := zap.NewNop()
+	consensus := NewConsensus(logger, mockMemberMgr, mockConfig)
 
 	tests := []struct {
 		name         string

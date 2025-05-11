@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/maki3cat/mkraft/rpc"
-	"github.com/maki3cat/mkraft/util"
+	"go.uber.org/zap"
 )
 
 /*
@@ -39,15 +39,15 @@ If AppendEntries fails because of log inconsistency: decrement nextIndex and ret
 (4) If there exists and N such that N > committedIndex, a majority of matchIndex[i] ≥ N, ... (5.3/5.4)
 todo: this paper doesn't mention how a stale leader catches up and becomes a follower
 */
-func (node *Node) RunAsLeader(ctx context.Context) {
+func (n *Node) RunAsLeader(ctx context.Context) {
 
-	if node.State != StateLeader {
+	if n.State != StateLeader {
 		panic("node is not in LEADER state")
 	}
-	logger.Info("acquiring the Semaphore as the LEADER state")
-	node.sem.Acquire(ctx, 1)
-	logger.Info("acquired the Semaphore as the LEADER state")
-	defer node.sem.Release(1)
+	n.logger.Info("acquiring the Semaphore as the LEADER state")
+	n.sem.Acquire(ctx, 1)
+	n.logger.Info("acquired the Semaphore as the LEADER state")
+	defer n.sem.Release(1)
 
 	// leader:
 	// (1) major task-1: handle client commands and send append entries
@@ -55,46 +55,45 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 	// (3) common task-1: handle voting requests from other candidates
 	// (4) common task-2: handle append entries requests from other candidates
 
-	node.clientCommandChan = make(chan *ClientCommandInternal, util.GetConfig().GetRaftNodeRequestBufferSize())
-	node.leaderDegradationChan = make(chan TermRank, util.GetConfig().GetRaftNodeRequestBufferSize())
+	n.clientCommandChan = make(chan *ClientCommandInternal, n.cfg.GetRaftNodeRequestBufferSize())
+	n.leaderDegradationChan = make(chan TermRank, n.cfg.GetRaftNodeRequestBufferSize())
+
 	// these channels cannot be closed because they are created in the main thread but used in the worker
 	// we need to clean the channel when the leader quits,
 	// and reset the channels when the leader comes back
 
-	heartbeatDuration := util.GetConfig().GetLeaderHeartbeatPeriod()
+	heartbeatDuration := n.cfg.GetLeaderHeartbeatPeriod()
 	tickerForHeartbeat := time.NewTicker(heartbeatDuration)
 	defer tickerForHeartbeat.Stop()
 
 	ctxForWorker, cancelWorker := context.WithCancel(ctx)
-	go node.leaderCommonTaskWorker(ctxForWorker)
+	go n.leaderCommonTaskWorker(ctxForWorker)
 	defer cancelWorker()
 
 	for {
 		select {
 		case <-ctx.Done(): // give ctx higher priority
-			logger.Warn("raft node main context done, exiting")
-			node.GracefulShutdown(ctx)
+			n.logger.Warn("raft node main context done, exiting")
 			return
 		default:
 			select {
 			case <-ctx.Done():
-				logger.Warn("raft node main context done, exiting")
-				node.GracefulShutdown(ctx)
+				n.logger.Warn("raft node main context done, exiting")
 				return
-			case newTerm := <-node.leaderDegradationChan:
-				node.State = StateFollower
-				node.SetVoteForAndTerm(node.VotedFor, int32(newTerm))
+			case newTerm := <-n.leaderDegradationChan:
+				n.State = StateFollower
+				n.SetVoteForAndTerm(n.VotedFor, int32(newTerm))
 				// shall first change the state, so that new client commands won't flood in when we close the channel
-				node.closeClientCommandChan()
-				go node.RunAsFollower(ctx)
+				n.closeClientCommandChan()
+				go n.RunAsFollower(ctx)
 				return
 			case <-tickerForHeartbeat.C:
 				heartbeatReq := &rpc.AppendEntriesRequest{
-					Term:     node.CurrentTerm,
-					LeaderId: node.NodeId,
+					Term:     n.CurrentTerm,
+					LeaderId: n.NodeId,
 				}
-				go node.callAppendEntries(ctx, heartbeatReq)
-			case clientCmdReq := <-node.clientCommandChan:
+				go n.callAppendEntries(ctx, heartbeatReq)
+			case clientCmdReq := <-n.clientCommandChan:
 				// todo: the client command request, should go into the callAppendEntries to handle
 				// todo: we omit the client command for now
 				tickerForHeartbeat.Stop()
@@ -102,54 +101,54 @@ func (node *Node) RunAsLeader(ctx context.Context) {
 					Data: clientCmdReq.request,
 				}
 				appendEntryReq := &rpc.AppendEntriesRequest{
-					Term:     node.CurrentTerm,
-					LeaderId: node.NodeId,
+					Term:     n.CurrentTerm,
+					LeaderId: n.NodeId,
 					Entries:  []*rpc.LogEntry{log},
 				}
-				go node.callAppendEntries(ctx, appendEntryReq)
+				go n.callAppendEntries(ctx, appendEntryReq)
 				tickerForHeartbeat.Reset(heartbeatDuration)
 			}
 		}
 	}
 }
 
-func (node *Node) leaderCommonTaskWorker(ctx context.Context) {
+func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Warn("leader's worker context done, exiting")
+			n.logger.Warn("leader's worker context done, exiting")
 			return
 		default:
 			select {
 			case <-ctx.Done():
-				logger.Warn("leader's worker context done, exiting")
+				n.logger.Warn("leader's worker context done, exiting")
 				return
-			case requestVote := <-node.requestVoteChan: // commonRule: same with candidate
+			case requestVote := <-n.requestVoteChan: // commonRule: same with candidate
 				if !requestVote.IsTimeout.Load() {
 					// no-IO operation
 					req := requestVote.Request
 					resChan := requestVote.RespWraper
-					resp := node.receiveVoteRequest(req)
+					resp := n.receiveVoteRequest(req)
 					wrapper := &rpc.RPCRespWrapper[*rpc.RequestVoteResponse]{
 						Resp: resp,
 						Err:  nil,
 					}
 					resChan <- wrapper
 					if resp.VoteGranted {
-						node.leaderDegradationChan <- TermRank(resp.Term)
+						n.leaderDegradationChan <- TermRank(resp.Term)
 						return
 					}
 				}
-			case req := <-node.appendEntryChan: // commonRule: same with candidate
+			case req := <-n.appendEntryChan: // commonRule: same with candidate
 				// todo: shall add appendEntry operations which shall be a goroutine
-				resp := node.receiveAppendEntires(req.Request)
+				resp := n.receiveAppendEntires(req.Request)
 				wrapper := rpc.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 					Resp: resp,
 					Err:  nil,
 				}
 				req.RespWraper <- &wrapper
 				if resp.Success {
-					node.leaderDegradationChan <- TermRank(resp.Term)
+					n.leaderDegradationChan <- TermRank(resp.Term)
 					return
 				}
 			}
@@ -159,13 +158,13 @@ func (node *Node) leaderCommonTaskWorker(ctx context.Context) {
 
 // synchronous, should be called in a goroutine
 // todo: suppose we don't need response now
-func (node *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) {
+func (n *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) {
 	errChan := make(chan error, 1)
 	respChan := make(chan *AppendEntriesConsensusResp, 1)
 	go func(ctx context.Context) {
-		ctxTimeout, cancel := context.WithTimeout(ctx, util.GetConfig().GetRPCRequestTimeout())
+		ctxTimeout, cancel := context.WithTimeout(ctx, n.cfg.GetRPCRequestTimeout())
 		defer cancel()
-		consensusResp, err := consensus.AppendEntriesSendForConsensus(ctxTimeout, req)
+		consensusResp, err := n.consensus.AppendEntriesSendForConsensus(ctxTimeout, req)
 		if err != nil {
 			errChan <- err
 		} else {
@@ -175,23 +174,23 @@ func (node *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesR
 
 	select {
 	case <-ctx.Done():
-		logger.Warn("raft node main context done, exiting")
+		n.logger.Warn("raft node main context done, exiting")
 	case err := <-errChan:
-		logger.Error("error in sending append entries to one node", err)
+		n.logger.Error("error in sending append entries to one node", zap.Error(err))
 	case resp := <-respChan:
 		if resp.Success {
-			logger.Info("append entries success")
+			n.logger.Info("append entries success")
 			// todo: shall deliver the result
 		} else {
-			node.leaderDegradationChan <- TermRank(resp.Term)
-			logger.Warn("append entries failed")
+			n.leaderDegradationChan <- TermRank(resp.Term)
+			n.logger.Warn("append entries failed")
 		}
 	}
 }
 
-func (node *Node) closeClientCommandChan() {
-	close(node.clientCommandChan)
-	for request := range node.clientCommandChan {
+func (n *Node) closeClientCommandChan() {
+	close(n.clientCommandChan)
+	for request := range n.clientCommandChan {
 		if request != nil {
 			request.errChan <- errors.New("raft node is not in leader state")
 		}
