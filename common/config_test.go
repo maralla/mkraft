@@ -21,13 +21,13 @@ basic_config:
   election_timeout_min_in_ms: 1000
   election_timeout_max_in_ms: 2000
   leader_heartbeat_period_in_ms: 50
-  client_command_buffer_size: 789
-  client_command_batch_size: 5
   min_remaining_time_for_rpc_in_ms: 20
+  graceful_shutdown_timeout_in_sec: 10
 membership:
   current_node_id: "node1"
   current_port: 8080
   current_node_addr: "127.0.0.1"
+  cluster_size: 3
   all_members:
     - node_id: "node1"
       node_uri: "127.0.0.1:8080"
@@ -63,6 +63,7 @@ membership:
   current_node_id: "node1"
   current_port: 8080
   current_node_addr: "127.0.0.1"
+  cluster_size: 3
   all_members:
     - node_id: "node1"
       node_uri: "127.0.0.1:8080"
@@ -88,5 +89,11 @@ grpc:
 	assert.Equal(t, RAFT_NODE_REQUEST_BUFFER_SIZE, cfg.BasicConfig.RaftNodeRequestBufferSize)
 	assert.Equal(t, RPC_REUQEST_TIMEOUT_IN_MS*time.Millisecond, cfg.GetRPCRequestTimeout())
 	assert.Equal(t, ELECTION_TIMEOUT_MIN_IN_MS, cfg.BasicConfig.ElectionTimeoutMinInMs)
-
+	assert.Equal(t, ELECTION_TIMEOUT_MAX_IN_MS, cfg.BasicConfig.ElectionTimeoutMaxInMs)
+	assert.Equal(t, LEADER_HEARTBEAT_PERIOD_IN_MS, cfg.BasicConfig.LeaderHeartbeatPeriodInMs)
+	assert.Equal(t, MIN_REMAINING_TIME_FOR_RPC_IN_MS, cfg.BasicConfig.MinRemainingTimeForRPCInMs)
+	assert.Equal(t, GRACEFUL_SHUTDOWN_IN_SEC, cfg.BasicConfig.GracefulShutdownTimeoutInSec)
+	assert.Equal(t, "node1", cfg.Membership.CurrentNodeID)
+	assert.Equal(t, 3, len(cfg.Membership.AllMembers))
+	assert.Equal(t, "test", cfg.GRPC["service"])
 }

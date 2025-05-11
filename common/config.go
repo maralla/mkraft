@@ -121,10 +121,6 @@ type (
 		// Leader
 		LeaderHeartbeatPeriodInMs int `yaml:"leader_heartbeat_period_in_ms" json:"leader_heartbeat_period_in_ms" validate:"min=1"`
 
-		// Client
-		ClientCommandBufferSize int `yaml:"client_command_buffer_size" json:"client_command_buffer_size" validate:"min=1"`
-		ClientCommandBatchSize  int `yaml:"client_command_batch_size" json:"client_command_batch_size" validate:"min=1"`
-
 		// internal
 		MinRemainingTimeForRPCInMs int `yaml:"min_remaining_time_for_rpc_in_ms" json:"min_remaining_time_for_rpc_in_ms" validate:"min=1"`
 	}
@@ -188,16 +184,6 @@ func (c *Config) GetRaftNodeRequestBufferSize() int {
 func (c *Config) GetLeaderHeartbeatPeriod() time.Duration {
 	b := c.BasicConfig
 	return time.Duration(b.LeaderHeartbeatPeriodInMs) * time.Millisecond
-}
-
-func (c *Config) GetClientCommandBufferSize() int {
-	b := c.BasicConfig
-	return b.ClientCommandBufferSize
-}
-
-func (c *Config) GetClientCommandBatchSize() int {
-	b := c.BasicConfig
-	return b.ClientCommandBatchSize
 }
 
 func (c *Config) String() string {
