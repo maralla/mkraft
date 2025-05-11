@@ -82,6 +82,7 @@ func (s *Server) Stop() {
 	s.grpcServer.GracefulStop()
 }
 
+// no blocking start
 func (s *Server) Start(ctx context.Context) error {
 	// start the gRPC server
 	port := s.cfg.GetMembership().CurrentPort
