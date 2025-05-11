@@ -2,33 +2,14 @@ package raft
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/maki3cat/mkraft/common"
-	util "github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
 	"golang.org/x/sync/semaphore"
 )
-
-var nodeInstance *Node
-var nodeInitOnce = &sync.Once{}
-
-func StartRaftNode(ctx context.Context) {
-	nodeInitOnce.Do(func() {
-		nodeInstance = NewNode(memberMgr.GetCurrentNodeID())
-		nodeInstance.Start(ctx)
-	})
-}
-
-func GetRaftNode() *Node {
-	if nodeInstance == nil {
-		panic("raft node is not initialized")
-	}
-	return nodeInstance
-}
 
 type NodeState int
 
@@ -134,13 +115,6 @@ type Node struct {
 	// matchIndex []int
 }
 
-// todo: use this to replace all
-func (node *Node) GracefulShutdown(ctx context.Context) {
-	node.logger.Info("raft node starting graceful shutdown")
-	memberMgr.GracefulShutdown()
-	node.logger.Info("raft node has just finished graceful shutdown")
-}
-
 // maki: go gymnastics for sync values
 // todo: add sync for these values?
 func (node *Node) SetVoteForAndTerm(voteFor string, term int32) {
@@ -184,11 +158,12 @@ func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteR
 		CandidateId: node.NodeId,
 	}
 	ctxTimeout, _ := context.WithTimeout(
-		ctx, time.Duration(util.GetConfig().GetElectionTimeout()))
+		ctx, time.Duration(node.cfg.GetElectionTimeout()))
 	go func() {
-		resp, err := consensus.RequestVoteSendForConsensus(ctxTimeout, req)
+		resp, err := node.consensus.RequestVoteSendForConsensus(ctxTimeout, req)
 		if err != nil {
-			node.logger.Error("error in RequestVoteSendForConsensus", err)
+			node.logger.Error(
+				"error in RequestVoteSendForConsensus", zap.Error(err))
 			return
 		} else {
 			consensusChan <- resp

@@ -24,13 +24,16 @@ func NewServer(cfg common.ConfigIface, logger *zap.Logger) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	node := raft.NewNode(membershipMgr, logger)
+	nodeID := cfg.GetMembership().CurrentNodeID
+	node := raft.NewNode(nodeID, cfg, logger, membershipMgr)
+	handlers := raft.NewHandlers(logger, node)
 
 	server := &Server{
-		logger:  logger,
-		cfg:     cfg,
-		handler: raft.NewHandlers(logger, membershipMgr),
+		logger:     logger,
+		cfg:        cfg,
+		node:       node,
+		membership: membershipMgr,
+		handler:    handlers,
 	}
 	serverOptions := grpc.ChainUnaryInterceptor(
 		server.contextCheckInterceptor,
@@ -38,24 +41,17 @@ func NewServer(cfg common.ConfigIface, logger *zap.Logger) (*Server, error) {
 	server.grpcServer = grpc.NewServer(serverOptions)
 
 	pb.RegisterRaftServiceServer(server.grpcServer, server.handler)
-
-	membershipMgr, err := raft.NewMembershipMgrWithStaticConfig(logger, cfg)
-	if err != nil {
-		return nil, err
-	}
-	server.membership = membershipMgr
 	return server, nil
 }
 
 type Server struct {
-	logger *zap.Logger
-	cfg    common.ConfigIface
+	logger     *zap.Logger
+	cfg        common.ConfigIface
+	node       *raft.Node
+	membership raft.MembershipMgrIface
 
 	grpcServer *grpc.Server
 	handler    *raft.Handlers
-	membership raft.MembershipMgrIface
-
-	node *raft.Node
 }
 
 func (s *Server) contextCheckInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
@@ -66,18 +62,17 @@ func (s *Server) contextCheckInterceptor(ctx context.Context, req any, _ *grpc.U
 }
 
 func (s *Server) loggerInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	s.logger.Info("gRPC request", zap.Any("request", req))
+	s.logger.Debug("gRPC request", zap.Any("request", req))
 	resp, err := handler(ctx, req)
 	if err != nil {
 		s.logger.Error("gRPC response error", zap.Error(err))
 	} else {
-		s.logger.Info("gRPC response", zap.Any("response", resp))
+		s.logger.Debug("gRPC response", zap.Any("response", resp))
 	}
 	return resp, err
 }
 
 func (s *Server) Stop() {
-
 	// grpc server graceful shutdown
 	waitingDuration := s.cfg.GetGracefulShutdownTimeout()
 	timer := time.AfterFunc(waitingDuration, func() {
@@ -85,10 +80,10 @@ func (s *Server) Stop() {
 	})
 	defer timer.Stop()
 	s.grpcServer.GracefulStop()
-
 }
 
 func (s *Server) Start(ctx context.Context) error {
+	// start the gRPC server
 	port := s.cfg.GetMembership().CurrentPort
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
@@ -96,9 +91,10 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	go func() {
+		s.logger.Info("gRPC server is starting...")
 		if err := s.grpcServer.Serve(lis); err != nil {
 			if errors.Is(err, grpc.ErrServerStopped) {
-				s.logger.Info("gRPC server stopped")
+				s.logger.Info("gRPC server has stopped")
 				return
 			} else {
 				s.logger.Error("failed to serve", zap.Error(err))
@@ -113,5 +109,9 @@ func (s *Server) Start(ctx context.Context) error {
 		s.Stop()
 		s.logger.Info("context canceled, stopping gRPC server...")
 	}()
+
+	// start the node
+	s.logger.Info("starting raft node...")
+	s.node.Start(ctx)
 	return nil
 }
