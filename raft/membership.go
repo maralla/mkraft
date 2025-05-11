@@ -9,17 +9,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// What is the functions of the membership manager
-type MembershipMgrIface interface {
-	// todo: GetMemberCount, GetAllPeerClients may diverge
-	// todo: may need to be re-constructed when dynamic membership is added
-	GetMemberCount() int // current in use or set up ? setup shall be in the conf ?
-	GetAllPeerClients() ([]rpc.InternalClientIface, error)
-	GracefulShutdown()
-}
+var _ MembershipMgrIface = (*StaticMembershipMgr)(nil)
 
-// using the a static
-func NewStatisMembership(logger *zap.Logger, cfg common.ConfigIface) (MembershipMgrIface, error) {
+func NewMembershipMgrWithStaticConfig(logger *zap.Logger, cfg common.ConfigIface) (MembershipMgrIface, error) {
 	staticMembership := cfg.GetMembership()
 	if len(staticMembership.AllMembers) < 3 {
 		return nil, errors.New("smallest cluster size is 3")
@@ -48,6 +40,17 @@ func NewStatisMembership(logger *zap.Logger, cfg common.ConfigIface) (Membership
 		staticMembershipMgr.peerInitLocks[node.NodeID] = &sync.Mutex{}
 	}
 	return staticMembershipMgr, nil
+}
+
+// What is the functions of the membership manager
+// invariants total > peersCount
+// maki should make sure this is guaranteed somewhere else
+type MembershipMgrIface interface {
+	// todo: GetMemberCount, GetAllPeerClients may diverge
+	// todo: may need to be re-constructed when dynamic membership is added
+	GetMemberCount() int // current in use or set up ? setup shall be in the conf ?
+	GetAllPeerClients() ([]rpc.InternalClientIface, error)
+	GracefulShutdown()
 }
 
 type StaticMembershipMgr struct {

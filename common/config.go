@@ -19,9 +19,9 @@ type ConfigIface interface {
 	GetRPCRequestTimeout() time.Duration
 	GetElectionTimeout() time.Duration
 	GetLeaderHeartbeatPeriod() time.Duration
+
 	GetRaftNodeRequestBufferSize() int
-	GetClientCommandBufferSize() int
-	GetClientCommandBatchSize() int
+
 	String() string
 	GetMinRemainingTimeForRPC() time.Duration
 	GetgRPCServiceConf() string
@@ -66,8 +66,6 @@ var (
 		ElectionTimeoutMinInMs:       ELECTION_TIMEOUT_MIN_IN_MS,
 		ElectionTimeoutMaxInMs:       ELECTION_TIMEOUT_MAX_IN_MS,
 		LeaderHeartbeatPeriodInMs:    LEADER_HEARTBEAT_PERIOD_IN_MS,
-		ClientCommandBufferSize:      CLIENT_COMMAND_BUFFER_SIZE,
-		ClientCommandBatchSize:       CLIENT_COMMAND_BATCH_SIZE,
 		MinRemainingTimeForRPCInMs:   MIN_REMAINING_TIME_FOR_RPC_IN_MS,
 		GracefulShutdownTimeoutInSec: GRACEFUL_SHUTDOWN_IN_SEC,
 	}
@@ -75,8 +73,6 @@ var (
 
 const (
 	RAFT_NODE_REQUEST_BUFFER_SIZE = 500
-	CLIENT_COMMAND_BATCH_SIZE     = 10
-	CLIENT_COMMAND_BUFFER_SIZE    = 1000
 
 	LEADER_BUFFER_SIZE            = 1000
 	LEADER_HEARTBEAT_PERIOD_IN_MS = 100

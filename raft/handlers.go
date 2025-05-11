@@ -10,6 +10,14 @@ import (
 type Handlers struct {
 	pb.UnimplementedRaftServiceServer
 	logger *zap.Logger
+	node   *Node
+}
+
+func NewHandlers(logger *zap.Logger, node *Node) *Handlers {
+	return &Handlers{
+		logger: logger,
+		node:   node,
+	}
 }
 
 func (h *Handlers) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
@@ -23,7 +31,7 @@ func (h *Handlers) RequestVote(ctx context.Context, in *pb.RequestVoteRequest) (
 		RespWraper: respChan,
 	}
 	// todo: should send the ctx into raft server so that it can notice the context is done
-	GetRaftNode().VoteRequest(internalReq)
+	h.node.VoteRequest(internalReq)
 	resp := <-respChan
 	if resp.Err != nil {
 		h.logger.Error("error in getting response from raft server", zap.Error(resp.Err))
@@ -39,8 +47,7 @@ func (h *Handlers) AppendEntries(ctx context.Context, in *pb.AppendEntriesReques
 		Request:    in,
 		RespWraper: respChan,
 	}
-	node := GetRaftNode()
-	node.AppendEntryRequest(internalReq)
+	h.node.AppendEntryRequest(internalReq)
 
 	// todo: should send the ctx into raft server so that it can notice the context is done
 	resp := <-respChan

@@ -70,6 +70,27 @@ type ClientCommandInternal struct {
 
 type TermRank int
 
+func NewNode(nodeId string, cfg common.ConfigIface, logger *zap.Logger, membership MembershipMgrIface) *Node {
+	bufferSize := cfg.GetRaftNodeRequestBufferSize()
+	consensus := NewConsensus(logger, membership, cfg)
+	return &Node{
+		cfg:        cfg,
+		membership: membership,
+		consensus:  consensus,
+		logger:     logger,
+
+		State:             StateFollower, // servers start up as followers
+		NodeId:            nodeId,
+		sem:               semaphore.NewWeighted(1),
+		CurrentTerm:       0,
+		VotedFor:          "",
+		clientCommandChan: make(chan *ClientCommandInternal, bufferSize),
+		requestVoteChan:   make(chan *RequestVoteInternal, bufferSize),
+		appendEntryChan:   make(chan *AppendEntriesInternal, bufferSize),
+		LeaderId:          "",
+	}
+}
+
 // the Raft Server Node
 // maki: go gymnastics for sync values
 // todo: add sync for these values?
@@ -141,21 +162,6 @@ func (node *Node) AppendEntryRequest(req *AppendEntriesInternal) {
 
 func (node *Node) ClientCommandRequest(request []byte) {
 
-}
-
-func NewNode(nodeId string) *Node {
-	bufferSize := util.GetConfig().GetRaftNodeRequestBufferSize()
-	return &Node{
-		State:             StateFollower, // servers start up as followers
-		NodeId:            nodeId,
-		sem:               semaphore.NewWeighted(1),
-		CurrentTerm:       0,
-		VotedFor:          "",
-		clientCommandChan: make(chan *ClientCommandInternal, bufferSize),
-		requestVoteChan:   make(chan *RequestVoteInternal, bufferSize),
-		appendEntryChan:   make(chan *AppendEntriesInternal, bufferSize),
-		LeaderId:          "",
-	}
 }
 
 // servers start up as followers

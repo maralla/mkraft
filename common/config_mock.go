@@ -40,32 +40,18 @@ func (m *MockConfigIface) EXPECT() *MockConfigIfaceMockRecorder {
 	return m.recorder
 }
 
-// GetClientCommandBatchSize mocks base method.
-func (m *MockConfigIface) GetClientCommandBatchSize() int {
+// GetClusterSize mocks base method.
+func (m *MockConfigIface) GetClusterSize() int {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetClientCommandBatchSize")
+	ret := m.ctrl.Call(m, "GetClusterSize")
 	ret0, _ := ret[0].(int)
 	return ret0
 }
 
-// GetClientCommandBatchSize indicates an expected call of GetClientCommandBatchSize.
-func (mr *MockConfigIfaceMockRecorder) GetClientCommandBatchSize() *gomock.Call {
+// GetClusterSize indicates an expected call of GetClusterSize.
+func (mr *MockConfigIfaceMockRecorder) GetClusterSize() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetClientCommandBatchSize", reflect.TypeOf((*MockConfigIface)(nil).GetClientCommandBatchSize))
-}
-
-// GetClientCommandBufferSize mocks base method.
-func (m *MockConfigIface) GetClientCommandBufferSize() int {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetClientCommandBufferSize")
-	ret0, _ := ret[0].(int)
-	return ret0
-}
-
-// GetClientCommandBufferSize indicates an expected call of GetClientCommandBufferSize.
-func (mr *MockConfigIfaceMockRecorder) GetClientCommandBufferSize() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetClientCommandBufferSize", reflect.TypeOf((*MockConfigIface)(nil).GetClientCommandBufferSize))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetClusterSize", reflect.TypeOf((*MockConfigIface)(nil).GetClusterSize))
 }
 
 // GetElectionTimeout mocks base method.

@@ -19,9 +19,18 @@ import (
 )
 
 func NewServer(cfg common.ConfigIface, logger *zap.Logger) (*Server, error) {
+
+	membershipMgr, err := raft.NewMembershipMgrWithStaticConfig(logger, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	node := raft.NewNode(membershipMgr, logger)
+
 	server := &Server{
-		logger: logger,
-		cfg:    cfg,
+		logger:  logger,
+		cfg:     cfg,
+		handler: raft.NewHandlers(logger, membershipMgr),
 	}
 	serverOptions := grpc.ChainUnaryInterceptor(
 		server.contextCheckInterceptor,
@@ -30,7 +39,7 @@ func NewServer(cfg common.ConfigIface, logger *zap.Logger) (*Server, error) {
 
 	pb.RegisterRaftServiceServer(server.grpcServer, server.handler)
 
-	membershipMgr, err := raft.NewStatisMembership(logger, cfg)
+	membershipMgr, err := raft.NewMembershipMgrWithStaticConfig(logger, cfg)
 	if err != nil {
 		return nil, err
 	}
