@@ -22,7 +22,7 @@ mockgen:
 
 build:
 	@echo "Building the project..."
-	@go build -o bin/mkraft
+	@go build -o bin/mkraft cmd/main.go
 
 clean:
 	@rm bin/*
