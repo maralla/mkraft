@@ -5,26 +5,33 @@
 
 https://raft.github.io/
 
-## Testing
-- [ ]
+## In-Progress
+AppendEntries of Paper
 
 
-## Infra Framework
 
-- [ ] configuration: unified conf file, env
-- [ ] docker: docker file and docker compose
+## Backlog
+
+### Raft Paper
+- [ ] AppendEntries (WIP)
+- [ ] Log Replication
+- [ ] Persistence
+- [ ] Membership Changes
+- [ ] Log Compaction
+- [ ] Example of Pluggable State Machine
+
+### Infra Framework
+- [ ] rate limiter
+- [ ] pressure testing
 - [ ] otel: metrics
-
-
-## grpc part
-
+grpc part
 https://grpc.io/docs/guides/performance/
 - [ ] try to change to streaming RPCs (with keep alive) or keep both and do a benchmarking
 - [ ] channel optimization
 - [ ] error handling
 - [ ] authentication
 - [ ] flow control
-
+      
 | Number | Feature Topic                                                        |
 | ------ | -------------------------------------------------------------------- |
 | 1      | deadline/timeout                                                     |
@@ -34,47 +41,10 @@ https://grpc.io/docs/guides/performance/
 | 5      | retry (partially used)                                               |
 
 
-## Raft Module Checks
-
-- [ ] (1) the biggest feature of append entries 
-- [ ] (2) after (1) add batching for requests of leaders
-- [ ] (3) after (2), (3) add rate limiter, no sure which layer it shall be added into, the out most? probably also the inner part of appendEntries to keep it from starting too many goroutines, but for sure the 2 points are rpc-server and raft-node-leader
-
-### Module0: Engineering Basics
-- [x] rpc-client framework
-- [X] rpc-server framework
-- [x] logging
-- [x] configuration management
-
-### Module1: Leade Election
-- [x] leader election
-- [ ] testing: basic features
-- [ ] testing: simulate adversial cases in async network env (clock drifting, delay, partition)
-
-### Module2: Consensus
-- [ ] framework: sending framework, based on term
-- [ ] framework: receiving framework, based on term
-- [ ] framework: sending framework, based on log and commit index
-- [ ] framework: receiving framework, based on log and commmit index
-
-### Module3: Membership
-- [ ] Fixed Membership thru config
-- [ ] Membership Changes
-- [ ] Memberhsip with Gossip OR Service Discovery?
-
-### Module4: Log
-- [ ] replication
-- [ ] persistence
-- [ ] compaction
-
-### Module5: StateMachine
-- [ ] interface for pluggable
-- [ ] one pluggable example
 
 <img src="img/logo1.jpg" alt="My Image" align="left" width="300">
 
 ## Patterns for GoGymnastics
-
 - [ ] async all with future pattern
 - [ ] retry call with timeout
 - [ ] fan-in/fan-out in RAFT
@@ -84,15 +54,38 @@ https://grpc.io/docs/guides/performance/
 - [ ] plummer and channels
 
 ## Implementation Decisions and Extreme Engineering
-
 - [ ] add batching to handling ClientCommands, and send AppendLogEntries
 - [ ] check prof Yang's improvements of paxos for ideas
 - [ ] check architecture classes of caching and memory hierarchy for ideas
 
 
-## Maki Work Logs
+## History Logs
 
-### Week April 19-30 2025
+### v0.1.0 leader eleaction, server framework -- April/May 2025
+
+## Infra Framework
+- [x] configuration: unified conf file, env
+- [x] docker: docker file and docker compose
+
+#### Module2: Consensus
+- [x] framework: sending framework, based on term
+- [x] framework: receiving framework, based on term
+- [x] framework: sending framework, based on log and commit index
+- [x] framework: receiving framework, based on log and commmit index
+
+#### Module3: Membership
+- [x] Fixed Membership thru config
+
+#### Module1: Leade Election
+- [x] leader election
+- [x] testing: basic features
+- [x] testing: simulate adversial cases in async network env (clock drifting, delay, partition)
+
+#### Module0: Engineering Basics
+- [x] rpc-client framework
+- [X] rpc-server framework
+- [x] logging
+- [x] configuration management
 
 #### Bug List 
 - [x]when 2 nodes run together, no one becomes the leader
