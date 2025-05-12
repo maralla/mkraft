@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding/gzip"
 
+	"github.com/google/uuid"
 	"github.com/maki3cat/mkraft/common"
 )
 
@@ -105,7 +106,11 @@ func (rc *InternalClientImpl) SendAppendEntries(ctx context.Context, req *Append
 
 // the context shall be timed out in election timeout period
 func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse] {
-	rc.logger.Debug("send SendRequestVote", zap.String("to", rc.String()), zap.Any("request", req))
+	requestID := common.GetRequestID(ctx)
+	rc.logger.Debug("send SendRequestVote",
+		zap.String("to", rc.String()),
+		zap.Any("request", req),
+		zap.String("requestID", requestID))
 	out := make(chan RPCRespWrapper[*RequestVoteResponse], 1)
 
 	retriedRPC := func() {
@@ -124,7 +129,10 @@ func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, re
 							Err: fmt.Errorf("%s", "election timeout to receive any non-error response")}
 						return
 					} else {
-						rc.logger.Error("need retry, RPC error:", zap.String("to", rc.String()), zap.Error(resp.Err))
+						rc.logger.Error("need retry, RPC error:",
+							zap.String("to", rc.String()),
+							zap.Error(resp.Err),
+							zap.String("requestID", requestID))
 						singleResChan = rc.asyncCallRequestVote(ctx, req)
 						continue
 					}
@@ -154,47 +162,80 @@ func (rc *InternalClientImpl) asyncCallRequestVote(ctx context.Context, req *Req
 
 // should be called when ctx.deadline can handle the rpc timeout
 func (rc *InternalClientImpl) syncCallAppendEntries(ctx context.Context, req *AppendEntriesRequest) (*AppendEntriesResponse, error) {
-	rpcTimeout := rc.cfg.GetRPCRequestTimeout()
-	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, rpcTimeout)
-	defer singleCallCancel()
-
-	resp, err := rc.rawClient.AppendEntries(singleCallCtx, req)
+	resp, err := rc.rawClient.AppendEntries(ctx, req)
 	if err != nil {
-		rc.logger.Error("single RPC error in SendAppendEntries:", zap.Error(err))
+		requestID := common.GetRequestID(ctx)
+		rc.logger.Error("single RPC error in SendAppendEntries:",
+			zap.Error(err),
+			zap.String("requestID", requestID))
 	}
 	return resp, err
 }
 
 // should be called when ctx.deadline can handle the rpc timeout
 func (rc *InternalClientImpl) syncCallRequestVote(ctx context.Context, req *RequestVoteRequest) (*RequestVoteResponse, error) {
-	rpcTimeout := rc.cfg.GetRPCRequestTimeout()
-	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, rpcTimeout)
-	defer singleCallCancel()
-
-	resp, err := rc.rawClient.RequestVote(singleCallCtx, req)
+	resp, err := rc.rawClient.RequestVote(ctx, req)
 	if err != nil {
-		rc.logger.Error("single RPC error in SendAppendEntries:", zap.String("to", rc.String()), zap.Error(err))
+		requestID := common.GetRequestID(ctx)
+		rc.logger.Error("single RPC error in SendAppendEntries:",
+			zap.String("to", rc.String()),
+			zap.Error(err),
+			zap.String("requestID", requestID))
 	}
 	return resp, err
 }
 
 func (rc *InternalClientImpl) loggerInterceptor(
 	ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-	start := time.Now()
+
+	ctx, requestID := common.SetClientRequestID(ctx)
+
+	rc.logger.Debug("Starting RPC call",
+		zap.String("method", method),
+		zap.Any("request", req),
+		zap.String("target", cc.Target()),
+		zap.String("requestID", requestID))
+
 	err := invoker(ctx, method, req, reply, cc, opts...)
-	end := time.Now()
+
 	if err != nil {
-		rc.logger.Error("RPC call error", zap.String("method", method), zap.Error(err))
+		rc.logger.Error("RPC call error",
+			zap.String("method", method),
+			zap.Error(err),
+			zap.Any("request", req),
+			zap.String("requestID", requestID))
+	} else {
+		rc.logger.Debug("RPC call has succeeded",
+			zap.String("method", method),
+			zap.Any("request", req),
+			zap.Any("response", reply),
+			zap.Error(err),
+			zap.String("requestID", requestID))
 	}
-	rc.logger.Debug("RPC call finished", zap.String("method", method), zap.Duration("duration", end.Sub(start)), zap.Any("response", reply))
 	return err
 }
 
 func (rc *InternalClientImpl) timeoutClientInterceptor(
 	ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+
+	// todo: add trace all together and remove this temporary solution
+	requestID := uuid.New().String()
+	start := time.Now()
+	rc.logger.Debug("Starting RPC call",
+		zap.String("method", method),
+		zap.String("requestID", requestID))
+
 	rpcTimeout := rc.cfg.GetRPCRequestTimeout()
 	singleCallCtx, singleCallCancel := context.WithTimeout(ctx, rpcTimeout)
 	defer singleCallCancel()
+
 	err := invoker(singleCallCtx, method, req, reply, cc, opts...)
+
+	end := time.Now()
+	rc.logger.Debug("Finished RPC call",
+		zap.String("method", method),
+		zap.String("requestID", requestID),
+		zap.Duration("duration", end.Sub(start)))
+
 	return err
 }

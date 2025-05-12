@@ -37,7 +37,7 @@ func NewServer(cfg common.ConfigIface, logger *zap.Logger) (*Server, error) {
 	}
 	serverOptions := grpc.ChainUnaryInterceptor(
 		server.contextCheckInterceptor,
-		server.loggerInterceptor)
+		server.monitorInterceptor)
 	server.grpcServer = grpc.NewServer(serverOptions)
 
 	pb.RegisterRaftServiceServer(server.grpcServer, server.handler)
@@ -61,13 +61,14 @@ func (s *Server) contextCheckInterceptor(ctx context.Context, req any, _ *grpc.U
 	return handler(ctx, req)
 }
 
-func (s *Server) loggerInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	s.logger.Debug("gRPC request", zap.Any("request", req))
+func (s *Server) monitorInterceptor(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	ctx, requestID := common.GetOrGenerateRequestIDAtServer(ctx)
+	s.logger.Debug("gRPC request", zap.String("requestID", requestID), zap.Any("request", req))
 	resp, err := handler(ctx, req)
 	if err != nil {
-		s.logger.Error("gRPC response error", zap.Error(err))
+		s.logger.Error("gRPC response error", zap.String("requestID", requestID), zap.Error(err))
 	} else {
-		s.logger.Debug("gRPC response", zap.Any("response", resp))
+		s.logger.Debug("gRPC response", zap.String("requestID", requestID), zap.Any("response", resp))
 	}
 	return resp, err
 }
@@ -84,6 +85,7 @@ func (s *Server) Stop() {
 
 // no blocking start
 func (s *Server) Start(ctx context.Context) error {
+
 	// start the gRPC server
 	port := s.cfg.GetMembership().CurrentPort
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))

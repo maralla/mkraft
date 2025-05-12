@@ -3,8 +3,10 @@ package raft
 import (
 	"context"
 	"errors"
+	"os"
 	"time"
 
+	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
 )
@@ -48,6 +50,24 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	n.sem.Acquire(ctx, 1)
 	n.logger.Info("acquired the Semaphore as the LEADER state")
 	defer n.sem.Release(1)
+
+	// Append the current NodeID to a file called "state"
+	stateFilePath := "state.tmp"
+	file, err := os.OpenFile(stateFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		n.logger.Error("failed to open state file", zap.Error(err))
+		return
+	}
+	defer file.Close()
+
+	currentTime := time.Now().Format(time.RFC3339)
+	entry := currentTime + " " + n.NodeId + "\n"
+
+	_, writeErr := file.WriteString(entry)
+	if writeErr != nil {
+		n.logger.Error("failed to append NodeID to state file", zap.Error(writeErr))
+		return
+	}
 
 	// leader:
 	// (1) major task-1: handle client commands and send append entries
@@ -159,11 +179,13 @@ func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
 // synchronous, should be called in a goroutine
 // todo: suppose we don't need response now
 func (n *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) {
+	ctx, requestID := common.GetOrGenerateRequestID(ctx)
 	errChan := make(chan error, 1)
 	respChan := make(chan *AppendEntriesConsensusResp, 1)
 	go func(ctx context.Context) {
-		ctxTimeout, cancel := context.WithTimeout(ctx, n.cfg.GetRPCRequestTimeout())
-		defer cancel()
+		ctxTimeout, _ := context.WithTimeout(ctx, n.cfg.GetRPCRequestTimeout())
+		// since normally we don't wait for the stragglers,
+		// if we call cancel, there will be errors in the clients to the stragglers
 		consensusResp, err := n.consensus.AppendEntriesSendForConsensus(ctxTimeout, req)
 		if err != nil {
 			errChan <- err
@@ -174,16 +196,17 @@ func (n *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequ
 
 	select {
 	case <-ctx.Done():
-		n.logger.Warn("raft node main context done, exiting")
+		n.logger.Warn("raft node main context done, exiting", zap.String("requestID", requestID))
 	case err := <-errChan:
-		n.logger.Error("error in sending append entries to one node", zap.Error(err))
+		n.logger.Error(
+			"error in sending append entries to one node", zap.Error(err), zap.String("requestID", requestID))
 	case resp := <-respChan:
 		if resp.Success {
-			n.logger.Info("append entries success")
+			n.logger.Info("append entries success", zap.String("requestID", requestID))
 			// todo: shall deliver the result
 		} else {
 			n.leaderDegradationChan <- TermRank(resp.Term)
-			n.logger.Warn("append entries failed")
+			n.logger.Warn("append entries failed", zap.String("requestID", requestID))
 		}
 	}
 }

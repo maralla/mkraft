@@ -159,6 +159,8 @@ func (node *Node) Stop(ctx context.Context) {
 }
 
 func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteResp {
+	ctx, requestID := common.GetOrGenerateRequestID(ctx)
+
 	consensusChan := make(chan *MajorityRequestVoteResp, 1)
 	node.CurrentTerm++
 	node.VotedFor = node.NodeId
@@ -172,7 +174,7 @@ func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteR
 		resp, err := node.consensus.RequestVoteSendForConsensus(ctxTimeout, req)
 		if err != nil {
 			node.logger.Error(
-				"error in RequestVoteSendForConsensus", zap.Error(err))
+				"error in RequestVoteSendForConsensus", zap.String("requestID", requestID), zap.Error(err))
 			return
 		} else {
 			consensusChan <- resp

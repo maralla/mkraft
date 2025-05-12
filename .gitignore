@@ -1,2 +1,6 @@
 bin
 vscode/*
+.vscode
+*.log
+*.pid
+state.tmp
