@@ -173,10 +173,14 @@ func (rc *InternalClientImpl) syncCallRequestVote(ctx context.Context, req *Requ
 
 func (rc *InternalClientImpl) loggerInterceptor(
 	ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+
+	ctx, requestID := common.SetClientRequestID(ctx)
+
 	rc.logger.Debug("Starting RPC call",
 		zap.String("method", method),
 		zap.Any("request", req),
-		zap.String("target", cc.Target()))
+		zap.String("target", cc.Target()),
+		zap.String("requestID", requestID))
 
 	err := invoker(ctx, method, req, reply, cc, opts...)
 
@@ -184,15 +188,16 @@ func (rc *InternalClientImpl) loggerInterceptor(
 		rc.logger.Error("RPC call error",
 			zap.String("method", method),
 			zap.Error(err),
-			zap.Any("request", req))
+			zap.Any("request", req),
+			zap.String("requestID", requestID))
 	} else {
 		rc.logger.Debug("RPC call has succeeded",
 			zap.String("method", method),
 			zap.Any("request", req),
 			zap.Any("response", reply),
-			zap.Error(err))
+			zap.Error(err),
+			zap.String("requestID", requestID))
 	}
-
 	return err
 }
 

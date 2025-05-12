@@ -3,6 +3,7 @@ package raft
 import (
 	"context"
 
+	"github.com/maki3cat/mkraft/common"
 	pb "github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
 )
@@ -25,6 +26,7 @@ func (h *Handlers) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.Hello
 }
 
 func (h *Handlers) RequestVote(ctx context.Context, in *pb.RequestVoteRequest) (*pb.RequestVoteResponse, error) {
+	requestID := common.GetRequestID(ctx)
 	respChan := make(chan *pb.RPCRespWrapper[*pb.RequestVoteResponse], 1)
 	internalReq := &RequestVoteInternal{
 		Request:    in,
@@ -34,14 +36,16 @@ func (h *Handlers) RequestVote(ctx context.Context, in *pb.RequestVoteRequest) (
 	h.node.VoteRequest(internalReq)
 	resp := <-respChan
 	if resp.Err != nil {
-		h.logger.Error("error in getting response from raft server", zap.Error(resp.Err))
+		h.logger.Error("error in getting response from raft server",
+			zap.Error(resp.Err),
+			zap.String("requestID", requestID))
 		return nil, resp.Err
 	}
-	h.logger.Info("RPC Server RequestVote respond", zap.Any("response", resp.Resp))
 	return resp.Resp, nil
 }
 
 func (h *Handlers) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {
+	requestID := common.GetRequestID(ctx)
 	respChan := make(chan *pb.RPCRespWrapper[*pb.AppendEntriesResponse], 1)
 	internalReq := &AppendEntriesInternal{
 		Request:    in,
@@ -52,9 +56,10 @@ func (h *Handlers) AppendEntries(ctx context.Context, in *pb.AppendEntriesReques
 	// todo: should send the ctx into raft server so that it can notice the context is done
 	resp := <-respChan
 	if resp.Err != nil {
-		h.logger.Error("error in getting response from raft server", zap.Error(resp.Err.(error)))
+		h.logger.Error("error in getting response from raft server",
+			zap.Error(resp.Err),
+			zap.String("requestID", requestID))
 		return nil, resp.Err
 	}
-	h.logger.Info("RPC Server, AppendEntries, Respond", zap.Any("response", resp.Resp))
 	return resp.Resp, nil
 }
