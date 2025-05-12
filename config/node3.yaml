@@ -18,9 +18,9 @@ grpc:
     tokenRatio: 0.1
 
 membership:
-  current_node_id: node1
+  current_node_id: node3
   current_port: 18080
-  current_node_addr: node1:18080
+  current_node_addr: node3:18080
   cluster_size: 3
   all_members:
     - node_id: node1
@@ -28,4 +28,4 @@ membership:
     - node_id: node2
       node_uri: node2:18080
     - node_id: node3
-      node_uri: node3:18080
+      node_uri: node3:18080 

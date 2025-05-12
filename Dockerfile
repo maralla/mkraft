@@ -2,6 +2,9 @@
 # Stage 1: Build the application
 FROM golang:1.24-alpine as builder
 
+# Install build dependencies
+RUN apk add --no-cache make gcc musl-dev
+
 # Set the working directory in the container
 WORKDIR /app
 
