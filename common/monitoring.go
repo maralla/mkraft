@@ -12,6 +12,15 @@ type contextKey string
 const requestIDKey contextKey = "x-request-id"
 const requestIDHeader = "x-request-id"
 
+func GetOrGenerateRequestID(ctx context.Context) (context.Context, string) {
+	if requestID, ok := ctx.Value(requestIDKey).(string); ok {
+		return ctx, requestID
+	}
+	requestID := uuid.New().String()
+	ctx = context.WithValue(ctx, requestIDKey, requestID)
+	return ctx, requestID
+}
+
 func GetRequestID(ctx context.Context) string {
 	if requestID, ok := ctx.Value(requestIDKey).(string); ok {
 		return requestID

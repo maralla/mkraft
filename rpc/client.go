@@ -106,7 +106,11 @@ func (rc *InternalClientImpl) SendAppendEntries(ctx context.Context, req *Append
 
 // the context shall be timed out in election timeout period
 func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, req *RequestVoteRequest) chan RPCRespWrapper[*RequestVoteResponse] {
-	rc.logger.Debug("send SendRequestVote", zap.String("to", rc.String()), zap.Any("request", req))
+	requestID := common.GetRequestID(ctx)
+	rc.logger.Debug("send SendRequestVote",
+		zap.String("to", rc.String()),
+		zap.Any("request", req),
+		zap.String("requestID", requestID))
 	out := make(chan RPCRespWrapper[*RequestVoteResponse], 1)
 
 	retriedRPC := func() {
@@ -125,7 +129,10 @@ func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, re
 							Err: fmt.Errorf("%s", "election timeout to receive any non-error response")}
 						return
 					} else {
-						rc.logger.Error("need retry, RPC error:", zap.String("to", rc.String()), zap.Error(resp.Err))
+						rc.logger.Error("need retry, RPC error:",
+							zap.String("to", rc.String()),
+							zap.Error(resp.Err),
+							zap.String("requestID", requestID))
 						singleResChan = rc.asyncCallRequestVote(ctx, req)
 						continue
 					}
@@ -157,7 +164,10 @@ func (rc *InternalClientImpl) asyncCallRequestVote(ctx context.Context, req *Req
 func (rc *InternalClientImpl) syncCallAppendEntries(ctx context.Context, req *AppendEntriesRequest) (*AppendEntriesResponse, error) {
 	resp, err := rc.rawClient.AppendEntries(ctx, req)
 	if err != nil {
-		rc.logger.Error("single RPC error in SendAppendEntries:", zap.Error(err))
+		requestID := common.GetRequestID(ctx)
+		rc.logger.Error("single RPC error in SendAppendEntries:",
+			zap.Error(err),
+			zap.String("requestID", requestID))
 	}
 	return resp, err
 }
@@ -166,7 +176,11 @@ func (rc *InternalClientImpl) syncCallAppendEntries(ctx context.Context, req *Ap
 func (rc *InternalClientImpl) syncCallRequestVote(ctx context.Context, req *RequestVoteRequest) (*RequestVoteResponse, error) {
 	resp, err := rc.rawClient.RequestVote(ctx, req)
 	if err != nil {
-		rc.logger.Error("single RPC error in SendAppendEntries:", zap.String("to", rc.String()), zap.Error(err))
+		requestID := common.GetRequestID(ctx)
+		rc.logger.Error("single RPC error in SendAppendEntries:",
+			zap.String("to", rc.String()),
+			zap.Error(err),
+			zap.String("requestID", requestID))
 	}
 	return resp, err
 }

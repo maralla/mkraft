@@ -27,6 +27,7 @@ func NewServer(cfg common.ConfigIface, logger *zap.Logger) (*Server, error) {
 	nodeID := cfg.GetMembership().CurrentNodeID
 	node := raft.NewNode(nodeID, cfg, logger, membershipMgr)
 	handlers := raft.NewHandlers(logger, node)
+
 	server := &Server{
 		logger:     logger,
 		cfg:        cfg,
@@ -84,6 +85,7 @@ func (s *Server) Stop() {
 
 // no blocking start
 func (s *Server) Start(ctx context.Context) error {
+
 	// start the gRPC server
 	port := s.cfg.GetMembership().CurrentPort
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
