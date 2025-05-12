@@ -9,7 +9,7 @@ services:
     ports:
       - "18080:18080"
     volumes:
-      - ./config/base.yaml:/app/config/base.yaml
+      - ./config/docker/base.yaml:/app/config/base.yaml
     environment:
       - CONFIG_PATH=/app/config/base.yaml
     networks:
@@ -28,7 +28,7 @@ services:
     ports:
       - "18081:18080"
     volumes:
-      - ./config/node2.yaml:/app/config/base.yaml
+      - ./config/docker/node2.yaml:/app/config/base.yaml
     environment:
       - CONFIG_PATH=/app/config/base.yaml
     networks:
@@ -47,7 +47,7 @@ services:
     ports:
       - "18082:18080"
     volumes:
-      - ./config/node3.yaml:/app/config/base.yaml
+      - ./config/docker/node3.yaml:/app/config/base.yaml
     environment:
       - CONFIG_PATH=/app/config/base.yaml
     networks:
