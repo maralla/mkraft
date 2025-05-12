@@ -57,6 +57,7 @@ func main() {
 	sig := <-signalChan
 	logger.Warn("Received signal", zap.String("signal", sig.String()))
 	cancel()
-	time.Sleep(10 * time.Second)
+	logger.Info("waiting for server to stop")
+	time.Sleep(5 * time.Second)
 	logger.Warn("Main exiting")
 }

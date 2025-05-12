@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  node1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    hostname: node1
+    ports:
+      - "18080:18080"
+    volumes:
+      - ./config/docker/base.yaml:/app/config/base.yaml
+    environment:
+      - CONFIG_PATH=/app/config/base.yaml
+    networks:
+      - raft_network
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  node2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    hostname: node2
+    ports:
+      - "18081:18080"
+    volumes:
+      - ./config/docker/node2.yaml:/app/config/base.yaml
+    environment:
+      - CONFIG_PATH=/app/config/base.yaml
+    networks:
+      - raft_network
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  node3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    hostname: node3
+    ports:
+      - "18082:18080"
+    volumes:
+      - ./config/docker/node3.yaml:/app/config/base.yaml
+    environment:
+      - CONFIG_PATH=/app/config/base.yaml
+    networks:
+      - raft_network
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  raft_network:
+    driver: bridge

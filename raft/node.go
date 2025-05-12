@@ -51,7 +51,16 @@ type ClientCommandInternal struct {
 
 type TermRank int
 
-func NewNode(nodeId string, cfg common.ConfigIface, logger *zap.Logger, membership MembershipMgrIface) *Node {
+var _ NodeIface = (*Node)(nil)
+
+type NodeIface interface {
+	VoteRequest(req *RequestVoteInternal)
+	AppendEntryRequest(req *AppendEntriesInternal)
+	Start(ctx context.Context)
+	Stop(ctx context.Context)
+}
+
+func NewNode(nodeId string, cfg common.ConfigIface, logger *zap.Logger, membership MembershipMgrIface) NodeIface {
 	bufferSize := cfg.GetRaftNodeRequestBufferSize()
 	consensus := NewConsensus(logger, membership, cfg)
 	return &Node{
@@ -144,7 +153,7 @@ func (node *Node) Start(ctx context.Context) {
 }
 
 // gracefully stop the node and cleanup
-func (node *Node) Stop() {
+func (node *Node) Stop(ctx context.Context) {
 	close(node.appendEntryChan)
 	close(node.clientCommandChan)
 }

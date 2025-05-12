@@ -20,7 +20,7 @@ How the Shared Rule works for Leaders with 3 scenarios:
 (2) receive request of AppendEntries RPC from a server with a higher term (OK)
 (3) receive request of RequestVote RPC from a server with a higher term (OK)
 
-SECTION2: SPECIFICAL RULE FOR LEADERS (paper)
+// SECTION2: SPECIFICAL RULE FOR LEADERS (paper)
 (1) Upon election:
 
 	send initial empty AppendEntries (heartbeat) RPCs to each reserver;

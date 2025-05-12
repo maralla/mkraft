@@ -47,7 +47,7 @@ func NewServer(cfg common.ConfigIface, logger *zap.Logger) (*Server, error) {
 type Server struct {
 	logger     *zap.Logger
 	cfg        common.ConfigIface
-	node       *raft.Node
+	node       raft.NodeIface
 	membership raft.MembershipMgrIface
 
 	grpcServer *grpc.Server
