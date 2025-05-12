@@ -3,6 +3,7 @@ package raft
 import (
 	"context"
 	"errors"
+	"os"
 	"time"
 
 	"github.com/maki3cat/mkraft/common"
@@ -49,6 +50,24 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	n.sem.Acquire(ctx, 1)
 	n.logger.Info("acquired the Semaphore as the LEADER state")
 	defer n.sem.Release(1)
+
+	// Append the current NodeID to a file called "state"
+	stateFilePath := "state.tmp"
+	file, err := os.OpenFile(stateFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		n.logger.Error("failed to open state file", zap.Error(err))
+		return
+	}
+	defer file.Close()
+
+	currentTime := time.Now().Format(time.RFC3339)
+	entry := currentTime + " " + n.NodeId + "\n"
+
+	_, writeErr := file.WriteString(entry)
+	if writeErr != nil {
+		n.logger.Error("failed to append NodeID to state file", zap.Error(writeErr))
+		return
+	}
 
 	// leader:
 	// (1) major task-1: handle client commands and send append entries
