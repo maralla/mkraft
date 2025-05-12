@@ -10,10 +10,10 @@ import (
 type Handlers struct {
 	pb.UnimplementedRaftServiceServer
 	logger *zap.Logger
-	node   *Node
+	node   NodeIface
 }
 
-func NewHandlers(logger *zap.Logger, node *Node) *Handlers {
+func NewHandlers(logger *zap.Logger, node NodeIface) *Handlers {
 	return &Handlers{
 		logger: logger,
 		node:   node,
