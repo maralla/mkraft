@@ -41,7 +41,7 @@ func TestHandlers_RequestVote(t *testing.T) {
 	expectedResp := &rpc.RequestVoteResponse{VoteGranted: true}
 	respChan <- &rpc.RPCRespWrapper[*rpc.RequestVoteResponse]{Resp: expectedResp}
 
-	mockNode.EXPECT().VoteRequest(gomock.Any()).DoAndReturn(func(req *RequestVoteInternal) {
+	mockNode.EXPECT().VoteRequest(gomock.Any()).DoAndReturn(func(req *RequestVoteInternalReq) {
 		req.RespWraper <- &rpc.RPCRespWrapper[*rpc.RequestVoteResponse]{Resp: expectedResp}
 	})
 
@@ -67,7 +67,7 @@ func TestHandlers_AppendEntries(t *testing.T) {
 	expectedResp := &rpc.AppendEntriesResponse{Success: true}
 	respChan <- &rpc.RPCRespWrapper[*rpc.AppendEntriesResponse]{Resp: expectedResp}
 
-	mockNode.EXPECT().AppendEntryRequest(gomock.Any()).DoAndReturn(func(req *AppendEntriesInternal) {
+	mockNode.EXPECT().AppendEntryRequest(gomock.Any()).DoAndReturn(func(req *AppendEntriesInternalReq) {
 		req.RespWraper <- &rpc.RPCRespWrapper[*rpc.AppendEntriesResponse]{Resp: expectedResp}
 	})
 

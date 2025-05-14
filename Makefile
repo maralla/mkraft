@@ -14,12 +14,12 @@ protogen:
 	echo "Protocol buffer files generated successfully."
 
 mockgen:
-	mockgen -source=raft/membership.go -destination=./raft/membership_mock.go -package raft
 	mockgen -source=rpc/service_grpc.pb.go -destination=./rpc/service_mock.go -package rpc
 	mockgen -source=rpc/client.go -destination=./rpc/client_mock.go -package rpc
-	mockgen -source=common/config.go -destination=./common/config_mock.go -package common
-	mockgen -source=raft/consensus.go -destination=./raft/consensus_mock.go -package raft
-	mockgen -source=raft/node.go -destination=./raft/node_mock.go -package raft
+	mockgen -source=internal/membership.go -destination=./internal/membership_mock.go -package internal
+	mockgen -source=internal/config.go -destination=./internal/config_mock.go -package common
+	mockgen -source=internal/consensus.go -destination=./internal/consensus_mock.go -package internal
+	mockgen -source=internal/node.go -destination=./internal/node_mock.go -package internal
 
 build:
 	echo "Building the project..."

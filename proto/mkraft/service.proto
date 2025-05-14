@@ -9,6 +9,8 @@ service RaftService {
   rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse) {}
 
   rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse) {}
+
+  rpc ClientCommand(ClientCommandRequest) returns (ClientCommandResponse) {}
 }
 
 message HelloRequest {
@@ -47,4 +49,16 @@ message AppendEntriesResponse {
 
 message LogEntry {
   bytes data = 1;
+}
+
+message ClientCommandRequest {
+  bytes metadata = 1;
+  bytes command = 2;
+}
+
+message ClientCommandResponse {
+  int32 state = 1;
+  string state_message = 2;
+  bytes metadata = 3;
+  bytes result = 4;
 }

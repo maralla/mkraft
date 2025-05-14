@@ -1,8 +1,7 @@
-package raft
+package internal
 
 import (
 	"context"
-	"sync/atomic"
 	"time"
 
 	"github.com/maki3cat/mkraft/common"
@@ -32,30 +31,13 @@ func (state NodeState) String() string {
 	return "Unknown State"
 }
 
-type RequestVoteInternal struct {
-	Request    *rpc.RequestVoteRequest
-	RespWraper chan *rpc.RPCRespWrapper[*rpc.RequestVoteResponse]
-	IsTimeout  atomic.Bool
-}
-
-type AppendEntriesInternal struct {
-	Request    *rpc.AppendEntriesRequest
-	RespWraper chan *rpc.RPCRespWrapper[*rpc.AppendEntriesResponse]
-	IsTimeout  atomic.Bool
-}
-
-type ClientCommandInternal struct {
-	request []byte
-	errChan chan error
-}
-
 type TermRank int
 
 var _ NodeIface = (*Node)(nil)
 
 type NodeIface interface {
-	VoteRequest(req *RequestVoteInternal)
-	AppendEntryRequest(req *AppendEntriesInternal)
+	VoteRequest(req *RequestVoteInternalReq)
+	AppendEntryRequest(req *AppendEntriesInternalReq)
 	Start(ctx context.Context)
 	Stop(ctx context.Context)
 }
@@ -74,9 +56,9 @@ func NewNode(nodeId string, cfg common.ConfigIface, logger *zap.Logger, membersh
 		sem:               semaphore.NewWeighted(1),
 		CurrentTerm:       0,
 		VotedFor:          "",
-		clientCommandChan: make(chan *ClientCommandInternal, bufferSize),
-		requestVoteChan:   make(chan *RequestVoteInternal, bufferSize),
-		appendEntryChan:   make(chan *AppendEntriesInternal, bufferSize),
+		clientCommandChan: make(chan *ClientCommandInternalReq, bufferSize),
+		requestVoteChan:   make(chan *RequestVoteInternalReq, bufferSize),
+		appendEntryChan:   make(chan *AppendEntriesInternalReq, bufferSize),
 		LeaderId:          "",
 	}
 }
@@ -99,12 +81,12 @@ type Node struct {
 	// leader only channels
 	// gracefully clean every time a leader degrades to a follower
 	// reset these 2 data structures everytime a new leader is elected
-	clientCommandChan     chan *ClientCommandInternal
+	clientCommandChan     chan *ClientCommandInternalReq
 	leaderDegradationChan chan TermRank
 
 	// shared by all states
-	requestVoteChan chan *RequestVoteInternal
-	appendEntryChan chan *AppendEntriesInternal
+	requestVoteChan chan *RequestVoteInternalReq
+	appendEntryChan chan *AppendEntriesInternalReq
 
 	// Persistent state on all servers
 	// todo: how/why to make it persistent? (embedded db?)
@@ -135,11 +117,11 @@ func (node *Node) ResetVoteFor() {
 	node.VotedFor = ""
 }
 
-func (node *Node) VoteRequest(req *RequestVoteInternal) {
+func (node *Node) VoteRequest(req *RequestVoteInternalReq) {
 	node.requestVoteChan <- req
 }
 
-func (node *Node) AppendEntryRequest(req *AppendEntriesInternal) {
+func (node *Node) AppendEntryRequest(req *AppendEntriesInternalReq) {
 	node.appendEntryChan <- req
 }
 

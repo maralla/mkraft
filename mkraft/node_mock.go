@@ -7,7 +7,7 @@
 //
 
 // Package raft is a generated GoMock package.
-package raft
+package internal
 
 import (
 	context "context"
@@ -41,7 +41,7 @@ func (m *MockNodeIface) EXPECT() *MockNodeIfaceMockRecorder {
 }
 
 // AppendEntryRequest mocks base method.
-func (m *MockNodeIface) AppendEntryRequest(req *AppendEntriesInternal) {
+func (m *MockNodeIface) AppendEntryRequest(req *AppendEntriesInternalReq) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "AppendEntryRequest", req)
 }
@@ -77,7 +77,7 @@ func (mr *MockNodeIfaceMockRecorder) Stop(ctx any) *gomock.Call {
 }
 
 // VoteRequest mocks base method.
-func (m *MockNodeIface) VoteRequest(req *RequestVoteInternal) {
+func (m *MockNodeIface) VoteRequest(req *RequestVoteInternalReq) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "VoteRequest", req)
 }

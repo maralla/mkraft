@@ -1,4 +1,4 @@
-package raft
+package internal
 
 import (
 	"context"
@@ -75,7 +75,7 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	// (3) common task-1: handle voting requests from other candidates
 	// (4) common task-2: handle append entries requests from other candidates
 
-	n.clientCommandChan = make(chan *ClientCommandInternal, n.cfg.GetRaftNodeRequestBufferSize())
+	n.clientCommandChan = make(chan *ClientCommandInternalReq, n.cfg.GetRaftNodeRequestBufferSize())
 	n.leaderDegradationChan = make(chan TermRank, n.cfg.GetRaftNodeRequestBufferSize())
 
 	// these channels cannot be closed because they are created in the main thread but used in the worker
