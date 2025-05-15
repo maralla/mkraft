@@ -1,4 +1,4 @@
-package internal
+package mkraft
 
 import (
 	"sync/atomic"
@@ -10,9 +10,9 @@ type RequestVoteInternalReq RPCRequestWrapper[*rpc.RequestVoteRequest, *rpc.Requ
 type AppendEntriesInternalReq RPCRequestWrapper[*rpc.AppendEntriesRequest, *rpc.AppendEntriesResponse]
 type ClientCommandInternalReq RPCRequestWrapper[*rpc.ClientCommandRequest, *rpc.ClientCommandResponse]
 
-type RequestVoteInternalResp RPCRespWrapper[*rpc.RequestVoteResponse]
-type AppendEntriesInternalResp RPCRespWrapper[*rpc.AppendEntriesResponse]
-type ClientCommandInternalResp RPCRespWrapper[*rpc.ClientCommandResponse]
+// type RequestVoteInternalResp RPCRespWrapper[*rpc.RequestVoteResponse]
+// type AppendEntriesInternalResp RPCRespWrapper[*rpc.AppendEntriesResponse]
+// type ClientCommandInternalResp RPCRespWrapper[*rpc.ClientCommandResponse]
 
 type RPCRequestWrapper[T RPCRequest, R RPCResponse] struct {
 	Req       T

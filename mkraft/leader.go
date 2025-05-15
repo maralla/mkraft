@@ -1,4 +1,4 @@
-package internal
+package mkraft
 
 import (
 	"context"
@@ -113,12 +113,12 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 					LeaderId: n.NodeId,
 				}
 				go n.callAppendEntries(ctx, heartbeatReq)
-			case clientCmdReq := <-n.clientCommandChan:
+			case internalReq := <-n.clientCommandChan:
 				// todo: the client command request, should go into the callAppendEntries to handle
 				// todo: we omit the client command for now
 				tickerForHeartbeat.Stop()
 				log := &rpc.LogEntry{
-					Data: clientCmdReq.request,
+					Data: internalReq.Req.Command,
 				}
 				appendEntryReq := &rpc.AppendEntriesRequest{
 					Term:     n.CurrentTerm,
@@ -143,30 +143,29 @@ func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
 			case <-ctx.Done():
 				n.logger.Warn("leader's worker context done, exiting")
 				return
-			case requestVote := <-n.requestVoteChan: // commonRule: same with candidate
-				if !requestVote.IsTimeout.Load() {
+			case internalReq := <-n.requestVoteChan: // commonRule: same with candidate
+				if !internalReq.IsTimeout.Load() {
 					// no-IO operation
-					req := requestVote.Request
-					resChan := requestVote.RespWraper
+					req := internalReq.Req
 					resp := n.receiveVoteRequest(req)
-					wrapper := &rpc.RPCRespWrapper[*rpc.RequestVoteResponse]{
+					wrappedResp := &RPCRespWrapper[*rpc.RequestVoteResponse]{
 						Resp: resp,
 						Err:  nil,
 					}
-					resChan <- wrapper
+					internalReq.RespChan <- wrappedResp
 					if resp.VoteGranted {
 						n.leaderDegradationChan <- TermRank(resp.Term)
 						return
 					}
 				}
-			case req := <-n.appendEntryChan: // commonRule: same with candidate
+			case internalReq := <-n.appendEntryChan: // commonRule: same with candidate
 				// todo: shall add appendEntry operations which shall be a goroutine
-				resp := n.receiveAppendEntires(req.Request)
-				wrapper := rpc.RPCRespWrapper[*rpc.AppendEntriesResponse]{
+				resp := n.receiveAppendEntires(internalReq.Req)
+				wrapper := RPCRespWrapper[*rpc.AppendEntriesResponse]{
 					Resp: resp,
 					Err:  nil,
 				}
-				req.RespWraper <- &wrapper
+				internalReq.RespChan <- &wrapper
 				if resp.Success {
 					n.leaderDegradationChan <- TermRank(resp.Term)
 					return
@@ -215,7 +214,10 @@ func (n *Node) closeClientCommandChan() {
 	close(n.clientCommandChan)
 	for request := range n.clientCommandChan {
 		if request != nil {
-			request.errChan <- errors.New("raft node is not in leader state")
+			request.RespChan <- &RPCRespWrapper[*rpc.ClientCommandResponse]{
+				Resp: nil,
+				Err:  errors.New("raft node is not in leader state"),
+			}
 		}
 	}
 }

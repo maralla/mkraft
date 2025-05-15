@@ -1,4 +1,4 @@
-package raft
+package mkraft
 
 import (
 	"context"
@@ -42,7 +42,6 @@ type ConsensusImpl struct {
 
 func (c *ConsensusImpl) RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest) (*MajorityRequestVoteResp, error) {
 
-
 	requestID := common.GetRequestID(ctx)
 	c.logger.Debug("Starting RequestVoteSendForConsensus",
 		zap.Int32("term", request.Term),
@@ -74,7 +73,7 @@ func (c *ConsensusImpl) RequestVoteSendForConsensus(ctx context.Context, request
 	}
 
 	peersCount := len(peerClients)
-	resChan := make(chan rpc.RPCRespWrapper[*rpc.RequestVoteResponse], peersCount) // buffered with len(members) to prevent goroutine leak
+	resChan := make(chan RPCRespWrapper[*rpc.RequestVoteResponse], peersCount) // buffered with len(members) to prevent goroutine leak
 	for _, member := range peerClients {
 		// FAN-OUT
 		// maki: todo topic for go gynastics
@@ -209,7 +208,7 @@ func (c *ConsensusImpl) AppendEntriesSendForConsensus(
 		return nil, errors.New("not enough peer clients found")
 	}
 
-	allRespChan := make(chan rpc.RPCRespWrapper[*rpc.AppendEntriesResponse], len(peerClients))
+	allRespChan := make(chan RPCRespWrapper[*rpc.AppendEntriesResponse], len(peerClients))
 	for _, member := range peerClients {
 		memberHandle := member
 		// FAN-OUT

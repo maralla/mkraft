@@ -47,11 +47,11 @@ func (h *Handlers) RequestVote(ctx context.Context, in *pb.RequestVoteRequest) (
 func (h *Handlers) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {
 	requestID := common.GetRequestID(ctx)
 	respChan := make(chan *RPCRespWrapper[*pb.AppendEntriesResponse], 1)
-	internalReq := &AppendEntriesInternalReq{
-		Request:    in,
-		RespWraper: respChan,
+	req := &AppendEntriesInternalReq{
+		Req:      in,
+		RespChan: respChan,
 	}
-	h.node.AppendEntryRequest(internalReq)
+	h.node.AppendEntryRequest(req)
 
 	// todo: should send the ctx into raft server so that it can notice the context is done
 	resp := <-respChan
@@ -66,9 +66,9 @@ func (h *Handlers) AppendEntries(ctx context.Context, in *pb.AppendEntriesReques
 
 func (h *Handlers) ClientCommand(ctx context.Context, in *pb.ClientCommandRequest) (*pb.ClientCommandResponse, error) {
 
-	requestID := common.GetRequestID(ctx)
-	respChan := make(chan *pb.RPCRespWrapper[*pb.ClientCommandResponse], 1)
-	return nil, nil
+	// requestID := common.GetRequestID(ctx)
+	// respChan := make(chan *pb.RPCRespWrapper[*pb.ClientCommandResponse], 1)
+	// return nil, nil
 
 	// internalReq := &ClientRequestInternal{
 	// 	Request:    in,
@@ -82,4 +82,5 @@ func (h *Handlers) ClientCommand(ctx context.Context, in *pb.ClientCommandReques
 	// 		zap.String("requestID", requestID))
 	// 	return nil, resp.Err
 	// }
+	return nil, nil
 }

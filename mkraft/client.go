@@ -20,10 +20,10 @@ var _ InternalClientIface = (*InternalClientImpl)(nil)
 type InternalClientIface interface {
 
 	// send request vote is keep retrying until the context is done or the response is received
-	SendRequestVoteWithRetries(ctx context.Context, req *rpc.RequestVoteRequest) chan RequestVoteInternalResp
+	SendRequestVoteWithRetries(ctx context.Context, req *rpc.RequestVoteRequest) chan RPCRespWrapper[*rpc.RequestVoteResponse]
 
 	// send append entries is one simple sync rpc call with rpc timeout
-	SendAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) AppendEntriesInternalResp
+	SendAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) RPCRespWrapper[*rpc.AppendEntriesResponse]
 
 	SayHello(ctx context.Context, req *rpc.HelloRequest) (*rpc.HelloReply, error)
 
@@ -87,9 +87,9 @@ func (rc *InternalClientImpl) SayHello(ctx context.Context, req *rpc.HelloReques
 	return rc.rawClient.SayHello(ctx, req)
 }
 
-func (rc *InternalClientImpl) SendAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) AppendEntriesInternalResp {
+func (rc *InternalClientImpl) SendAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) RPCRespWrapper[*rpc.AppendEntriesResponse] {
 	resp, err := rc.syncCallAppendEntries(ctx, req)
-	wrapper := AppendEntriesInternalResp{
+	wrapper := RPCRespWrapper[*rpc.AppendEntriesResponse]{
 		Resp: resp,
 		Err:  err,
 	}
@@ -97,27 +97,27 @@ func (rc *InternalClientImpl) SendAppendEntries(ctx context.Context, req *rpc.Ap
 }
 
 // the context shall be timed out in election timeout period
-func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, req *rpc.RequestVoteRequest) chan RequestVoteInternalResp {
+func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, req *rpc.RequestVoteRequest) chan RPCRespWrapper[*rpc.RequestVoteResponse] {
 	requestID := common.GetRequestID(ctx)
 	rc.logger.Debug("send SendRequestVote",
 		zap.String("to", rc.String()),
 		zap.Any("request", req),
 		zap.String("requestID", requestID))
-	out := make(chan RequestVoteInternalResp, 1)
+	out := make(chan RPCRespWrapper[*rpc.RequestVoteResponse], 1)
 
 	retriedRPC := func() {
 		singleResChan := rc.asyncCallRequestVote(ctx, req)
 		for {
 			select {
 			case <-ctx.Done():
-				out <- RequestVoteInternalResp{
+				out <- RPCRespWrapper[*rpc.RequestVoteResponse]{
 					Err: fmt.Errorf("%s", "election timeout to receive any non-error response")}
 				return
 			case resp := <-singleResChan:
 				if resp.Err != nil {
 					deadline, ok := ctx.Deadline()
 					if ok && time.Until(deadline) < rc.cfg.GetMinRemainingTimeForRPC() {
-						out <- RequestVoteInternalResp{
+						out <- RPCRespWrapper[*rpc.RequestVoteResponse]{
 							Err: fmt.Errorf("%s", "election timeout to receive any non-error response")}
 						return
 					} else {
@@ -139,11 +139,11 @@ func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, re
 	return out
 }
 
-func (rc *InternalClientImpl) asyncCallRequestVote(ctx context.Context, req *rpc.RequestVoteRequest) chan RequestVoteInternalResp {
-	singleResChan := make(chan RequestVoteInternalResp, 1) // must be buffered
+func (rc *InternalClientImpl) asyncCallRequestVote(ctx context.Context, req *rpc.RequestVoteRequest) chan RPCRespWrapper[*rpc.RequestVoteResponse] {
+	singleResChan := make(chan RPCRespWrapper[*rpc.RequestVoteResponse], 1) // must be buffered
 	go func() {
 		resp, err := rc.syncCallRequestVote(ctx, req)
-		wrapper := RequestVoteInternalResp{
+		wrapper := RPCRespWrapper[*rpc.RequestVoteResponse]{
 			Resp: resp,
 			Err:  err,
 		}
