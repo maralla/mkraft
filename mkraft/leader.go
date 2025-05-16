@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/maki3cat/mkraft/common"
@@ -115,15 +116,7 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 				go n.callAppendEntries(ctx, heartbeatReq)
 			case internalReq := <-n.clientCommandChan:
 				tickerForHeartbeat.Stop()
-				log := &rpc.LogEntry{
-					Data: internalReq.Req.Command,
-				}
-				appendEntryReq := &rpc.AppendEntriesRequest{
-					Term:     n.CurrentTerm,
-					LeaderId: n.NodeId,
-					Entries:  []*rpc.LogEntry{log},
-				}
-				go n.callAppendEntries(ctx, appendEntryReq)
+				go n.handleClientCommand(ctx, internalReq)
 				tickerForHeartbeat.Reset(heartbeatDuration)
 			}
 		}
@@ -174,15 +167,17 @@ func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
 }
 
 // todo: shall add batching
-func (n *Node) handleClientCommand(ctx context.Context, internalReq *ClientCommandInternalReq) error {
+func (n *Node) handleClientCommand(ctx context.Context, internalReq *ClientCommandInternalReq) {
 
-	if n.State != StateLeader {
-		return errors.New("node is not in LEADER state")
-	}
+	var subTasksToWait sync.WaitGroup
+	subTasksToWait.Add(2)
 
 	// (1) appends the command to the local as a new entry
 	// todo: how to get the response
-	go n.raftLog.AppendLog(internalReq.Req.Command, int(n.CurrentTerm))
+	go func(ctx context.Context) {
+		defer subTasksToWait.Done()
+		n.raftLog.AppendLog(ctx, internalReq.Req.Command, int(n.CurrentTerm))
+	}(ctx)
 
 	// (2) sends the command of appendEntries to all the followers in parallel to replicate the entry
 	index, term := n.raftLog.GetPrevLogIndexAndTerm()
@@ -200,7 +195,11 @@ func (n *Node) handleClientCommand(ctx context.Context, internalReq *ClientComma
 		LeaderCommit: n.commitIndex,
 	}
 	// todo: how to get the response
-	go n.callAppendEntries(ctx, req)
+	// todo: how to maintain the node state?
+	go func(ctx context.Context) {
+		defer subTasksToWait.Done()
+		n.callAppendEntries(ctx, req)
+	}(ctx)
 
 	// (3) when the entry has been safely replicated, the leader applies the entry to the state machine
 	applyResp, err := n.statemachine.ApplyCommand(internalReq.Req.Command)
@@ -226,8 +225,6 @@ func (n *Node) handleClientCommand(ctx context.Context, internalReq *ClientComma
 	// (5) if the follower run slowly or crash, the leader will retry to send the appendEntries indefinitely
 	// todo: how to do get the slower follower and resend the req?
 
-	// (6)
-	return nil
 }
 
 // synchronous, should be called in a goroutine

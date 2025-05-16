@@ -2,6 +2,7 @@ package mkraft
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -12,8 +13,8 @@ import (
 type RaftLogsIface interface {
 	GetPrevLogIndexAndTerm() (uint64, uint32)
 
-	AppendLog(commands []byte, term int) error
-	AppendLogsInBatch(commandList [][]byte, term int) error
+	AppendLog(ctx context.Context, commands []byte, term int) error
+	AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error
 }
 
 func NewRaftLogsImpl(filePath string) RaftLogsIface {
@@ -72,7 +73,7 @@ func (rl *SimpleRaftLogsImpl) GetPrevLogIndexAndTerm() (uint64, uint32) {
 }
 
 // write one command to log
-func (rl *SimpleRaftLogsImpl) AppendLog(commands []byte, term int) error {
+func (rl *SimpleRaftLogsImpl) AppendLog(ctx context.Context, commands []byte, term int) error {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 
@@ -93,7 +94,7 @@ func (rl *SimpleRaftLogsImpl) AppendLog(commands []byte, term int) error {
 	return nil
 }
 
-func (rl *SimpleRaftLogsImpl) AppendLogsInBatch(commandList [][]byte, term int) error {
+func (rl *SimpleRaftLogsImpl) AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 
