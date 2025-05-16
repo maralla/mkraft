@@ -44,7 +44,13 @@ type NodeIface interface {
 	Stop(ctx context.Context)
 }
 
-func NewNode(nodeId string, cfg common.ConfigIface, logger *zap.Logger, membership MembershipMgrIface) NodeIface {
+func NewNode(
+	nodeId string,
+	cfg common.ConfigIface,
+	logger *zap.Logger,
+	membership MembershipMgrIface,
+	raftlog RaftLogsIface,
+) NodeIface {
 	bufferSize := cfg.GetRaftNodeRequestBufferSize()
 	consensus := NewConsensus(logger, membership, cfg)
 	return &Node{
