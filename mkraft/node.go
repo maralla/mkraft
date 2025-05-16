@@ -38,6 +38,8 @@ var _ NodeIface = (*Node)(nil)
 type NodeIface interface {
 	VoteRequest(req *RequestVoteInternalReq)
 	AppendEntryRequest(req *AppendEntriesInternalReq)
+	ClientCommand(req *ClientCommandInternalReq)
+
 	Start(ctx context.Context)
 	Stop(ctx context.Context)
 }
@@ -95,15 +97,17 @@ type Node struct {
 	VotedFor    string // candidateID
 	// LogEntries
 
-	// Volatile state on all servers
-	// todo: in the logging part
-	// commitIndex int
-	// lastApplied int
+	// Paper page 4:
+	//	Volatile state on all servers (both initialized to 0, increase monotonically)
+	//  index of the highest log entry known to be committed
+	commitIndex int
+	// index of the highest log entry applied to state machine
+	lastApplied int
 
-	// Volatile state on leaders only
-	// todo: in the logging part
-	// nextIndex  []int
-	// matchIndex []int
+	// Volatile state on leaders only, reinitialized after election, initialized to leader last log index+1
+	nextIndex  map[string]int // map[peerID]nextIndex, index of the next log entry to send to that server
+	matchIndex map[string]int // map[peerID]matchIndex, index of highest log entry known to be replicated on that server
+
 }
 
 // maki: go gymnastics for sync values

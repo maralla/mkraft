@@ -114,8 +114,6 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 				}
 				go n.callAppendEntries(ctx, heartbeatReq)
 			case internalReq := <-n.clientCommandChan:
-				// todo: the client command request, should go into the callAppendEntries to handle
-				// todo: we omit the client command for now
 				tickerForHeartbeat.Stop()
 				log := &rpc.LogEntry{
 					Data: internalReq.Req.Command,
@@ -175,6 +173,15 @@ func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
 	}
 }
 
+func (n *Node) handleClientCommand(internalReq *ClientCommandInternalReq) {
+	// (1) appends the command to the local as a new entry
+	// (2) sends the command of appendEntries to all the followers in parallel to replicate the entry
+	// (3) when the entry has been safely replicated, the leader applies the entry to the state machine
+	// (4) the leader responds to the client
+	// (5) if the follower run slowly or crash, the leader will retry to send the appendEntries indefinitely
+
+}
+
 // synchronous, should be called in a goroutine
 // todo: suppose we don't need response now
 func (n *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) {
@@ -220,4 +227,8 @@ func (n *Node) closeClientCommandChan() {
 			}
 		}
 	}
+}
+
+func (n *Node) ClientCommand(req *ClientCommandInternalReq) {
+	n.clientCommandChan <- req
 }

@@ -66,21 +66,19 @@ func (h *Handlers) AppendEntries(ctx context.Context, in *pb.AppendEntriesReques
 
 func (h *Handlers) ClientCommand(ctx context.Context, in *pb.ClientCommandRequest) (*pb.ClientCommandResponse, error) {
 
-	// requestID := common.GetRequestID(ctx)
-	// respChan := make(chan *pb.RPCRespWrapper[*pb.ClientCommandResponse], 1)
-	// return nil, nil
+	requestID := common.GetRequestID(ctx)
+	req := &ClientCommandInternalReq{
+		Req:      in,
+		RespChan: make(chan *RPCRespWrapper[*pb.ClientCommandResponse], 1),
+	}
+	h.node.ClientCommand(req)
 
-	// internalReq := &ClientRequestInternal{
-	// 	Request:    in,
-	// 	RespWraper: respChan,
-	// }
-	// h.node.ClientRequest(internalReq)
-	// resp := <-respChan
-	// if resp.Err != nil {
-	// 	h.logger.Error("error in getting response from raft server",
-	// 		zap.Error(resp.Err),
-	// 		zap.String("requestID", requestID))
-	// 	return nil, resp.Err
-	// }
-	return nil, nil
+	resp := <-req.RespChan
+	if resp.Err != nil {
+		h.logger.Error("error in getting response from raft server",
+			zap.Error(resp.Err),
+			zap.String("requestID", requestID))
+		return nil, resp.Err
+	}
+	return resp.Resp, nil
 }

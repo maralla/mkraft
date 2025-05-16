@@ -52,6 +52,18 @@ func (mr *MockNodeIfaceMockRecorder) AppendEntryRequest(req any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendEntryRequest", reflect.TypeOf((*MockNodeIface)(nil).AppendEntryRequest), req)
 }
 
+// ClientCommand mocks base method.
+func (m *MockNodeIface) ClientCommand(req *ClientCommandInternalReq) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "ClientCommand", req)
+}
+
+// ClientCommand indicates an expected call of ClientCommand.
+func (mr *MockNodeIfaceMockRecorder) ClientCommand(req any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClientCommand", reflect.TypeOf((*MockNodeIface)(nil).ClientCommand), req)
+}
+
 // Start mocks base method.
 func (m *MockNodeIface) Start(ctx context.Context) {
 	m.ctrl.T.Helper()
