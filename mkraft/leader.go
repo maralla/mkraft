@@ -102,7 +102,7 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 				return
 			case newTerm := <-n.leaderDegradationChan:
 				n.State = StateFollower
-				n.SetVoteForAndTerm(n.VotedFor, int32(newTerm))
+				n.SetVoteForAndTerm(n.VotedFor, uint32(newTerm))
 				// shall first change the state, so that new client commands won't flood in when we close the channel
 				n.closeClientCommandChan()
 				go n.RunAsFollower(ctx)
@@ -173,13 +173,61 @@ func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
 	}
 }
 
-func (n *Node) handleClientCommand(internalReq *ClientCommandInternalReq) {
-	// (1) appends the command to the local as a new entry
-	// (2) sends the command of appendEntries to all the followers in parallel to replicate the entry
-	// (3) when the entry has been safely replicated, the leader applies the entry to the state machine
-	// (4) the leader responds to the client
-	// (5) if the follower run slowly or crash, the leader will retry to send the appendEntries indefinitely
+// todo: shall add batching
+func (n *Node) handleClientCommand(ctx context.Context, internalReq *ClientCommandInternalReq) error {
 
+	if n.State != StateLeader {
+		return errors.New("node is not in LEADER state")
+	}
+
+	// (1) appends the command to the local as a new entry
+	// todo: how to get the response
+	go n.raftLog.AppendLog(internalReq.Req.Command, int(n.CurrentTerm))
+
+	// (2) sends the command of appendEntries to all the followers in parallel to replicate the entry
+	index, term := n.raftLog.GetPrevLogIndexAndTerm()
+	entries := make([]*rpc.LogEntry, 1)
+	entries[0] = &rpc.LogEntry{
+		Data: internalReq.Req.Command,
+	}
+
+	req := &rpc.AppendEntriesRequest{
+		Term:         n.CurrentTerm,
+		LeaderId:     n.NodeId,
+		PrevLogIndex: index,
+		PrevLogTerm:  term,
+		Entries:      entries,
+		LeaderCommit: n.commitIndex,
+	}
+	// todo: how to get the response
+	go n.callAppendEntries(ctx, req)
+
+	// (3) when the entry has been safely replicated, the leader applies the entry to the state machine
+	applyResp, err := n.statemachine.ApplyCommand(internalReq.Req.Command)
+	// todo: how to get the response
+
+	// (4) the leader responds to the client
+	if err != nil {
+		n.logger.Error("error in applying command to state machine", zap.Error(err))
+		internalReq.RespChan <- &RPCRespWrapper[*rpc.ClientCommandResponse]{
+			Resp: nil,
+			Err:  err,
+		}
+	} else {
+		clientResp := &rpc.ClientCommandResponse{
+			Result: applyResp,
+		}
+		internalReq.RespChan <- &RPCRespWrapper[*rpc.ClientCommandResponse]{
+			Resp: clientResp,
+			Err:  nil,
+		}
+	}
+
+	// (5) if the follower run slowly or crash, the leader will retry to send the appendEntries indefinitely
+	// todo: how to do get the slower follower and resend the req?
+
+	// (6)
+	return nil
 }
 
 // synchronous, should be called in a goroutine

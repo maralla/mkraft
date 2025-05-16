@@ -12,6 +12,7 @@ import (
 
 	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/mkraft"
+	"github.com/maki3cat/mkraft/mkraft/pluggable"
 	pb "github.com/maki3cat/mkraft/rpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -19,16 +20,16 @@ import (
 )
 
 func NewServer(cfg common.ConfigIface, logger *zap.Logger) (*Server, error) {
-
 	membershipMgr, err := mkraft.NewMembershipMgrWithStaticConfig(logger, cfg)
 	if err != nil {
 		return nil, err
 	}
 
 	raftLogIface := mkraft.NewRaftLogsImpl(cfg.GetRaftLogFilePath())
+	statemachine := pluggable.NewStateMachineNoOpImpl()
 
 	nodeID := cfg.GetMembership().CurrentNodeID
-	node := mkraft.NewNode(nodeID, cfg, logger, membershipMgr, raftLogIface)
+	node := mkraft.NewNode(nodeID, cfg, logger, membershipMgr, raftLogIface, statemachine)
 	handlers := mkraft.NewHandlers(logger, node)
 
 	server := &Server{

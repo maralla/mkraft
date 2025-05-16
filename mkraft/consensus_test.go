@@ -256,7 +256,7 @@ func TestAppendEntriesSendForConsensus(t *testing.T) {
 func mockSendAppendEntries(ctrl *gomock.Controller, term int32) *MockInternalClientIface {
 	rpcWrapper := RPCRespWrapper[*rpc.AppendEntriesResponse]{
 		Err:  nil,
-		Resp: &rpc.AppendEntriesResponse{Term: term, Success: true},
+		Resp: &rpc.AppendEntriesResponse{Term: uint32(term), Success: true},
 	}
 	mockClient1 := NewMockInternalClientIface(ctrl)
 	mockClient1.EXPECT().SendAppendEntries(

@@ -20,12 +20,12 @@ func NewConsensus(logger *zap.Logger, membershipMgr MembershipMgrIface, cfg comm
 }
 
 type AppendEntriesConsensusResp struct {
-	Term    int32
+	Term    uint32
 	Success bool
 }
 
 type MajorityRequestVoteResp struct {
-	Term        int32
+	Term        uint32
 	VoteGranted bool
 }
 
@@ -44,7 +44,7 @@ func (c *ConsensusImpl) RequestVoteSendForConsensus(ctx context.Context, request
 
 	requestID := common.GetRequestID(ctx)
 	c.logger.Debug("Starting RequestVoteSendForConsensus",
-		zap.Int32("term", request.Term),
+		zap.Uint32("term", request.Term),
 		zap.String("candidateId", request.CandidateId),
 		zap.String("requestID", requestID))
 
@@ -100,30 +100,14 @@ func (c *ConsensusImpl) RequestVoteSendForConsensus(ctx context.Context, request
 					zap.Int("voteFailed", voteFailed),
 					zap.String("requestID", requestID))
 				if calculateIfAlreadyFail(total, peersCount, peerVoteAccumulated, voteFailed) {
-					c.logger.Error("Majority failure threshold reached",
-						zap.Int("total", total),
-						zap.Int("peersCount", peersCount),
-						zap.Int("votesAccumulated", peerVoteAccumulated),
-						zap.Int("votesFailed", voteFailed),
-						zap.String("requestID", requestID))
 					return nil, errors.New("majority of nodes failed to respond")
 				} else {
 					continue
 				}
 			} else {
 				resp := res.Resp
-				c.logger.Debug("Received vote response",
-					zap.Int32("respTerm", resp.Term),
-					zap.Int32("reqTerm", request.Term),
-					zap.Bool("voteGranted", resp.VoteGranted),
-					zap.String("requestID", requestID))
-
 				// if someone responds with a term greater than the current term
 				if resp.Term > request.Term {
-					c.logger.Info("peer's term is greater than the node's current term",
-						zap.Int32("peerTerm", resp.Term),
-						zap.Int32("currentTerm", request.Term),
-						zap.String("requestID", requestID))
 					return &MajorityRequestVoteResp{
 						Term:        resp.Term,
 						VoteGranted: false,
@@ -162,18 +146,10 @@ func (c *ConsensusImpl) RequestVoteSendForConsensus(ctx context.Context, request
 					}
 				}
 				if resp.Term < request.Term {
-					c.logger.Error("invairant failed, smaller term is not overwritten by larger term",
-						zap.Int32("respTerm", resp.Term),
-						zap.Int32("reqTerm", request.Term),
-						zap.String("requestID", requestID))
 					panic("this should not happen, the consensus algorithm is not implmented correctly")
 				}
 			}
 		case <-ctx.Done():
-			c.logger.Info("context done",
-				zap.Int("votesAccumulated", peerVoteAccumulated),
-				zap.Int("votesFailed", voteFailed),
-				zap.String("requestID", requestID))
 			return nil, errors.New("context done")
 		}
 	}
