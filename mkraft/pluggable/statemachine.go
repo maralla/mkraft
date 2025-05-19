@@ -3,6 +3,9 @@ package pluggable
 var _ StateMachineIface = (*StateMachineNoOpImpl)(nil)
 
 type StateMachineIface interface {
+
+	// maki: this part is very important, need to discuss with professor and refer to other implementations
+	// shall be implemented asynchronosly so that one slow command will not block the whole cluster for client command processing
 	ApplyCommand(command []byte, index uint64) ([]byte, error)
 
 	// state machine should be able to ensure the commandList order is well maintained

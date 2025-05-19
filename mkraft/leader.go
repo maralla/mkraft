@@ -255,10 +255,11 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*Client
 	n.updateCommitIdx(newCommitID)
 
 	// (5) apply the command
-	// todo: shall has a unique ID for the command
 	for idx, clientCommand := range clientCommands {
 		count := idx + 1
 		internalReq := clientCommand
+		// todo: possibly, the statemachine shall has a unique ID for the command
+		// todo: the apply command shall be async with apply and get result
 		applyResp, err := n.statemachine.ApplyCommand(internalReq.Req.Command, newCommitID)
 		n.updateLastAppliedIdx(req.PrevLogIndex + uint64(count))
 		if err != nil {
@@ -277,13 +278,18 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*Client
 			}
 		}
 	}
+
 	// (5) if the follower run slowly or crash, the leader will retry to send the appendEntries indefinitely
 	// todo: how to do get the slower follower and resend the req?
 	// can start a goroutine to send the appendEntries to the slower follower
+
+	// todo: how to maintain the server index
 }
 
 // synchronous, should be called in a goroutine
-// todo: suppose we don't need response now
+// todo: (1) the leader shall send the appendEntries from the each peer's nextIndex, so the logs are not the same for each peer
+// todo: (2) on response, the leader shall update the nextIndex and matchIndex for the follower
+// todo: (3) the leader election and inconsistency logic is not implemented yet
 func (n *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) error {
 	ctx, requestID := common.GetOrGenerateRequestID(ctx)
 	errChan := make(chan error, 1)

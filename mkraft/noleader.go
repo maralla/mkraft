@@ -67,6 +67,7 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 					requestVoteInternal.RespChan <- &wrappedResp
 					electionTicker.Reset(n.cfg.GetElectionTimeout())
 				case req := <-n.appendEntryChan:
+					// todo: to maintain logs and index and state machine of the follower
 					electionTicker.Stop()
 					// for the follower, the node state has no reason to change because of the request
 					resp := n.receiveAppendEntires(req.Req)

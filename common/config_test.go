@@ -23,6 +23,7 @@ basic_config:
   leader_heartbeat_period_in_ms: 50
   min_remaining_time_for_rpc_in_ms: 20
   graceful_shutdown_timeout_in_sec: 10
+  raft_log_file_path: "/tmp/raft_log"
 membership:
   current_node_id: "node1"
   current_port: 8080
@@ -71,6 +72,8 @@ membership:
       node_uri: "127.0.0.1:8081"
     - node_id: "node3"
       node_uri: "127.0.0.1:8082"
+basic_config:
+  raft_log_file_path: "/tmp/raft_log"
 grpc:
   service: "test"
 `
