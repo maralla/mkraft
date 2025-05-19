@@ -14,6 +14,7 @@ var _ RaftLogsIface = (*SimpleRaftLogsImpl)(nil)
 
 type RaftLogsIface interface {
 	GetPrevLogIndexAndTerm() (uint64, uint32)
+	GetLogsFromIndex(index uint64) ([]RaftLogEntry, error)
 	AppendLog(ctx context.Context, commands []byte, term int) error
 	AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error
 }
@@ -59,6 +60,19 @@ type SimpleRaftLogsImpl struct {
 }
 
 const LogMarker byte = '#'
+
+// index is included
+func (rl *SimpleRaftLogsImpl) GetLogsFromIndex(index uint64) ([]RaftLogEntry, error) {
+	rl.mutex.Lock()
+	defer rl.mutex.Unlock()
+
+	if index == 0 || index > uint64(len(rl.logs)) {
+		return nil, fmt.Errorf("invalid index: %d", index)
+	}
+	logs := make([]RaftLogEntry, len(rl.logs)-int(index)+1)
+	copy(logs, rl.logs[index-1:])
+	return logs, nil
+}
 
 // index starts from 1
 func (rl *SimpleRaftLogsImpl) GetPrevLogIndexAndTerm() (uint64, uint32) {

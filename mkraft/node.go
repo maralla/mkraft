@@ -46,6 +46,7 @@ type NodeIface interface {
 	Stop(ctx context.Context)
 }
 
+// not only new a class but also catch up statemachine, so it may cost time
 func NewNode(
 	nodeId string,
 	cfg common.ConfigIface,
@@ -60,7 +61,7 @@ func NewNode(
 	lastAppliedIdx := statemachine.GetLatestAppliedIndex()
 	lastCommitIdx, _ := raftlog.GetPrevLogIndexAndTerm()
 
-	return &Node{
+	node := &Node{
 		lastApplied: lastAppliedIdx,
 		commitIndex: lastCommitIdx,
 
@@ -82,6 +83,11 @@ func NewNode(
 		LeaderId:          "",
 		mutexForIdx:       sync.Mutex{},
 	}
+	node.sem.Acquire(context.Background(), 1)
+	defer node.sem.Release(1)
+
+	node.catchupAppliedIdx()
+	return node
 }
 
 // the Raft Server Node
@@ -131,6 +137,22 @@ type Node struct {
 	nextIndex  map[string]uint64 // map[peerID]nextIndex, index of the next log entry to send to that server
 	matchIndex map[string]uint64 // map[peerID]matchIndex, index of highest log entry known to be replicated on that server
 
+}
+
+func (n *Node) catchupAppliedIdx() error {
+	if n.lastApplied < n.commitIndex {
+		logs, err := n.raftLog.GetLogsFromIndex(n.lastApplied + 1)
+		if err != nil {
+			n.logger.Error("failed to get logs from index", zap.Error(err))
+			return err
+		}
+		for idx, log := range logs {
+			n.statemachine.ApplyCommand(log.Commands, n.lastApplied+1+uint64(idx))
+			n.updateLastAppliedIdx(n.lastApplied + 1 + uint64(idx))
+		}
+		return nil
+	}
+	return nil
 }
 
 func (node *Node) updateCommitIdx(commitIdx uint64) {
