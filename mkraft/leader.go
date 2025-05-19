@@ -83,13 +83,15 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	// we need to clean the channel when the leader quits,
 	// and reset the channels when the leader comes back
 
+	ctxForWorker, cancelWorker := context.WithCancel(ctx)
+	defer cancelWorker()
+	go n.leaderCommonTaskWorker(ctxForWorker)
+
 	heartbeatDuration := n.cfg.GetLeaderHeartbeatPeriod()
 	tickerForHeartbeat := time.NewTicker(heartbeatDuration)
 	defer tickerForHeartbeat.Stop()
-
-	ctxForWorker, cancelWorker := context.WithCancel(ctx)
-	go n.leaderCommonTaskWorker(ctxForWorker)
-	defer cancelWorker()
+	go n.clientCommandsTaskWorker(ctxForWorker, tickerForHeartbeat)
+	go n.resendSlowerFollowerWorker(ctxForWorker)
 
 	for {
 		select {
@@ -114,17 +116,13 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 					LeaderId: n.NodeId,
 				}
 				go n.callAppendEntries(ctx, heartbeatReq)
-			case internalReq := <-n.clientCommandChan:
-				tickerForHeartbeat.Stop()
-				go n.handleClientCommand(ctx, internalReq)
-				tickerForHeartbeat.Reset(heartbeatDuration)
 			}
 		}
 	}
 }
 
 func (n *Node) resendSlowerFollowerWorker(ctx context.Context) {
-
+	n.logger.Warn("resendSlowerFollowerWorker has not been implemented yet")
 }
 
 func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
@@ -170,12 +168,37 @@ func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
 	}
 }
 
+func (n *Node) clientCommandsTaskWorker(ctx context.Context, heartbeatTicker *time.Ticker) {
+	for {
+		select {
+		case <-ctx.Done():
+			n.logger.Warn("leader's worker context done, exiting")
+			return
+		default:
+			select {
+			case <-ctx.Done():
+				n.logger.Warn("leader's worker context done, exiting")
+				return
+			case clientCmd := <-n.clientCommandChan:
+				heartbeatTicker.Reset(n.cfg.GetLeaderHeartbeatPeriod())
+				// one-goroutine handles this request in serialization,
+				// but we use batching to improve performance
+				// todo: batching is not implemented yet
+				batchingSize := n.cfg.GetRaftNodeRequestBufferSize() - 1
+				clientCommands := readMultipleFromChannel(n.clientCommandChan, batchingSize)
+				clientCommands = append(clientCommands, clientCmd)
+				n.handleClientCommand(ctx, clientCommands)
+			}
+		}
+	}
+}
+
 // todo: shall add batching
 // happy path: 1) the leader is alive and the followers are alive
 // problem-1: the leader is alive but minority followers are dead -> can be handled by the retry mechanism
 // problem-2: the leader is alive but majority followers are dead
 // problem-3: the leader is stale
-func (n *Node) handleClientCommand(ctx context.Context, internalReq *ClientCommandInternalReq) {
+func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*ClientCommandInternalReq) {
 
 	var subTasksToWait sync.WaitGroup
 	subTasksToWait.Add(2)
@@ -185,16 +208,21 @@ func (n *Node) handleClientCommand(ctx context.Context, internalReq *ClientComma
 	// todo: how to get the response
 	go func(ctx context.Context) {
 		defer subTasksToWait.Done()
-		errors <- n.raftLog.AppendLog(ctx, internalReq.Req.Command, int(n.CurrentTerm))
+		commands := make([][]byte, len(clientCommands))
+		for i, clientCommand := range clientCommands {
+			commands[i] = clientCommand.Req.Command
+		}
+		errors <- n.raftLog.AppendLogsInBatch(ctx, commands, int(n.CurrentTerm))
 	}(ctx)
 
 	// (2) sends the command of appendEntries to all the followers in parallel to replicate the entry
 	index, term := n.raftLog.GetPrevLogIndexAndTerm()
-	entries := make([]*rpc.LogEntry, 1)
-	entries[0] = &rpc.LogEntry{
-		Data: internalReq.Req.Command,
+	entries := make([]*rpc.LogEntry, len(clientCommands))
+	for i, clientCommand := range clientCommands {
+		entries[i] = &rpc.LogEntry{
+			Data: clientCommand.Req.Command,
+		}
 	}
-
 	req := &rpc.AppendEntriesRequest{
 		Term:         n.CurrentTerm,
 		LeaderId:     n.NodeId,
@@ -228,25 +256,27 @@ func (n *Node) handleClientCommand(ctx context.Context, internalReq *ClientComma
 
 	// (5) apply the command
 	// todo: shall has a unique ID for the command
-	applyResp, err := n.statemachine.ApplyCommand(internalReq.Req.Command, newCommitID)
-	n.updateLastAppliedIdx(newCommitID)
-
-	if err != nil {
-		n.logger.Error("error in applying command to state machine", zap.Error(err))
-		internalReq.RespChan <- &RPCRespWrapper[*rpc.ClientCommandResponse]{
-			Resp: nil,
-			Err:  err,
-		}
-	} else {
-		clientResp := &rpc.ClientCommandResponse{
-			Result: applyResp,
-		}
-		internalReq.RespChan <- &RPCRespWrapper[*rpc.ClientCommandResponse]{
-			Resp: clientResp,
-			Err:  nil,
+	for idx, clientCommand := range clientCommands {
+		count := idx + 1
+		internalReq := clientCommand
+		applyResp, err := n.statemachine.ApplyCommand(internalReq.Req.Command, newCommitID)
+		n.updateLastAppliedIdx(req.PrevLogIndex + uint64(count))
+		if err != nil {
+			n.logger.Error("error in applying command to state machine", zap.Error(err))
+			internalReq.RespChan <- &RPCRespWrapper[*rpc.ClientCommandResponse]{
+				Resp: nil,
+				Err:  err,
+			}
+		} else {
+			clientResp := &rpc.ClientCommandResponse{
+				Result: applyResp,
+			}
+			internalReq.RespChan <- &RPCRespWrapper[*rpc.ClientCommandResponse]{
+				Resp: clientResp,
+				Err:  nil,
+			}
 		}
 	}
-
 	// (5) if the follower run slowly or crash, the leader will retry to send the appendEntries indefinitely
 	// todo: how to do get the slower follower and resend the req?
 	// can start a goroutine to send the appendEntries to the slower follower

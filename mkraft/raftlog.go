@@ -14,8 +14,8 @@ var _ RaftLogsIface = (*SimpleRaftLogsImpl)(nil)
 
 type RaftLogsIface interface {
 	GetPrevLogIndexAndTerm() (uint64, uint32)
+	// index is included
 	GetLogsFromIndex(index uint64) ([]RaftLogEntry, error)
-	AppendLog(ctx context.Context, commands []byte, term int) error
 	AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error
 }
 
@@ -65,12 +65,12 @@ const LogMarker byte = '#'
 func (rl *SimpleRaftLogsImpl) GetLogsFromIndex(index uint64) ([]RaftLogEntry, error) {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
-
-	if index == 0 || index > uint64(len(rl.logs)) {
+	sliceIndex := int(index) - 1
+	if sliceIndex < 0 || sliceIndex >= len(rl.logs) {
 		return nil, fmt.Errorf("invalid index: %d", index)
 	}
-	logs := make([]RaftLogEntry, len(rl.logs)-int(index)+1)
-	copy(logs, rl.logs[index-1:])
+	logs := make([]RaftLogEntry, len(rl.logs)-sliceIndex)
+	copy(logs, rl.logs[sliceIndex:len(rl.logs)])
 	return logs, nil
 }
 
@@ -87,28 +87,6 @@ func (rl *SimpleRaftLogsImpl) GetPrevLogIndexAndTerm() (uint64, uint32) {
 	return uint64(index), lastLog.Term
 }
 
-// write one command to log
-func (rl *SimpleRaftLogsImpl) AppendLog(ctx context.Context, commands []byte, term int) error {
-	rl.mutex.Lock()
-	defer rl.mutex.Unlock()
-
-	// add in cache
-	entry := RaftLogEntry{
-		Index:    uint64(len(rl.logs) + 1),
-		Term:     uint32(term),
-		Commands: commands,
-	}
-	// serialize: len#term, index, commands#
-	buf := rl.serialize(entry)
-	_, err := rl.file.Write(buf.Bytes())
-	if err != nil {
-		return err
-	}
-	rl.file.Sync() // forced to sync the file to disk
-	rl.logs = append(rl.logs, entry)
-	return nil
-}
-
 func (rl *SimpleRaftLogsImpl) AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
@@ -118,7 +96,7 @@ func (rl *SimpleRaftLogsImpl) AppendLogsInBatch(ctx context.Context, commandList
 
 	for idx, command := range commandList {
 		entry := RaftLogEntry{
-			Index:    uint64(len(rl.logs) + 1),
+			Index:    uint64(len(rl.logs) + idx + 1),
 			Term:     uint32(term),
 			Commands: command,
 		}
@@ -128,6 +106,9 @@ func (rl *SimpleRaftLogsImpl) AppendLogsInBatch(ctx context.Context, commandList
 		buffers.Write(buf.Bytes())
 	}
 
+	if _, err := rl.file.Write(buffers.Bytes()); err != nil {
+		return fmt.Errorf("failed to write to file: %w", err)
+	}
 	rl.file.Sync() // forced to sync the file to disk
 	rl.logs = append(rl.logs, entries...)
 	return nil
@@ -144,29 +125,37 @@ func (rl *SimpleRaftLogsImpl) load() error {
 
 	fileSize := fileInfo.Size()
 	if fileSize == 0 {
+		fmt.Println("file size is 0")
 		return nil
 	}
 
+	_, err = rl.file.Seek(0, io.SeekStart)
+	if err != nil {
+		return err
+	}
 	buf := make([]byte, fileSize)
-	_, err = rl.file.Read(buf)
+	_, err = io.ReadFull(rl.file, buf)
 	if err != nil {
 		return err
 	}
 
 	reader := bytes.NewReader(buf)
+	fmt.Println("file size", fileSize)
 	for reader.Len() > 0 {
-		entryBuf := make([]byte, 4)
-		if _, err := io.ReadFull(reader, entryBuf); err != nil {
+		lengthBuf := make([]byte, 4)
+		if err := binary.Read(reader, binary.BigEndian, &lengthBuf); err != nil {
 			return fmt.Errorf("failed to read entry length: %w", err)
 		}
-		length := binary.BigEndian.Uint32(entryBuf)
 
-		entryBuf = make([]byte, length)
-		if _, err := io.ReadFull(reader, entryBuf); err != nil {
+		length := binary.BigEndian.Uint32(lengthBuf)
+		fmt.Println("length", length)
+
+		dataBuf := make([]byte, length)
+		if _, err := io.ReadFull(reader, dataBuf); err != nil {
 			return fmt.Errorf("failed to read entry: %w", err)
 		}
 
-		entry, err := rl.deserialize(entryBuf)
+		entry, err := rl.deserialize(dataBuf)
 		if err != nil {
 			return fmt.Errorf("failed to deserialize entry: %w", err)
 		}
