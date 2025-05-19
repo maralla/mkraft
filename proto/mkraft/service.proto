@@ -39,7 +39,7 @@ message AppendEntriesRequest {
   uint64 prev_log_index = 3;
   uint32 prev_log_term = 4;
   repeated LogEntry entries = 5;
-  uint32 leader_commit = 6;
+  uint64 leader_commit = 6;
 }
 
 message AppendEntriesResponse {
@@ -54,6 +54,7 @@ message LogEntry {
 message ClientCommandRequest {
   bytes metadata = 1;
   bytes command = 2;
+  string client_id = 3;
 }
 
 message ClientCommandResponse {

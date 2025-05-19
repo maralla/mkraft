@@ -123,6 +123,10 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	}
 }
 
+func (n *Node) resendSlowerFollowerWorker(ctx context.Context) {
+
+}
+
 func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
 	for {
 		select {
@@ -167,16 +171,21 @@ func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
 }
 
 // todo: shall add batching
+// happy path: 1) the leader is alive and the followers are alive
+// problem-1: the leader is alive but minority followers are dead -> can be handled by the retry mechanism
+// problem-2: the leader is alive but majority followers are dead
+// problem-3: the leader is stale
 func (n *Node) handleClientCommand(ctx context.Context, internalReq *ClientCommandInternalReq) {
 
 	var subTasksToWait sync.WaitGroup
 	subTasksToWait.Add(2)
+	errors := make(chan error, 2)
 
 	// (1) appends the command to the local as a new entry
 	// todo: how to get the response
 	go func(ctx context.Context) {
 		defer subTasksToWait.Done()
-		n.raftLog.AppendLog(ctx, internalReq.Req.Command, int(n.CurrentTerm))
+		errors <- n.raftLog.AppendLog(ctx, internalReq.Req.Command, int(n.CurrentTerm))
 	}(ctx)
 
 	// (2) sends the command of appendEntries to all the followers in parallel to replicate the entry
@@ -198,14 +207,30 @@ func (n *Node) handleClientCommand(ctx context.Context, internalReq *ClientComma
 	// todo: how to maintain the node state?
 	go func(ctx context.Context) {
 		defer subTasksToWait.Done()
-		n.callAppendEntries(ctx, req)
+		err := n.callAppendEntries(ctx, req)
+		errors <- err
 	}(ctx)
 
 	// (3) when the entry has been safely replicated, the leader applies the entry to the state machine
-	applyResp, err := n.statemachine.ApplyCommand(internalReq.Req.Command)
-	// todo: how to get the response
+	subTasksToWait.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			n.logger.Error("error in appending log to raft log", zap.Error(err))
+			// todo: maki, the paper doesn't mention how to handle this error, so we handle happy path only
+			panic("I don't know how to handle this error")
+		}
+	}
 
-	// (4) the leader responds to the client
+	// (4) the leader applies the command, and responds to the client
+	newCommitID := req.PrevLogIndex + uint64(len(req.Entries))
+	n.updateCommitIdx(newCommitID)
+
+	// (5) apply the command
+	// todo: shall has a unique ID for the command
+	applyResp, err := n.statemachine.ApplyCommand(internalReq.Req.Command, newCommitID)
+	n.updateLastAppliedIdx(newCommitID)
+
 	if err != nil {
 		n.logger.Error("error in applying command to state machine", zap.Error(err))
 		internalReq.RespChan <- &RPCRespWrapper[*rpc.ClientCommandResponse]{
@@ -224,12 +249,12 @@ func (n *Node) handleClientCommand(ctx context.Context, internalReq *ClientComma
 
 	// (5) if the follower run slowly or crash, the leader will retry to send the appendEntries indefinitely
 	// todo: how to do get the slower follower and resend the req?
-
+	// can start a goroutine to send the appendEntries to the slower follower
 }
 
 // synchronous, should be called in a goroutine
 // todo: suppose we don't need response now
-func (n *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) {
+func (n *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) error {
 	ctx, requestID := common.GetOrGenerateRequestID(ctx)
 	errChan := make(chan error, 1)
 	respChan := make(chan *AppendEntriesConsensusResp, 1)
@@ -248,17 +273,24 @@ func (n *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequ
 	select {
 	case <-ctx.Done():
 		n.logger.Warn("raft node main context done, exiting", zap.String("requestID", requestID))
+		return common.ContextDoneErr()
 	case err := <-errChan:
 		n.logger.Error(
 			"error in sending append entries to one node", zap.Error(err), zap.String("requestID", requestID))
+		return err
 	case resp := <-respChan:
 		if resp.Success {
+			// maintain the index
+			if len(req.Entries) != 0 {
+
+			}
 			n.logger.Info("append entries success", zap.String("requestID", requestID))
 			// todo: shall deliver the result
 		} else {
 			n.leaderDegradationChan <- TermRank(resp.Term)
 			n.logger.Warn("append entries failed", zap.String("requestID", requestID))
 		}
+		return nil
 	}
 }
 

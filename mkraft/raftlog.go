@@ -10,14 +10,15 @@ import (
 	"sync"
 )
 
+var _ RaftLogsIface = (*SimpleRaftLogsImpl)(nil)
+
 type RaftLogsIface interface {
 	GetPrevLogIndexAndTerm() (uint64, uint32)
-
 	AppendLog(ctx context.Context, commands []byte, term int) error
 	AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error
 }
 
-func NewRaftLogsImpl(filePath string) RaftLogsIface {
+func NewRaftLogsImplAndLoad(filePath string) RaftLogsIface {
 	initLogsLength := 5000
 	var file *os.File
 	var err error

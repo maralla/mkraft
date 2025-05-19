@@ -2,6 +2,7 @@ package mkraft
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/maki3cat/mkraft/common"
@@ -55,7 +56,14 @@ func NewNode(
 ) NodeIface {
 	bufferSize := cfg.GetRaftNodeRequestBufferSize()
 	consensus := NewConsensus(logger, membership, cfg)
+
+	lastAppliedIdx := statemachine.GetLatestAppliedIndex()
+	lastCommitIdx, _ := raftlog.GetPrevLogIndexAndTerm()
+
 	return &Node{
+		lastApplied: lastAppliedIdx,
+		commitIndex: lastCommitIdx,
+
 		statemachine: statemachine,
 		raftLog:      raftlog,
 		cfg:          cfg,
@@ -72,6 +80,7 @@ func NewNode(
 		requestVoteChan:   make(chan *RequestVoteInternalReq, bufferSize),
 		appendEntryChan:   make(chan *AppendEntriesInternalReq, bufferSize),
 		LeaderId:          "",
+		mutexForIdx:       sync.Mutex{},
 	}
 }
 
@@ -110,16 +119,30 @@ type Node struct {
 	// LogEntries
 
 	// Paper page 4:
+	// todo should be protected by mutex state
 	//	Volatile state on all servers (both initialized to 0, increase monotonically)
 	//  index of the highest log entry known to be committed
-	commitIndex uint32
+	mutexForIdx sync.Mutex
+	commitIndex uint64
 	// index of the highest log entry applied to state machine
-	lastApplied uint32
+	lastApplied uint64
 
 	// Volatile state on leaders only, reinitialized after election, initialized to leader last log index+1
-	nextIndex  map[string]uint32 // map[peerID]nextIndex, index of the next log entry to send to that server
-	matchIndex map[string]uint32 // map[peerID]matchIndex, index of highest log entry known to be replicated on that server
+	nextIndex  map[string]uint64 // map[peerID]nextIndex, index of the next log entry to send to that server
+	matchIndex map[string]uint64 // map[peerID]matchIndex, index of highest log entry known to be replicated on that server
 
+}
+
+func (node *Node) updateCommitIdx(commitIdx uint64) {
+	node.mutexForIdx.Lock()
+	defer node.mutexForIdx.Unlock()
+	node.commitIndex = commitIdx
+}
+
+func (node *Node) updateLastAppliedIdx(lastAppliedIdx uint64) {
+	node.mutexForIdx.Lock()
+	defer node.mutexForIdx.Unlock()
+	node.lastApplied = lastAppliedIdx
 }
 
 // maki: go gymnastics for sync values

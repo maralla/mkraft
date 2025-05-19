@@ -10,6 +10,7 @@
 package mkraft
 
 import (
+	context "context"
 	reflect "reflect"
 
 	gomock "go.uber.org/mock/gomock"
@@ -40,31 +41,31 @@ func (m *MockRaftLogsIface) EXPECT() *MockRaftLogsIfaceMockRecorder {
 }
 
 // AppendLog mocks base method.
-func (m *MockRaftLogsIface) AppendLog(commands []byte, term int) error {
+func (m *MockRaftLogsIface) AppendLog(ctx context.Context, commands []byte, term int) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AppendLog", commands, term)
+	ret := m.ctrl.Call(m, "AppendLog", ctx, commands, term)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // AppendLog indicates an expected call of AppendLog.
-func (mr *MockRaftLogsIfaceMockRecorder) AppendLog(commands, term any) *gomock.Call {
+func (mr *MockRaftLogsIfaceMockRecorder) AppendLog(ctx, commands, term any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendLog", reflect.TypeOf((*MockRaftLogsIface)(nil).AppendLog), commands, term)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendLog", reflect.TypeOf((*MockRaftLogsIface)(nil).AppendLog), ctx, commands, term)
 }
 
 // AppendLogsInBatch mocks base method.
-func (m *MockRaftLogsIface) AppendLogsInBatch(commandList [][]byte, term int) error {
+func (m *MockRaftLogsIface) AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AppendLogsInBatch", commandList, term)
+	ret := m.ctrl.Call(m, "AppendLogsInBatch", ctx, commandList, term)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // AppendLogsInBatch indicates an expected call of AppendLogsInBatch.
-func (mr *MockRaftLogsIfaceMockRecorder) AppendLogsInBatch(commandList, term any) *gomock.Call {
+func (mr *MockRaftLogsIfaceMockRecorder) AppendLogsInBatch(ctx, commandList, term any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendLogsInBatch", reflect.TypeOf((*MockRaftLogsIface)(nil).AppendLogsInBatch), commandList, term)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendLogsInBatch", reflect.TypeOf((*MockRaftLogsIface)(nil).AppendLogsInBatch), ctx, commandList, term)
 }
 
 // GetPrevLogIndexAndTerm mocks base method.
