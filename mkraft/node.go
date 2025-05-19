@@ -1,11 +1,12 @@
-package raft
+package mkraft
 
 import (
 	"context"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/maki3cat/mkraft/common"
+	"github.com/maki3cat/mkraft/mkraft/pluggable"
 	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
 	"golang.org/x/sync/semaphore"
@@ -32,63 +33,73 @@ func (state NodeState) String() string {
 	return "Unknown State"
 }
 
-type RequestVoteInternal struct {
-	Request    *rpc.RequestVoteRequest
-	RespWraper chan *rpc.RPCRespWrapper[*rpc.RequestVoteResponse]
-	IsTimeout  atomic.Bool
-}
-
-type AppendEntriesInternal struct {
-	Request    *rpc.AppendEntriesRequest
-	RespWraper chan *rpc.RPCRespWrapper[*rpc.AppendEntriesResponse]
-	IsTimeout  atomic.Bool
-}
-
-type ClientCommandInternal struct {
-	request []byte
-	errChan chan error
-}
-
 type TermRank int
 
 var _ NodeIface = (*Node)(nil)
 
 type NodeIface interface {
-	VoteRequest(req *RequestVoteInternal)
-	AppendEntryRequest(req *AppendEntriesInternal)
+	VoteRequest(req *RequestVoteInternalReq)
+	AppendEntryRequest(req *AppendEntriesInternalReq)
+	ClientCommand(req *ClientCommandInternalReq)
+
 	Start(ctx context.Context)
 	Stop(ctx context.Context)
 }
 
-func NewNode(nodeId string, cfg common.ConfigIface, logger *zap.Logger, membership MembershipMgrIface) NodeIface {
+// not only new a class but also catch up statemachine, so it may cost time
+func NewNode(
+	nodeId string,
+	cfg common.ConfigIface,
+	logger *zap.Logger,
+	membership MembershipMgrIface,
+	raftlog RaftLogsIface,
+	statemachine pluggable.StateMachineIface,
+) NodeIface {
 	bufferSize := cfg.GetRaftNodeRequestBufferSize()
 	consensus := NewConsensus(logger, membership, cfg)
-	return &Node{
-		cfg:        cfg,
-		membership: membership,
-		consensus:  consensus,
-		logger:     logger,
+
+	lastAppliedIdx := statemachine.GetLatestAppliedIndex()
+	lastCommitIdx, _ := raftlog.GetPrevLogIndexAndTerm()
+
+	node := &Node{
+		lastApplied: lastAppliedIdx,
+		commitIndex: lastCommitIdx,
+
+		statemachine: statemachine,
+		raftLog:      raftlog,
+		cfg:          cfg,
+		membership:   membership,
+		consensus:    consensus,
+		logger:       logger,
 
 		State:             StateFollower, // servers start up as followers
 		NodeId:            nodeId,
 		sem:               semaphore.NewWeighted(1),
 		CurrentTerm:       0,
 		VotedFor:          "",
-		clientCommandChan: make(chan *ClientCommandInternal, bufferSize),
-		requestVoteChan:   make(chan *RequestVoteInternal, bufferSize),
-		appendEntryChan:   make(chan *AppendEntriesInternal, bufferSize),
+		clientCommandChan: make(chan *ClientCommandInternalReq, bufferSize),
+		requestVoteChan:   make(chan *RequestVoteInternalReq, bufferSize),
+		appendEntryChan:   make(chan *AppendEntriesInternalReq, bufferSize),
 		LeaderId:          "",
+		mutexForIdx:       sync.Mutex{},
 	}
+	node.sem.Acquire(context.Background(), 1)
+	defer node.sem.Release(1)
+
+	node.catchupAppliedIdx()
+	return node
 }
 
 // the Raft Server Node
 // maki: go gymnastics for sync values
 // todo: add sync for these values?
 type Node struct {
-	consensus  ConsensusIface
-	membership MembershipMgrIface
-	cfg        common.ConfigIface
-	logger     *zap.Logger
+	raftLog      RaftLogsIface
+	consensus    ConsensusIface
+	membership   MembershipMgrIface
+	cfg          common.ConfigIface
+	logger       *zap.Logger
+	statemachine pluggable.StateMachineIface
 
 	sem *semaphore.Weighted
 
@@ -99,34 +110,66 @@ type Node struct {
 	// leader only channels
 	// gracefully clean every time a leader degrades to a follower
 	// reset these 2 data structures everytime a new leader is elected
-	clientCommandChan     chan *ClientCommandInternal
+	clientCommandChan     chan *ClientCommandInternalReq
 	leaderDegradationChan chan TermRank
 
 	// shared by all states
-	requestVoteChan chan *RequestVoteInternal
-	appendEntryChan chan *AppendEntriesInternal
+	requestVoteChan chan *RequestVoteInternalReq
+	appendEntryChan chan *AppendEntriesInternalReq
 
 	// Persistent state on all servers
 	// todo: how/why to make it persistent? (embedded db?)
 	// todo: change to concurrency safe
-	CurrentTerm int32
+	CurrentTerm uint32
 	VotedFor    string // candidateID
 	// LogEntries
 
-	// Volatile state on all servers
-	// todo: in the logging part
-	// commitIndex int
-	// lastApplied int
+	// Paper page 4:
+	// todo should be protected by mutex state
+	//	Volatile state on all servers (both initialized to 0, increase monotonically)
+	//  index of the highest log entry known to be committed
+	mutexForIdx sync.Mutex
+	commitIndex uint64
+	// index of the highest log entry applied to state machine
+	lastApplied uint64
 
-	// Volatile state on leaders only
-	// todo: in the logging part
-	// nextIndex  []int
-	// matchIndex []int
+	// Volatile state on leaders only, reinitialized after election, initialized to leader last log index+1
+	nextIndex  map[string]uint64 // map[peerID]nextIndex, index of the next log entry to send to that server
+	matchIndex map[string]uint64 // map[peerID]matchIndex, index of highest log entry known to be replicated on that server
+
+}
+
+func (n *Node) catchupAppliedIdx() error {
+	if n.lastApplied < n.commitIndex {
+		logs, err := n.raftLog.GetLogsFromIndex(n.lastApplied + 1)
+		if err != nil {
+			n.logger.Error("failed to get logs from index", zap.Error(err))
+			return err
+		}
+		for idx, log := range logs {
+			n.statemachine.ApplyCommand(log.Commands, n.lastApplied+1+uint64(idx))
+			n.updateLastAppliedIdx(n.lastApplied + 1 + uint64(idx))
+		}
+		return nil
+	}
+	return nil
+}
+
+func (node *Node) updateCommitIdx(commitIdx uint64) {
+	node.mutexForIdx.Lock()
+	defer node.mutexForIdx.Unlock()
+	node.commitIndex = commitIdx
+}
+
+func (node *Node) updateLastAppliedIdx(lastAppliedIdx uint64) {
+	node.mutexForIdx.Lock()
+	defer node.mutexForIdx.Unlock()
+	node.lastApplied = lastAppliedIdx
 }
 
 // maki: go gymnastics for sync values
 // todo: add sync for these values?
-func (node *Node) SetVoteForAndTerm(voteFor string, term int32) {
+func (node *Node) SetVoteForAndTerm(voteFor string, term uint32) {
 	node.VotedFor = voteFor
 	node.CurrentTerm = term
 }
@@ -135,16 +178,12 @@ func (node *Node) ResetVoteFor() {
 	node.VotedFor = ""
 }
 
-func (node *Node) VoteRequest(req *RequestVoteInternal) {
+func (node *Node) VoteRequest(req *RequestVoteInternalReq) {
 	node.requestVoteChan <- req
 }
 
-func (node *Node) AppendEntryRequest(req *AppendEntriesInternal) {
+func (node *Node) AppendEntryRequest(req *AppendEntriesInternalReq) {
 	node.appendEntryChan <- req
-}
-
-func (node *Node) ClientCommandRequest(request []byte) {
-
 }
 
 // servers start up as followers
@@ -160,7 +199,6 @@ func (node *Node) Stop(ctx context.Context) {
 
 func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteResp {
 	ctx, requestID := common.GetOrGenerateRequestID(ctx)
-
 	consensusChan := make(chan *MajorityRequestVoteResp, 1)
 	node.CurrentTerm++
 	node.VotedFor = node.NodeId
@@ -227,7 +265,7 @@ func (node *Node) receiveVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVo
 // todo: not sure what state shall be changed inside or outside in the caller
 func (node *Node) receiveAppendEntires(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
 	var response rpc.AppendEntriesResponse
-	reqTerm := int32(req.Term)
+	reqTerm := uint32(req.Term)
 	if reqTerm > node.CurrentTerm {
 		// todo: tell the leader/candidate to change the state to follower
 		response = rpc.AppendEntriesResponse{
