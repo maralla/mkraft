@@ -23,30 +23,41 @@ func (n *Node) updatePeerIndexAfterAppendEntries(nodeID string, req *rpc.AppendE
 // 	n.nextIndex[nodeID] = nextIndex
 // }
 
-func (n *Node) getPeersMatchIndex(nodeID string) uint64 {
-	if index, ok := n.matchIndex[nodeID]; ok {
-		return index
-	}
-	return 0
-}
+// func (n *Node) getPeersMatchIndex(nodeID string) uint64 {
+// 	if index, ok := n.matchIndex[nodeID]; ok {
+// 		return index
+// 	}
+// 	return 0
+// }
 
 func (n *Node) getPeersNextIndex(nodeID string) uint64 {
+	n.stateRWLock.RLock()
+	defer n.stateRWLock.RUnlock()
 	if index, ok := n.nextIndex[nodeID]; ok {
 		return index
 	}
+	// default value
 	return n.raftLog.GetLastLogIdx() + 1
 }
 
-func (node *Node) updateCommitIdx(commitIdx uint64) {
-	node.commitIndex = commitIdx
+func (n *Node) updateCommitIdx(commitIdx uint64) {
+	n.stateRWLock.Lock()
+	defer n.stateRWLock.Unlock()
+	n.commitIndex = commitIdx
 }
 
-func (node *Node) addLastAppliedIdx(numberOfCommand uint64) {
-	node.lastApplied = node.lastApplied + numberOfCommand
+func (n *Node) addLastAppliedIdx(numberOfCommand uint64) {
+	n.stateRWLock.Lock()
+	defer n.stateRWLock.Unlock()
+	n.lastApplied = n.lastApplied + numberOfCommand
 }
 
-// todo: this method can be very problematic
+// todo: this method can be very problematic, need to double check
 func (n *Node) catchupAppliedIdx() error {
+
+	n.stateRWLock.Lock()
+	defer n.stateRWLock.Unlock()
+
 	if n.lastApplied < n.commitIndex {
 		logs, err := n.raftLog.GetLogsFromIdxIncluded(n.lastApplied + 1)
 		if err != nil {
@@ -54,8 +65,12 @@ func (n *Node) catchupAppliedIdx() error {
 			return err
 		}
 		for idx, log := range logs {
-			n.statemachine.ApplyCommand(log.Commands, n.lastApplied+1+uint64(idx))
-			n.addLastAppliedIdx(1)
+			_, err := n.statemachine.ApplyCommand(log.Commands, n.lastApplied+1+uint64(idx))
+			if err != nil {
+				n.logger.Error("failed to apply command", zap.Error(err))
+				return err
+			}
+			n.lastApplied = n.lastApplied + 1
 		}
 		return nil
 	}
