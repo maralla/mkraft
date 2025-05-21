@@ -162,16 +162,11 @@ func (n *Node) ConsensusAppendEntries(
 		go func(nodeID string, client InternalClientIface) {
 			ctxWithTimeout, cancel := context.WithTimeout(ctx, n.cfg.GetElectionTimeout())
 			defer cancel()
-			request := peerReq[nodeID]
+			req := peerReq[nodeID]
 			// FAN-IN
-			resp := client.SendAppendEntries(ctxWithTimeout, request)
-			// todo: important, the consensus algorithm shall be a part of the node or it cannot update the index
+			resp := client.SendAppendEntries(ctxWithTimeout, req)
 			if resp.Err == nil && resp.Resp.Success {
-				// update the peer's index
-				// todo: to check if the index is updated corrected
-				// todo: put these into utils
-				newIdx := request.PrevLogIndex + uint64(len(request.Entries))
-				n.updatePeersIndex(nodeID, newIdx, newIdx)
+				n.updatePeerIndexAfterAppendEntries(nodeID, req)
 			}
 			// update the peers' index
 			allRespChan <- resp
