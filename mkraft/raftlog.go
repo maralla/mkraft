@@ -20,6 +20,11 @@ type RaftLogsIface interface {
 	GetLogsFromIdx(index uint64) ([]*RaftLogEntry, error)
 	AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error
 }
+type CatchupLogs struct {
+	lastLogIndex uint64
+	lastLogTerm  uint32
+	entries      []*RaftLogEntry
+}
 
 func NewRaftLogsImplAndLoad(filePath string) RaftLogsIface {
 	initLogsLength := 5000

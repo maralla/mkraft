@@ -56,7 +56,6 @@ func NewNode(
 	statemachine pluggable.StateMachineIface,
 ) NodeIface {
 	bufferSize := cfg.GetRaftNodeRequestBufferSize()
-	consensus := NewConsensus(logger, membership, cfg)
 
 	lastAppliedIdx := statemachine.GetLatestAppliedIndex()
 	lastCommitIdx, _ := raftlog.GetLastLogIdxAndTerm()
@@ -69,7 +68,6 @@ func NewNode(
 		raftLog:      raftlog,
 		cfg:          cfg,
 		membership:   membership,
-		consensus:    consensus,
 		logger:       logger,
 
 		State:             StateFollower, // servers start up as followers
@@ -95,7 +93,6 @@ func NewNode(
 // todo: add sync for these values?
 type Node struct {
 	raftLog      RaftLogsIface
-	consensus    ConsensusIface
 	membership   MembershipMgrIface
 	cfg          common.ConfigIface
 	logger       *zap.Logger
@@ -138,6 +135,13 @@ type Node struct {
 
 	// a RW mutex for all thestates in this node
 	stateRWLock *sync.RWMutex
+}
+
+func (n *Node) updatePeersIndex(nodeID string, nextIndex, matchIndex uint64) {
+	n.stateRWLock.Lock()
+	defer n.stateRWLock.Unlock()
+	n.matchIndex[nodeID] = matchIndex
+	n.nextIndex[nodeID] = nextIndex
 }
 
 func (n *Node) getCurrentTerm() uint32 {
@@ -227,7 +231,7 @@ func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteR
 	ctxTimeout, _ := context.WithTimeout(
 		ctx, time.Duration(node.cfg.GetElectionTimeout()))
 	go func() {
-		resp, err := node.consensus.RequestVoteSendForConsensus(ctxTimeout, req)
+		resp, err := node.ConsensusRequestVote(ctxTimeout, req)
 		if err != nil {
 			node.logger.Error(
 				"error in RequestVoteSendForConsensus", zap.String("requestID", requestID), zap.Error(err))

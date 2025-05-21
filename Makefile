@@ -21,7 +21,7 @@ mockgen: clean-mocks
 	mockgen -source=common/config.go -destination=./common/config_mock.go -package common
 	mockgen -source=mkraft/client.go -destination=./mkraft/client_mock.go -package mkraft
 	mockgen -source=mkraft/membership.go -destination=./mkraft/membership_mock.go -package mkraft
-	mockgen -source=mkraft/consensus.go -destination=./mkraft/consensus_mock.go -package mkraft
+	# mockgen -source=mkraft/consensus.go -destination=./mkraft/consensus_mock.go -package mkraft
 	mockgen -source=mkraft/node.go -destination=./mkraft/node_mock.go -package mkraft
 	mockgen -source=mkraft/raftlog.go -destination=./mkraft/raftlog_mock.go -package mkraft
 clean-mocks:

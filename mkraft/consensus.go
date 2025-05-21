@@ -9,16 +9,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var _ ConsensusIface = (*ConsensusImpl)(nil)
-
-func NewConsensus(logger *zap.Logger, membershipMgr MembershipMgrIface, cfg common.ConfigIface) ConsensusIface {
-	return &ConsensusImpl{
-		logger:        logger,
-		membershipMgr: membershipMgr,
-		cfg:           cfg,
-	}
-}
-
 type AppendEntriesConsensusResp struct {
 	Term    uint32
 	Success bool
@@ -29,19 +19,7 @@ type MajorityRequestVoteResp struct {
 	VoteGranted bool
 }
 
-type ConsensusIface interface {
-	RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest) (*MajorityRequestVoteResp, error)
-	AppendEntriesSendForConsensus(
-		ctx context.Context, peerReq map[string]*rpc.AppendEntriesRequest, currentTerm uint32) (*AppendEntriesConsensusResp, error)
-}
-
-type ConsensusImpl struct {
-	logger        *zap.Logger
-	membershipMgr MembershipMgrIface
-	cfg           common.ConfigIface
-}
-
-func (c *ConsensusImpl) RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest) (*MajorityRequestVoteResp, error) {
+func (c *Node) ConsensusRequestVote(ctx context.Context, request *rpc.RequestVoteRequest) (*MajorityRequestVoteResp, error) {
 
 	requestID := common.GetRequestID(ctx)
 	c.logger.Debug("Starting RequestVoteSendForConsensus",
@@ -49,12 +27,12 @@ func (c *ConsensusImpl) RequestVoteSendForConsensus(ctx context.Context, request
 		zap.String("candidateId", request.CandidateId),
 		zap.String("requestID", requestID))
 
-	total := c.membershipMgr.GetMemberCount()
+	total := c.membership.GetMemberCount()
 	c.logger.Debug("Got member count",
 		zap.Int("total", total),
 		zap.String("requestID", requestID))
 
-	peerClients, err := c.membershipMgr.GetAllPeerClients()
+	peerClients, err := c.membership.GetAllPeerClients()
 	if err != nil {
 		c.logger.Error("error in getting all peer clients",
 			zap.Error(err),
@@ -161,19 +139,19 @@ func (c *ConsensusImpl) RequestVoteSendForConsensus(ctx context.Context, request
 	return nil, errors.New("this should not happen, the consensus algorithm is not implmented correctly")
 }
 
-func (c *ConsensusImpl) AppendEntriesSendForConsensus(
+func (n *Node) ConsensusAppendEntries(
 	ctx context.Context, peerReq map[string]*rpc.AppendEntriesRequest, currentTerm uint32) (*AppendEntriesConsensusResp, error) {
 	requestID := common.GetRequestID(ctx)
-	total := c.membershipMgr.GetMemberCount()
-	peerClients, err := c.membershipMgr.GetAllPeerClientsV2()
+	total := n.membership.GetMemberCount()
+	peerClients, err := n.membership.GetAllPeerClientsV2()
 	if err != nil {
-		c.logger.Error("error in getting all peer clients",
+		n.logger.Error("error in getting all peer clients",
 			zap.Error(err),
 			zap.String("requestID", requestID))
 		return nil, err
 	}
 	if !calculateIfMajorityMet(total, len(peerClients)) {
-		c.logger.Error("not enough peer clients found",
+		n.logger.Error("not enough peer clients found",
 			zap.String("requestID", requestID))
 		return nil, errors.New("not enough peer clients found")
 	}
@@ -182,12 +160,19 @@ func (c *ConsensusImpl) AppendEntriesSendForConsensus(
 	for nodeID, member := range peerClients {
 		// FAN-OUT
 		go func(nodeID string, client InternalClientIface) {
-			ctxWithTimeout, cancel := context.WithTimeout(ctx, c.cfg.GetElectionTimeout())
+			ctxWithTimeout, cancel := context.WithTimeout(ctx, n.cfg.GetElectionTimeout())
 			defer cancel()
 			request := peerReq[nodeID]
 			// FAN-IN
 			resp := client.SendAppendEntries(ctxWithTimeout, request)
 			// todo: important, the consensus algorithm shall be a part of the node or it cannot update the index
+			if resp.Err == nil && resp.Resp.Success {
+				// update the peer's index
+				// todo: to check if the index is updated corrected
+				// todo: put these into utils
+				newIdx := request.PrevLogIndex + uint64(len(request.Entries))
+				n.updatePeersIndex(nodeID, newIdx, newIdx)
+			}
 			// update the peers' index
 			allRespChan <- resp
 		}(nodeID, member)
@@ -202,7 +187,7 @@ func (c *ConsensusImpl) AppendEntriesSendForConsensus(
 		select {
 		case res := <-allRespChan:
 			if err := res.Err; err != nil {
-				c.logger.Warn("error returned from appendEntries",
+				n.logger.Warn("error returned from appendEntries",
 					zap.Error(err),
 					zap.String("requestID", requestID))
 				failAccumulated++
@@ -210,7 +195,7 @@ func (c *ConsensusImpl) AppendEntriesSendForConsensus(
 			} else {
 				resp := res.Resp
 				if resp.Term > currentTerm {
-					c.logger.Info("peer's term is greater than current term",
+					n.logger.Info("peer's term is greater than current term",
 						zap.String("requestID", requestID))
 					return &AppendEntriesConsensusResp{
 						Term:    resp.Term,
@@ -229,7 +214,7 @@ func (c *ConsensusImpl) AppendEntriesSendForConsensus(
 					} else {
 						failAccumulated++
 						if calculateIfAlreadyFail(total, peersCount, peerVoteAccumulated, failAccumulated) {
-							c.logger.Warn("another node with same term becomes the leader",
+							n.logger.Warn("another node with same term becomes the leader",
 								zap.String("requestID", requestID))
 							return &AppendEntriesConsensusResp{
 								Term:    resp.Term,
@@ -239,7 +224,7 @@ func (c *ConsensusImpl) AppendEntriesSendForConsensus(
 					}
 				}
 				if resp.Term < currentTerm {
-					c.logger.Error(
+					n.logger.Error(
 						"invairant failed, smaller term is not overwritten by larger term",
 						zap.String("response", resp.String()),
 						zap.String("requestID", requestID))
@@ -247,7 +232,7 @@ func (c *ConsensusImpl) AppendEntriesSendForConsensus(
 				}
 			}
 		case <-ctx.Done():
-			c.logger.Info("context canceled",
+			n.logger.Info("context canceled",
 				zap.String("requestID", requestID))
 			return nil, errors.New("context canceled")
 		}

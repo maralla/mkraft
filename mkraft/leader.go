@@ -279,7 +279,7 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*Client
 			}
 		}
 		defer subTasksToWait.Done()
-		n.consensus.AppendEntriesSendForConsensus(ctx, reqs, n.CurrentTerm)
+		n.ConsensusAppendEntries(ctx, reqs, n.CurrentTerm)
 		errChan <- err
 	}(ctx)
 
