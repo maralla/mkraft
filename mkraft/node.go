@@ -59,30 +59,40 @@ func NewNode(
 ) NodeIface {
 	bufferSize := cfg.GetRaftNodeRequestBufferSize()
 
+	// todo: can be a problem of these two intializations
+	// zero can be problematic, but these can also be a problem
+	// we can fix with happy path first like start from a new cluster, and never fails
 	lastAppliedIdx := statemachine.GetLatestAppliedIndex()
 	lastCommitIdx, _ := raftlog.GetLastLogIdxAndTerm()
 
 	node := &Node{
-		lastApplied: lastAppliedIdx,
-		commitIndex: lastCommitIdx,
-
-		statemachine: statemachine,
 		raftLog:      raftlog,
-		cfg:          cfg,
 		membership:   membership,
+		cfg:          cfg,
 		logger:       logger,
+		statemachine: statemachine,
 
-		State:             StateFollower, // servers start up as followers
+		stateRWLock: &sync.RWMutex{},
+		sem:         semaphore.NewWeighted(1),
+
 		NodeId:            nodeId,
-		sem:               semaphore.NewWeighted(1),
-		CurrentTerm:       0,
-		VotedFor:          "",
+		State:             StateFollower, // servers start up as followers
 		clientCommandChan: make(chan *utils.ClientCommandInternalReq, bufferSize),
-		requestVoteChan:   make(chan *utils.RequestVoteInternalReq, bufferSize),
-		appendEntryChan:   make(chan *utils.AppendEntriesInternalReq, bufferSize),
-		LeaderId:          "",
-		stateRWLock:       &sync.RWMutex{},
+		// todo:  what should the length of the channel be?
+		leaderDegradationChan: make(chan TermRank, 1),
+		requestVoteChan:       make(chan *utils.RequestVoteInternalReq, bufferSize),
+		appendEntryChan:       make(chan *utils.AppendEntriesInternalReq, bufferSize),
+
+		// todo: how should this be initialized and maintained
+		CurrentTerm: 0,
+		VotedFor:    "",
+
+		commitIndex: lastCommitIdx,
+		lastApplied: lastAppliedIdx,
+		nextIndex:   make(map[string]uint64),
+		matchIndex:  make(map[string]uint64),
 	}
+
 	node.sem.Acquire(context.Background(), 1)
 	defer node.sem.Release(1)
 
@@ -94,17 +104,19 @@ func NewNode(
 // maki: go gymnastics for sync values
 // todo: add sync for these values?
 type Node struct {
-	raftLog      plugs.RaftLogsIface
+	raftLog      plugs.RaftLogsIface // required, persistent
 	membership   peers.MembershipMgrIface
 	cfg          common.ConfigIface
 	logger       *zap.Logger
 	statemachine plugs.StateMachineIface
 
+	// for the node state
 	sem *semaphore.Weighted
+	// a RW mutex for all the internal states in this node
+	stateRWLock *sync.RWMutex
 
-	LeaderId string
-	NodeId   string // maki: nodeID uuid or number or something else?
-	State    NodeState
+	NodeId string // maki: nodeID uuid or number or something else?
+	State  NodeState
 
 	// leader only channels
 	// gracefully clean every time a leader degrades to a follower
@@ -119,24 +131,17 @@ type Node struct {
 	// Persistent state on all servers
 	// todo: how/why to make it persistent? (embedded db?)
 	// todo: change to concurrency safe
-	CurrentTerm uint32
-	VotedFor    string // candidateID
+	CurrentTerm uint32 // required, persistent (todo: haven't get persisted yet)
+	VotedFor    string // required, persistent (todo: haven't get persisted yet, why ?)
 	// LogEntries
 
 	// Paper page 4:
-	// todo: since right now we serialize appendEntries, we don't add mutex for this
-	//	Volatile state on all servers (both initialized to 0, increase monotonically)
-	//  index of the highest log entry known to be committed
-	commitIndex uint64
-	// index of the highest log entry applied to state machine
-	lastApplied uint64
+	commitIndex uint64 // required, volatile on all servers
+	lastApplied uint64 // required, volatile on all servers
 
-	// Volatile state on leaders only, reinitialized after election, initialized to leader last log index+1
+	// required, volatile, on leaders only, reinitialized after election, initialized to leader last log index+1
 	nextIndex  map[string]uint64 // map[peerID]nextIndex, index of the next log entry to send to that server
 	matchIndex map[string]uint64 // map[peerID]matchIndex, index of highest log entry known to be replicated on that server
-
-	// a RW mutex for all thestates in this node
-	stateRWLock *sync.RWMutex
 }
 
 func (n *Node) getCurrentTerm() uint32 {
