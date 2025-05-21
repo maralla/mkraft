@@ -52,7 +52,7 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	n.logger.Info("acquired the Semaphore as the LEADER state")
 	defer n.sem.Release(1)
 
-	// Append the current NodeID to a file called "state"
+	// debugging
 	stateFilePath := "state.tmp"
 	file, err := os.OpenFile(stateFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -71,10 +71,10 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	}
 
 	// leader:
-	// (1) major task-1: handle client commands and send append entries
-	// (2) major task-2: send heartbeats to all the followers
-	// (3) common task-1: handle voting requests from other candidates
-	// (4) common task-2: handle append entries requests from other candidates
+	// (1) leader-task-1: handle client commands and send append entries -> goroutine-worker-1 handled by clientCommandsTaskWorker
+	// (2) leader-task-2: send heartbeats to all the followers -> goroutine-main
+	// (3) common-task-1: handle voting requests from other candidates -> goroutine-worker-2
+	// (4) common-task-2: handle append entries requests from other candidates -> goroutine-worker-2
 
 	n.clientCommandChan = make(chan *utils.ClientCommandInternalReq, n.cfg.GetRaftNodeRequestBufferSize())
 	n.leaderDegradationChan = make(chan TermRank, n.cfg.GetRaftNodeRequestBufferSize())
@@ -87,12 +87,12 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	ctxForWorker, cancelWorker := context.WithCancel(ctx)
 	defer cancelWorker()
 
-	go n.leaderCommonTaskWorker(ctxForWorker)
+	go n.leaderWorkerForCommon(ctxForWorker)
 
 	heartbeatDuration := n.cfg.GetLeaderHeartbeatPeriod()
 	tickerForHeartbeat := time.NewTicker(heartbeatDuration)
 	defer tickerForHeartbeat.Stop()
-	go n.clientCommandsTaskWorker(ctxForWorker, tickerForHeartbeat)
+	go n.leaderWorkerForClient(ctxForWorker, tickerForHeartbeat)
 
 	for {
 		select {
@@ -124,8 +124,46 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	}
 }
 
+// todo: can be merged to main
 // separate goroutine for the this task
-func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
+// handling requests from clients in a serializable and batched way
+func (n *Node) leaderWorkerForClient(ctx context.Context, heartbeatTicker *time.Ticker) {
+	defer n.closeClientCommandChan()
+	for {
+		select {
+		case <-ctx.Done():
+			n.logger.Warn("exiting leader's worker for handling commands Task")
+			return
+		default:
+			select {
+			case <-ctx.Done():
+				n.logger.Warn("exiting leader's worker for handling commands Task")
+				return
+			case clientCmd := <-n.clientCommandChan:
+				// todo: has race with the heartbeat timer, but since it is idempotent, it is okay
+				heartbeatTicker.Stop()
+
+				batchingSize := n.cfg.GetRaftNodeRequestBufferSize() - 1
+				clientCommands := utils.ReadMultipleFromChannel(n.clientCommandChan, batchingSize)
+				clientCommands = append(clientCommands, clientCmd)
+				error := n.handleClientCommand(ctx, clientCommands)
+				if error != nil {
+					n.logger.Error("error in handling client command", zap.Error(error))
+					for _, clientCommand := range clientCommands {
+						clientCommand.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
+							Resp: nil,
+							Err:  error,
+						}
+					}
+				}
+				heartbeatTicker.Reset(n.cfg.GetLeaderHeartbeatPeriod())
+			}
+		}
+	}
+}
+
+// separate goroutine for the this task
+func (n *Node) leaderWorkerForCommon(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -168,44 +206,10 @@ func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
 	}
 }
 
-// separate goroutine for the this task
-func (n *Node) clientCommandsTaskWorker(ctx context.Context, heartbeatTicker *time.Ticker) {
-	defer n.closeClientCommandChan()
-	for {
-		select {
-		case <-ctx.Done():
-			n.logger.Warn("exiting leader's worker for handling commands Task")
-			return
-		default:
-			select {
-			case <-ctx.Done():
-				n.logger.Warn("exiting leader's worker for handling commands Task")
-				return
-			case clientCmd := <-n.clientCommandChan:
-				// todo: has race with the heartbeat timer, but since it is idempotent, it is okay
-				heartbeatTicker.Stop()
-				batchingSize := n.cfg.GetRaftNodeRequestBufferSize() - 1
-				clientCommands := utils.ReadMultipleFromChannel(n.clientCommandChan, batchingSize)
-				clientCommands = append(clientCommands, clientCmd)
-				error := n.handleClientCommand(ctx, clientCommands)
-				if error != nil {
-					n.logger.Error("error in handling client command", zap.Error(error))
-					for _, clientCommand := range clientCommands {
-						clientCommand.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
-							Resp: nil,
-							Err:  error,
-						}
-					}
-				}
-				heartbeatTicker.Reset(n.cfg.GetLeaderHeartbeatPeriod())
-			}
-		}
-	}
-}
-
 func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]plugs.CatchupLogs, error) {
 	result := make(map[string]plugs.CatchupLogs)
 	for _, peerNodeID := range peerNodeIDs {
+		// todo: can be batch reading
 		nextID := n.getPeersNextIndex(peerNodeID)
 		logs, err := n.raftLog.GetLogsFromIdxIncluded(nextID)
 		if err != nil {
