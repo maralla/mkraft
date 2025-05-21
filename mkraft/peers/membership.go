@@ -1,4 +1,4 @@
-package mkraft
+package peers
 
 import (
 	"errors"

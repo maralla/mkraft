@@ -48,7 +48,7 @@ func (node *Node) addLastAppliedIdx(numberOfCommand uint64) {
 // todo: this method can be very problematic
 func (n *Node) catchupAppliedIdx() error {
 	if n.lastApplied < n.commitIndex {
-		logs, err := n.raftLog.GetLogsFromIdx(n.lastApplied + 1)
+		logs, err := n.raftLog.GetLogsFromIdxIncluded(n.lastApplied + 1)
 		if err != nil {
 			n.logger.Error("failed to get logs from index", zap.Error(err))
 			return err

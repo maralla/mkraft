@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	utils "github.com/maki3cat/mkraft/mkraft/utils"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -41,7 +42,7 @@ func (m *MockNodeIface) EXPECT() *MockNodeIfaceMockRecorder {
 }
 
 // AppendEntryRequest mocks base method.
-func (m *MockNodeIface) AppendEntryRequest(req *AppendEntriesInternalReq) {
+func (m *MockNodeIface) AppendEntryRequest(req *utils.AppendEntriesInternalReq) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "AppendEntryRequest", req)
 }
@@ -53,7 +54,7 @@ func (mr *MockNodeIfaceMockRecorder) AppendEntryRequest(req any) *gomock.Call {
 }
 
 // ClientCommand mocks base method.
-func (m *MockNodeIface) ClientCommand(req *ClientCommandInternalReq) {
+func (m *MockNodeIface) ClientCommand(req *utils.ClientCommandInternalReq) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "ClientCommand", req)
 }
@@ -89,7 +90,7 @@ func (mr *MockNodeIfaceMockRecorder) Stop(ctx any) *gomock.Call {
 }
 
 // VoteRequest mocks base method.
-func (m *MockNodeIface) VoteRequest(req *RequestVoteInternalReq) {
+func (m *MockNodeIface) VoteRequest(req *utils.RequestVoteInternalReq) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "VoteRequest", req)
 }

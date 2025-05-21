@@ -1,4 +1,4 @@
-package mkraft
+package plugs
 
 import (
 	"bytes"
@@ -17,13 +17,13 @@ type RaftLogsIface interface {
 	GetLastLogIdx() uint64
 	GetTermByIndex(index uint64) (uint32, error)
 	// index is included
-	GetLogsFromIdx(index uint64) ([]*RaftLogEntry, error)
+	GetLogsFromIdxIncluded(index uint64) ([]*RaftLogEntry, error)
 	AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error
 }
 type CatchupLogs struct {
-	lastLogIndex uint64
-	lastLogTerm  uint32
-	entries      []*RaftLogEntry
+	LastLogIndex uint64
+	LastLogTerm  uint32
+	Entries      []*RaftLogEntry
 }
 
 func NewRaftLogsImplAndLoad(filePath string) RaftLogsIface {
@@ -73,7 +73,7 @@ func (rl *SimpleRaftLogsImpl) GetTermByIndex(index uint64) (uint32, error) {
 	if index == 0 {
 		return 0, nil
 	}
-	if index > uint64(len(rl.logs)) && index < 0 {
+	if index > uint64(len(rl.logs)) {
 		return 0, fmt.Errorf("invalid index: %d", index)
 	}
 	rl.mutex.Lock()
@@ -90,7 +90,7 @@ func (rl *SimpleRaftLogsImpl) GetLastLogIdx() uint64 {
 }
 
 // index is included
-func (rl *SimpleRaftLogsImpl) GetLogsFromIdx(index uint64) ([]*RaftLogEntry, error) {
+func (rl *SimpleRaftLogsImpl) GetLogsFromIdxIncluded(index uint64) ([]*RaftLogEntry, error) {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 	sliceIndex := int(index) - 1

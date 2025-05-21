@@ -19,11 +19,15 @@ protogen:
 mockgen: clean-mocks
 	mockgen -source=rpc/service_grpc.pb.go -destination=./rpc/service_mock.go -package rpc
 	mockgen -source=common/config.go -destination=./common/config_mock.go -package common
-	mockgen -source=mkraft/client.go -destination=./mkraft/client_mock.go -package mkraft
-	mockgen -source=mkraft/membership.go -destination=./mkraft/membership_mock.go -package mkraft
+
 	# mockgen -source=mkraft/consensus.go -destination=./mkraft/consensus_mock.go -package mkraft
 	mockgen -source=mkraft/node.go -destination=./mkraft/node_mock.go -package mkraft
-	mockgen -source=mkraft/raftlog.go -destination=./mkraft/raftlog_mock.go -package mkraft
+
+	mockgen -source=mkraft/peers/client.go -destination=./mkraft/peers/client_mock.go -package peers
+	mockgen -source=mkraft/peers/membership.go -destination=./mkraft/peers/membership_mock.go -package peers
+
+	mockgen -source=mkraft/plugs/raftlog.go -destination=./mkraft/plugs/raftlog_mock.go -package plugs
+	mockgen -source=mkraft/plugs/statemachine.go -destination=./mkraft/plugs/statemachine_mock.go -package plugs
 clean-mocks:
 	find . -type f -name '*_mock.go' -exec rm -f {} +
 

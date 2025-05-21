@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/maki3cat/mkraft/mkraft/plugs"
+	"github.com/maki3cat/mkraft/mkraft/utils"
 	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
 )
@@ -75,7 +77,7 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	// (3) common task-1: handle voting requests from other candidates
 	// (4) common task-2: handle append entries requests from other candidates
 
-	n.clientCommandChan = make(chan *ClientCommandInternalReq, n.cfg.GetRaftNodeRequestBufferSize())
+	n.clientCommandChan = make(chan *utils.ClientCommandInternalReq, n.cfg.GetRaftNodeRequestBufferSize())
 	n.leaderDegradationChan = make(chan TermRank, n.cfg.GetRaftNodeRequestBufferSize())
 
 	// these channels cannot be closed because they are created in the main thread but used in the worker
@@ -140,7 +142,7 @@ func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
 					// no-IO operation
 					req := internalReq.Req
 					resp := n.receiveVoteRequest(req)
-					wrappedResp := &RPCRespWrapper[*rpc.RequestVoteResponse]{
+					wrappedResp := &utils.RPCRespWrapper[*rpc.RequestVoteResponse]{
 						Resp: resp,
 						Err:  nil,
 					}
@@ -153,7 +155,7 @@ func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
 			case internalReq := <-n.appendEntryChan: // commonRule: same with candidate
 				// todo: shall add appendEntry operations which shall be a goroutine
 				resp := n.receiveAppendEntires(internalReq.Req)
-				wrapper := RPCRespWrapper[*rpc.AppendEntriesResponse]{
+				wrapper := utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 					Resp: resp,
 					Err:  nil,
 				}
@@ -181,13 +183,13 @@ func (n *Node) clientCommandsTaskWorker(ctx context.Context, heartbeatTicker *ti
 			case clientCmd := <-n.clientCommandChan:
 				heartbeatTicker.Stop()
 				batchingSize := n.cfg.GetRaftNodeRequestBufferSize() - 1
-				clientCommands := readMultipleFromChannel(n.clientCommandChan, batchingSize)
+				clientCommands := utils.ReadMultipleFromChannel(n.clientCommandChan, batchingSize)
 				clientCommands = append(clientCommands, clientCmd)
 				error := n.handleClientCommand(ctx, clientCommands)
 				if error != nil {
 					n.logger.Error("error in handling client command", zap.Error(error))
 					for _, clientCommand := range clientCommands {
-						clientCommand.RespChan <- &RPCRespWrapper[*rpc.ClientCommandResponse]{
+						clientCommand.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
 							Resp: nil,
 							Err:  error,
 						}
@@ -199,11 +201,11 @@ func (n *Node) clientCommandsTaskWorker(ctx context.Context, heartbeatTicker *ti
 	}
 }
 
-func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]CatchupLogs, error) {
-	result := make(map[string]CatchupLogs)
+func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]plugs.CatchupLogs, error) {
+	result := make(map[string]plugs.CatchupLogs)
 	for _, peerNodeID := range peerNodeIDs {
 		nextID := n.getPeersNextIndex(peerNodeID)
-		logs, err := n.raftLog.GetLogsFromIdx(nextID)
+		logs, err := n.raftLog.GetLogsFromIdxIncluded(nextID)
 		if err != nil {
 			n.logger.Error("failed to get logs from index", zap.Error(err))
 			return nil, err
@@ -214,10 +216,10 @@ func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]Catchu
 			n.logger.Error("failed to get term by index", zap.Error(error))
 			return nil, error
 		}
-		result[peerNodeID] = CatchupLogs{
-			lastLogIndex: prevLogIndex,
-			lastLogTerm:  prevTerm,
-			entries:      logs,
+		result[peerNodeID] = plugs.CatchupLogs{
+			LastLogIndex: prevLogIndex,
+			LastLogTerm:  prevTerm,
+			Entries:      logs,
 		}
 	}
 	return result, nil
@@ -228,7 +230,7 @@ func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]Catchu
 // problem-1: the leader is alive but minority followers are dead -> can be handled by the retry mechanism
 // problem-2: the leader is alive but majority followers are dead
 // problem-3: the leader is stale
-func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*ClientCommandInternalReq) error {
+func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.ClientCommandInternalReq) error {
 
 	var subTasksToWait sync.WaitGroup
 	subTasksToWait.Add(2)
@@ -239,6 +241,9 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*Client
 	// get logs from the raft logs for each client
 	// before the task-1 trying to change the logs and task-2 reading the logs in parallel and we don't know who is faster
 	peerNodeIDs, err := n.membership.GetAllPeerNodeIDs()
+	if err != nil {
+		return err
+	}
 	cathupLogsForPeers, err := n.getLogsToCatchupForPeers(peerNodeIDs)
 	if err != nil {
 		return err
@@ -264,8 +269,8 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*Client
 		}
 		reqs := make(map[string]*rpc.AppendEntriesRequest, len(peerNodeIDs))
 		for nodeID, catchup := range cathupLogsForPeers {
-			catchupCommands := make([]*rpc.LogEntry, len(catchup.entries))
-			for i, log := range catchup.entries {
+			catchupCommands := make([]*rpc.LogEntry, len(catchup.Entries))
+			for i, log := range catchup.Entries {
 				catchupCommands[i] = &rpc.LogEntry{
 					Data: log.Commands,
 				}
@@ -273,8 +278,8 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*Client
 			reqs[nodeID] = &rpc.AppendEntriesRequest{
 				Term:         currentTerm,
 				LeaderId:     n.NodeId,
-				PrevLogIndex: catchup.lastLogIndex,
-				PrevLogTerm:  catchup.lastLogTerm,
+				PrevLogIndex: catchup.LastLogIndex,
+				PrevLogTerm:  catchup.LastLogTerm,
 				Entries:      append(catchupCommands, newCommands...),
 			}
 		}
@@ -313,7 +318,7 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*Client
 		n.addLastAppliedIdx(1)
 		if err != nil {
 			n.logger.Error("error in applying command to state machine", zap.Error(err))
-			internalReq.RespChan <- &RPCRespWrapper[*rpc.ClientCommandResponse]{
+			internalReq.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
 				Resp: nil,
 				Err:  err,
 			}
@@ -321,7 +326,7 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*Client
 			clientResp := &rpc.ClientCommandResponse{
 				Result: applyResp,
 			}
-			internalReq.RespChan <- &RPCRespWrapper[*rpc.ClientCommandResponse]{
+			internalReq.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
 				Resp: clientResp,
 				Err:  nil,
 			}
@@ -384,7 +389,7 @@ func (n *Node) closeClientCommandChan() {
 	close(n.clientCommandChan)
 	for request := range n.clientCommandChan {
 		if request != nil {
-			request.RespChan <- &RPCRespWrapper[*rpc.ClientCommandResponse]{
+			request.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
 				Resp: nil,
 				Err:  errors.New("raft node is not in leader state"),
 			}
@@ -392,6 +397,6 @@ func (n *Node) closeClientCommandChan() {
 	}
 }
 
-func (n *Node) ClientCommand(req *ClientCommandInternalReq) {
+func (n *Node) ClientCommand(req *utils.ClientCommandInternalReq) {
 	n.clientCommandChan <- req
 }

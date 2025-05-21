@@ -5,6 +5,8 @@ import (
 	"errors"
 
 	"github.com/maki3cat/mkraft/common"
+	"github.com/maki3cat/mkraft/mkraft/peers"
+	"github.com/maki3cat/mkraft/mkraft/utils"
 	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
 )
@@ -52,7 +54,7 @@ func (c *Node) ConsensusRequestVote(ctx context.Context, request *rpc.RequestVot
 	}
 
 	peersCount := len(peerClients)
-	resChan := make(chan RPCRespWrapper[*rpc.RequestVoteResponse], peersCount) // buffered with len(members) to prevent goroutine leak
+	resChan := make(chan utils.RPCRespWrapper[*rpc.RequestVoteResponse], peersCount) // buffered with len(members) to prevent goroutine leak
 	for _, member := range peerClients {
 		// FAN-OUT
 		// maki: todo topic for go gynastics
@@ -156,10 +158,10 @@ func (n *Node) ConsensusAppendEntries(
 		return nil, errors.New("not enough peer clients found")
 	}
 
-	allRespChan := make(chan RPCRespWrapper[*rpc.AppendEntriesResponse], len(peerClients))
+	allRespChan := make(chan utils.RPCRespWrapper[*rpc.AppendEntriesResponse], len(peerClients))
 	for nodeID, member := range peerClients {
 		// FAN-OUT
-		go func(nodeID string, client InternalClientIface) {
+		go func(nodeID string, client peers.InternalClientIface) {
 			ctxWithTimeout, cancel := context.WithTimeout(ctx, n.cfg.GetElectionTimeout())
 			defer cancel()
 			req := peerReq[nodeID]

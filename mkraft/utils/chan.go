@@ -1,6 +1,6 @@
-package mkraft
+package utils
 
-func readMultipleFromChannel[T any](ch <-chan T, count int) []T {
+func ReadMultipleFromChannel[T any](ch <-chan T, count int) []T {
 	result := make([]T, 0, count)
 	for range count {
 		select {

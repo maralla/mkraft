@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/maki3cat/mkraft/common"
-	"github.com/maki3cat/mkraft/mkraft/pluggable"
+	"github.com/maki3cat/mkraft/mkraft/peers"
+	"github.com/maki3cat/mkraft/mkraft/plugs"
+	"github.com/maki3cat/mkraft/mkraft/utils"
 	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
 	"golang.org/x/sync/semaphore"
@@ -38,9 +40,9 @@ type TermRank int
 var _ NodeIface = (*Node)(nil)
 
 type NodeIface interface {
-	VoteRequest(req *RequestVoteInternalReq)
-	AppendEntryRequest(req *AppendEntriesInternalReq)
-	ClientCommand(req *ClientCommandInternalReq)
+	VoteRequest(req *utils.RequestVoteInternalReq)
+	AppendEntryRequest(req *utils.AppendEntriesInternalReq)
+	ClientCommand(req *utils.ClientCommandInternalReq)
 
 	Start(ctx context.Context)
 	Stop(ctx context.Context)
@@ -51,9 +53,9 @@ func NewNode(
 	nodeId string,
 	cfg common.ConfigIface,
 	logger *zap.Logger,
-	membership MembershipMgrIface,
-	raftlog RaftLogsIface,
-	statemachine pluggable.StateMachineIface,
+	membership peers.MembershipMgrIface,
+	raftlog plugs.RaftLogsIface,
+	statemachine plugs.StateMachineIface,
 ) NodeIface {
 	bufferSize := cfg.GetRaftNodeRequestBufferSize()
 
@@ -75,9 +77,9 @@ func NewNode(
 		sem:               semaphore.NewWeighted(1),
 		CurrentTerm:       0,
 		VotedFor:          "",
-		clientCommandChan: make(chan *ClientCommandInternalReq, bufferSize),
-		requestVoteChan:   make(chan *RequestVoteInternalReq, bufferSize),
-		appendEntryChan:   make(chan *AppendEntriesInternalReq, bufferSize),
+		clientCommandChan: make(chan *utils.ClientCommandInternalReq, bufferSize),
+		requestVoteChan:   make(chan *utils.RequestVoteInternalReq, bufferSize),
+		appendEntryChan:   make(chan *utils.AppendEntriesInternalReq, bufferSize),
 		LeaderId:          "",
 		stateRWLock:       &sync.RWMutex{},
 	}
@@ -92,11 +94,11 @@ func NewNode(
 // maki: go gymnastics for sync values
 // todo: add sync for these values?
 type Node struct {
-	raftLog      RaftLogsIface
-	membership   MembershipMgrIface
+	raftLog      plugs.RaftLogsIface
+	membership   peers.MembershipMgrIface
 	cfg          common.ConfigIface
 	logger       *zap.Logger
-	statemachine pluggable.StateMachineIface
+	statemachine plugs.StateMachineIface
 
 	sem *semaphore.Weighted
 
@@ -107,12 +109,12 @@ type Node struct {
 	// leader only channels
 	// gracefully clean every time a leader degrades to a follower
 	// reset these 2 data structures everytime a new leader is elected
-	clientCommandChan     chan *ClientCommandInternalReq
+	clientCommandChan     chan *utils.ClientCommandInternalReq
 	leaderDegradationChan chan TermRank
 
 	// shared by all states
-	requestVoteChan chan *RequestVoteInternalReq
-	appendEntryChan chan *AppendEntriesInternalReq
+	requestVoteChan chan *utils.RequestVoteInternalReq
+	appendEntryChan chan *utils.AppendEntriesInternalReq
 
 	// Persistent state on all servers
 	// todo: how/why to make it persistent? (embedded db?)
@@ -154,11 +156,11 @@ func (node *Node) ResetVoteFor() {
 	node.VotedFor = ""
 }
 
-func (node *Node) VoteRequest(req *RequestVoteInternalReq) {
+func (node *Node) VoteRequest(req *utils.RequestVoteInternalReq) {
 	node.requestVoteChan <- req
 }
 
-func (node *Node) AppendEntryRequest(req *AppendEntriesInternalReq) {
+func (node *Node) AppendEntryRequest(req *utils.AppendEntriesInternalReq) {
 	node.appendEntryChan <- req
 }
 

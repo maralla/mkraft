@@ -1,4 +1,4 @@
-package mkraft
+package peers
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/maki3cat/mkraft/common"
+	"github.com/maki3cat/mkraft/mkraft/utils"
 	"github.com/maki3cat/mkraft/rpc"
 )
 
@@ -20,10 +21,10 @@ var _ InternalClientIface = (*InternalClientImpl)(nil)
 type InternalClientIface interface {
 
 	// send request vote is keep retrying until the context is done or the response is received
-	SendRequestVoteWithRetries(ctx context.Context, req *rpc.RequestVoteRequest) chan RPCRespWrapper[*rpc.RequestVoteResponse]
+	SendRequestVoteWithRetries(ctx context.Context, req *rpc.RequestVoteRequest) chan utils.RPCRespWrapper[*rpc.RequestVoteResponse]
 
 	// send append entries is one simple sync rpc call with rpc timeout
-	SendAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) RPCRespWrapper[*rpc.AppendEntriesResponse]
+	SendAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) utils.RPCRespWrapper[*rpc.AppendEntriesResponse]
 
 	SayHello(ctx context.Context, req *rpc.HelloRequest) (*rpc.HelloReply, error)
 
@@ -87,9 +88,9 @@ func (rc *InternalClientImpl) SayHello(ctx context.Context, req *rpc.HelloReques
 	return rc.rawClient.SayHello(ctx, req)
 }
 
-func (rc *InternalClientImpl) SendAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) RPCRespWrapper[*rpc.AppendEntriesResponse] {
+func (rc *InternalClientImpl) SendAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) utils.RPCRespWrapper[*rpc.AppendEntriesResponse] {
 	resp, err := rc.syncCallAppendEntries(ctx, req)
-	wrapper := RPCRespWrapper[*rpc.AppendEntriesResponse]{
+	wrapper := utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 		Resp: resp,
 		Err:  err,
 	}
@@ -97,27 +98,27 @@ func (rc *InternalClientImpl) SendAppendEntries(ctx context.Context, req *rpc.Ap
 }
 
 // the context shall be timed out in election timeout period
-func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, req *rpc.RequestVoteRequest) chan RPCRespWrapper[*rpc.RequestVoteResponse] {
+func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, req *rpc.RequestVoteRequest) chan utils.RPCRespWrapper[*rpc.RequestVoteResponse] {
 	requestID := common.GetRequestID(ctx)
 	rc.logger.Debug("send SendRequestVote",
 		zap.String("to", rc.String()),
 		zap.Any("request", req),
 		zap.String("requestID", requestID))
-	out := make(chan RPCRespWrapper[*rpc.RequestVoteResponse], 1)
+	out := make(chan utils.RPCRespWrapper[*rpc.RequestVoteResponse], 1)
 
 	retriedRPC := func() {
 		singleResChan := rc.asyncCallRequestVote(ctx, req)
 		for {
 			select {
 			case <-ctx.Done():
-				out <- RPCRespWrapper[*rpc.RequestVoteResponse]{
+				out <- utils.RPCRespWrapper[*rpc.RequestVoteResponse]{
 					Err: fmt.Errorf("%s", "election timeout to receive any non-error response")}
 				return
 			case resp := <-singleResChan:
 				if resp.Err != nil {
 					deadline, ok := ctx.Deadline()
 					if ok && time.Until(deadline) < rc.cfg.GetMinRemainingTimeForRPC() {
-						out <- RPCRespWrapper[*rpc.RequestVoteResponse]{
+						out <- utils.RPCRespWrapper[*rpc.RequestVoteResponse]{
 							Err: fmt.Errorf("%s", "election timeout to receive any non-error response")}
 						return
 					} else {
@@ -139,11 +140,11 @@ func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, re
 	return out
 }
 
-func (rc *InternalClientImpl) asyncCallRequestVote(ctx context.Context, req *rpc.RequestVoteRequest) chan RPCRespWrapper[*rpc.RequestVoteResponse] {
-	singleResChan := make(chan RPCRespWrapper[*rpc.RequestVoteResponse], 1) // must be buffered
+func (rc *InternalClientImpl) asyncCallRequestVote(ctx context.Context, req *rpc.RequestVoteRequest) chan utils.RPCRespWrapper[*rpc.RequestVoteResponse] {
+	singleResChan := make(chan utils.RPCRespWrapper[*rpc.RequestVoteResponse], 1) // must be buffered
 	go func() {
 		resp, err := rc.syncCallRequestVote(ctx, req)
-		wrapper := RPCRespWrapper[*rpc.RequestVoteResponse]{
+		wrapper := utils.RPCRespWrapper[*rpc.RequestVoteResponse]{
 			Resp: resp,
 			Err:  err,
 		}
