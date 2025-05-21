@@ -1,4 +1,4 @@
-package pluggable
+package plugs
 
 var _ StateMachineIface = (*StateMachineNoOpImpl)(nil)
 

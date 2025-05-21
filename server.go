@@ -12,7 +12,8 @@ import (
 
 	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/mkraft"
-	"github.com/maki3cat/mkraft/mkraft/pluggable"
+	"github.com/maki3cat/mkraft/mkraft/peers"
+	"github.com/maki3cat/mkraft/mkraft/plugs"
 	pb "github.com/maki3cat/mkraft/rpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -20,13 +21,13 @@ import (
 )
 
 func NewServer(cfg common.ConfigIface, logger *zap.Logger) (*Server, error) {
-	membershipMgr, err := mkraft.NewMembershipMgrWithStaticConfig(logger, cfg)
+	membershipMgr, err := peers.NewMembershipMgrWithStaticConfig(logger, cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	raftLogIface := mkraft.NewRaftLogsImplAndLoad(cfg.GetRaftLogFilePath())
-	statemachine := pluggable.NewStateMachineNoOpImpl()
+	raftLogIface := plugs.NewRaftLogsImplAndLoad(cfg.GetRaftLogFilePath())
+	statemachine := plugs.NewStateMachineNoOpImpl()
 
 	nodeID := cfg.GetMembership().CurrentNodeID
 	node := mkraft.NewNode(nodeID, cfg, logger, membershipMgr, raftLogIface, statemachine)
@@ -52,7 +53,7 @@ type Server struct {
 	logger     *zap.Logger
 	cfg        common.ConfigIface
 	node       mkraft.NodeIface
-	membership mkraft.MembershipMgrIface
+	membership peers.MembershipMgrIface
 
 	grpcServer *grpc.Server
 	handler    *mkraft.Handlers

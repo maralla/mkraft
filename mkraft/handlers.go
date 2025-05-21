@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/maki3cat/mkraft/common"
+	"github.com/maki3cat/mkraft/mkraft/utils"
 	pb "github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
 )
@@ -27,8 +28,8 @@ func (h *Handlers) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.Hello
 
 func (h *Handlers) RequestVote(ctx context.Context, in *pb.RequestVoteRequest) (*pb.RequestVoteResponse, error) {
 	requestID := common.GetRequestID(ctx)
-	respChan := make(chan *RPCRespWrapper[*pb.RequestVoteResponse], 1)
-	internalReq := &RequestVoteInternalReq{
+	respChan := make(chan *utils.RPCRespWrapper[*pb.RequestVoteResponse], 1)
+	internalReq := &utils.RequestVoteInternalReq{
 		Req:      in,
 		RespChan: respChan,
 	}
@@ -46,8 +47,8 @@ func (h *Handlers) RequestVote(ctx context.Context, in *pb.RequestVoteRequest) (
 
 func (h *Handlers) AppendEntries(ctx context.Context, in *pb.AppendEntriesRequest) (*pb.AppendEntriesResponse, error) {
 	requestID := common.GetRequestID(ctx)
-	respChan := make(chan *RPCRespWrapper[*pb.AppendEntriesResponse], 1)
-	req := &AppendEntriesInternalReq{
+	respChan := make(chan *utils.RPCRespWrapper[*pb.AppendEntriesResponse], 1)
+	req := &utils.AppendEntriesInternalReq{
 		Req:      in,
 		RespChan: respChan,
 	}
@@ -67,9 +68,9 @@ func (h *Handlers) AppendEntries(ctx context.Context, in *pb.AppendEntriesReques
 func (h *Handlers) ClientCommand(ctx context.Context, in *pb.ClientCommandRequest) (*pb.ClientCommandResponse, error) {
 
 	requestID := common.GetRequestID(ctx)
-	req := &ClientCommandInternalReq{
+	req := &utils.ClientCommandInternalReq{
 		Req:      in,
-		RespChan: make(chan *RPCRespWrapper[*pb.ClientCommandResponse], 1),
+		RespChan: make(chan *utils.RPCRespWrapper[*pb.ClientCommandResponse], 1),
 	}
 	h.node.ClientCommand(req)
 

@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/maki3cat/mkraft/common"
-	"github.com/maki3cat/mkraft/mkraft/pluggable"
+	"github.com/maki3cat/mkraft/mkraft/peers"
+	"github.com/maki3cat/mkraft/mkraft/plugs"
+	"github.com/maki3cat/mkraft/mkraft/utils"
 	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
 	"golang.org/x/sync/semaphore"
@@ -38,9 +40,9 @@ type TermRank int
 var _ NodeIface = (*Node)(nil)
 
 type NodeIface interface {
-	VoteRequest(req *RequestVoteInternalReq)
-	AppendEntryRequest(req *AppendEntriesInternalReq)
-	ClientCommand(req *ClientCommandInternalReq)
+	VoteRequest(req *utils.RequestVoteInternalReq)
+	AppendEntryRequest(req *utils.AppendEntriesInternalReq)
+	ClientCommand(req *utils.ClientCommandInternalReq)
 
 	Start(ctx context.Context)
 	Stop(ctx context.Context)
@@ -51,15 +53,14 @@ func NewNode(
 	nodeId string,
 	cfg common.ConfigIface,
 	logger *zap.Logger,
-	membership MembershipMgrIface,
-	raftlog RaftLogsIface,
-	statemachine pluggable.StateMachineIface,
+	membership peers.MembershipMgrIface,
+	raftlog plugs.RaftLogsIface,
+	statemachine plugs.StateMachineIface,
 ) NodeIface {
 	bufferSize := cfg.GetRaftNodeRequestBufferSize()
-	consensus := NewConsensus(logger, membership, cfg)
 
 	lastAppliedIdx := statemachine.GetLatestAppliedIndex()
-	lastCommitIdx, _ := raftlog.GetPrevLogIndexAndTerm()
+	lastCommitIdx, _ := raftlog.GetLastLogIdxAndTerm()
 
 	node := &Node{
 		lastApplied: lastAppliedIdx,
@@ -69,7 +70,6 @@ func NewNode(
 		raftLog:      raftlog,
 		cfg:          cfg,
 		membership:   membership,
-		consensus:    consensus,
 		logger:       logger,
 
 		State:             StateFollower, // servers start up as followers
@@ -77,11 +77,11 @@ func NewNode(
 		sem:               semaphore.NewWeighted(1),
 		CurrentTerm:       0,
 		VotedFor:          "",
-		clientCommandChan: make(chan *ClientCommandInternalReq, bufferSize),
-		requestVoteChan:   make(chan *RequestVoteInternalReq, bufferSize),
-		appendEntryChan:   make(chan *AppendEntriesInternalReq, bufferSize),
+		clientCommandChan: make(chan *utils.ClientCommandInternalReq, bufferSize),
+		requestVoteChan:   make(chan *utils.RequestVoteInternalReq, bufferSize),
+		appendEntryChan:   make(chan *utils.AppendEntriesInternalReq, bufferSize),
 		LeaderId:          "",
-		mutexForIdx:       sync.Mutex{},
+		stateRWLock:       &sync.RWMutex{},
 	}
 	node.sem.Acquire(context.Background(), 1)
 	defer node.sem.Release(1)
@@ -94,12 +94,11 @@ func NewNode(
 // maki: go gymnastics for sync values
 // todo: add sync for these values?
 type Node struct {
-	raftLog      RaftLogsIface
-	consensus    ConsensusIface
-	membership   MembershipMgrIface
+	raftLog      plugs.RaftLogsIface
+	membership   peers.MembershipMgrIface
 	cfg          common.ConfigIface
 	logger       *zap.Logger
-	statemachine pluggable.StateMachineIface
+	statemachine plugs.StateMachineIface
 
 	sem *semaphore.Weighted
 
@@ -110,12 +109,12 @@ type Node struct {
 	// leader only channels
 	// gracefully clean every time a leader degrades to a follower
 	// reset these 2 data structures everytime a new leader is elected
-	clientCommandChan     chan *ClientCommandInternalReq
+	clientCommandChan     chan *utils.ClientCommandInternalReq
 	leaderDegradationChan chan TermRank
 
 	// shared by all states
-	requestVoteChan chan *RequestVoteInternalReq
-	appendEntryChan chan *AppendEntriesInternalReq
+	requestVoteChan chan *utils.RequestVoteInternalReq
+	appendEntryChan chan *utils.AppendEntriesInternalReq
 
 	// Persistent state on all servers
 	// todo: how/why to make it persistent? (embedded db?)
@@ -125,10 +124,9 @@ type Node struct {
 	// LogEntries
 
 	// Paper page 4:
-	// todo should be protected by mutex state
+	// todo: since right now we serialize appendEntries, we don't add mutex for this
 	//	Volatile state on all servers (both initialized to 0, increase monotonically)
 	//  index of the highest log entry known to be committed
-	mutexForIdx sync.Mutex
 	commitIndex uint64
 	// index of the highest log entry applied to state machine
 	lastApplied uint64
@@ -137,34 +135,14 @@ type Node struct {
 	nextIndex  map[string]uint64 // map[peerID]nextIndex, index of the next log entry to send to that server
 	matchIndex map[string]uint64 // map[peerID]matchIndex, index of highest log entry known to be replicated on that server
 
+	// a RW mutex for all thestates in this node
+	stateRWLock *sync.RWMutex
 }
 
-func (n *Node) catchupAppliedIdx() error {
-	if n.lastApplied < n.commitIndex {
-		logs, err := n.raftLog.GetLogsFromIndex(n.lastApplied + 1)
-		if err != nil {
-			n.logger.Error("failed to get logs from index", zap.Error(err))
-			return err
-		}
-		for idx, log := range logs {
-			n.statemachine.ApplyCommand(log.Commands, n.lastApplied+1+uint64(idx))
-			n.updateLastAppliedIdx(n.lastApplied + 1 + uint64(idx))
-		}
-		return nil
-	}
-	return nil
-}
-
-func (node *Node) updateCommitIdx(commitIdx uint64) {
-	node.mutexForIdx.Lock()
-	defer node.mutexForIdx.Unlock()
-	node.commitIndex = commitIdx
-}
-
-func (node *Node) updateLastAppliedIdx(lastAppliedIdx uint64) {
-	node.mutexForIdx.Lock()
-	defer node.mutexForIdx.Unlock()
-	node.lastApplied = lastAppliedIdx
+func (n *Node) getCurrentTerm() uint32 {
+	n.stateRWLock.RLock()
+	defer n.stateRWLock.RUnlock()
+	return n.CurrentTerm
 }
 
 // maki: go gymnastics for sync values
@@ -178,11 +156,11 @@ func (node *Node) ResetVoteFor() {
 	node.VotedFor = ""
 }
 
-func (node *Node) VoteRequest(req *RequestVoteInternalReq) {
+func (node *Node) VoteRequest(req *utils.RequestVoteInternalReq) {
 	node.requestVoteChan <- req
 }
 
-func (node *Node) AppendEntryRequest(req *AppendEntriesInternalReq) {
+func (node *Node) AppendEntryRequest(req *utils.AppendEntriesInternalReq) {
 	node.appendEntryChan <- req
 }
 
@@ -209,7 +187,7 @@ func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteR
 	ctxTimeout, _ := context.WithTimeout(
 		ctx, time.Duration(node.cfg.GetElectionTimeout()))
 	go func() {
-		resp, err := node.consensus.RequestVoteSendForConsensus(ctxTimeout, req)
+		resp, err := node.ConsensusRequestVote(ctxTimeout, req)
 		if err != nil {
 			node.logger.Error(
 				"error in RequestVoteSendForConsensus", zap.String("requestID", requestID), zap.Error(err))

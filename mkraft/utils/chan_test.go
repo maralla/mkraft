@@ -1,4 +1,4 @@
-package mkraft
+package utils
 
 import (
 	"testing"
@@ -12,7 +12,7 @@ func TestReadMultipleFromChannel_ExactCount(t *testing.T) {
 	ch <- 3
 	close(ch)
 
-	result := readMultipleFromChannel(ch, 3)
+	result := ReadMultipleFromChannel(ch, 3)
 	expected := []int{1, 2, 3}
 	if len(result) != 3 {
 		t.Fatalf("expected 3 items, got %d", len(result))
@@ -30,7 +30,7 @@ func TestReadMultipleFromChannel_LessThanCount(t *testing.T) {
 	ch <- "b"
 	close(ch)
 
-	result := readMultipleFromChannel(ch, 5)
+	result := ReadMultipleFromChannel(ch, 5)
 	expected := []string{"a", "b"}
 	if len(result) != 2 {
 		t.Fatalf("expected 2 items, got %d", len(result))
@@ -46,7 +46,7 @@ func TestReadMultipleFromChannel_EmptyChannel(t *testing.T) {
 	ch := make(chan float64)
 	close(ch)
 
-	result := readMultipleFromChannel(ch, 3)
+	result := ReadMultipleFromChannel(ch, 3)
 	if len(result) != 0 {
 		t.Fatalf("expected 0 items, got %d", len(result))
 	}
@@ -56,7 +56,7 @@ func TestReadMultipleFromChannel_NonBlocking(t *testing.T) {
 	ch := make(chan int)
 	// Do not send anything to ch
 
-	result := readMultipleFromChannel(ch, 2)
+	result := ReadMultipleFromChannel(ch, 2)
 	if len(result) != 0 {
 		t.Fatalf("expected 0 items, got %d", len(result))
 	}
@@ -67,7 +67,7 @@ func TestReadMultipleFromChannel_PartialAvailable(t *testing.T) {
 	ch <- 10
 	close(ch)
 
-	result := readMultipleFromChannel(ch, 3)
+	result := ReadMultipleFromChannel(ch, 3)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(result))
 	}
@@ -83,7 +83,7 @@ func TestReadMultipleFromChannel_SlowSender(t *testing.T) {
 		ch <- 42
 	}()
 	// Should return immediately with nothing, since channel is empty at call time
-	result := readMultipleFromChannel(ch, 1)
+	result := ReadMultipleFromChannel(ch, 1)
 	if len(result) != 0 {
 		t.Fatalf("expected 0 items, got %d", len(result))
 	}
