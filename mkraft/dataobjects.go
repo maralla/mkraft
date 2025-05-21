@@ -32,3 +32,9 @@ type RPCRequest interface {
 type RPCResponse interface {
 	*rpc.AppendEntriesResponse | *rpc.RequestVoteResponse | *rpc.ClientCommandResponse
 }
+
+type CatchupLogs struct {
+	lastLogIndex uint64
+	lastLogTerm  uint32
+	entries      []*RaftLogEntry
+}

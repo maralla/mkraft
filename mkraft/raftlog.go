@@ -17,7 +17,7 @@ type RaftLogsIface interface {
 	GetLastLogIdx() uint64
 	GetTermByIndex(index uint64) (uint32, error)
 	// index is included
-	GetLogsFromIdx(index uint64) ([]RaftLogEntry, error)
+	GetLogsFromIdx(index uint64) ([]*RaftLogEntry, error)
 	AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error
 }
 
@@ -38,7 +38,7 @@ func NewRaftLogsImplAndLoad(filePath string) RaftLogsIface {
 	}
 
 	raftLogs := &SimpleRaftLogsImpl{
-		logs:  make([]RaftLogEntry, 0, initLogsLength),
+		logs:  make([]*RaftLogEntry, 0, initLogsLength),
 		file:  file,
 		mutex: &sync.Mutex{},
 	}
@@ -56,20 +56,24 @@ type RaftLogEntry struct {
 }
 
 type SimpleRaftLogsImpl struct {
-	logs  []RaftLogEntry
+	logs  []*RaftLogEntry
 	file  *os.File
 	mutex *sync.Mutex
 }
 
 const LogMarker byte = '#'
 
+// if the index < 1, the term is 0
 func (rl *SimpleRaftLogsImpl) GetTermByIndex(index uint64) (uint32, error) {
+	if index == 0 {
+		return 0, nil
+	}
+	if index > uint64(len(rl.logs)) && index < 0 {
+		return 0, fmt.Errorf("invalid index: %d", index)
+	}
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 	sliceIndex := int(index) - 1
-	if sliceIndex < 0 || sliceIndex >= len(rl.logs) {
-		return 0, fmt.Errorf("invalid index: %d", index)
-	}
 	return rl.logs[sliceIndex].Term, nil
 }
 
@@ -81,14 +85,14 @@ func (rl *SimpleRaftLogsImpl) GetLastLogIdx() uint64 {
 }
 
 // index is included
-func (rl *SimpleRaftLogsImpl) GetLogsFromIdx(index uint64) ([]RaftLogEntry, error) {
+func (rl *SimpleRaftLogsImpl) GetLogsFromIdx(index uint64) ([]*RaftLogEntry, error) {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 	sliceIndex := int(index) - 1
 	if sliceIndex < 0 || sliceIndex >= len(rl.logs) {
 		return nil, fmt.Errorf("invalid index: %d", index)
 	}
-	logs := make([]RaftLogEntry, len(rl.logs)-sliceIndex)
+	logs := make([]*RaftLogEntry, len(rl.logs)-sliceIndex)
 	copy(logs, rl.logs[sliceIndex:len(rl.logs)])
 	return logs, nil
 }
@@ -111,11 +115,11 @@ func (rl *SimpleRaftLogsImpl) AppendLogsInBatch(ctx context.Context, commandList
 	defer rl.mutex.Unlock()
 
 	var buffers bytes.Buffer
-	entries := make([]RaftLogEntry, len(commandList))
+	entries := make([]*RaftLogEntry, len(commandList))
 
 	for idx, command := range commandList {
-		entry := RaftLogEntry{
-			Index:    uint64(len(rl.logs) + idx + 1),
+		entry := &RaftLogEntry{
+			// Index:    uint64(len(rl.logs) + idx + 1),
 			Term:     uint32(term),
 			Commands: command,
 		}
@@ -184,7 +188,7 @@ func (rl *SimpleRaftLogsImpl) load() error {
 }
 
 // [4 bytes: length][1 byte: marker][8 bytes: term][8 bytes: index][N bytes: command][1 byte: marker]
-func (rl *SimpleRaftLogsImpl) serialize(entry RaftLogEntry) bytes.Buffer {
+func (rl *SimpleRaftLogsImpl) serialize(entry *RaftLogEntry) bytes.Buffer {
 	var inner bytes.Buffer
 	var full bytes.Buffer
 
@@ -200,7 +204,7 @@ func (rl *SimpleRaftLogsImpl) serialize(entry RaftLogEntry) bytes.Buffer {
 	return full
 }
 
-func (rl *SimpleRaftLogsImpl) deserialize(buf []byte) (RaftLogEntry, error) {
+func (rl *SimpleRaftLogsImpl) deserialize(buf []byte) (*RaftLogEntry, error) {
 	const (
 		termSize   = 4
 		indexSize  = 8
@@ -209,31 +213,31 @@ func (rl *SimpleRaftLogsImpl) deserialize(buf []byte) (RaftLogEntry, error) {
 	)
 
 	if len(buf) < headerSize+footerSize {
-		return RaftLogEntry{}, fmt.Errorf("buffer too short to contain a log entry")
+		return nil, fmt.Errorf("buffer too short to contain a log entry")
 	}
 
 	if buf[0] != LogMarker || buf[len(buf)-1] != LogMarker {
-		return RaftLogEntry{}, fmt.Errorf("invalid log markers: start=%x end=%x", buf[0], buf[len(buf)-1])
+		return nil, fmt.Errorf("invalid log markers: start=%x end=%x", buf[0], buf[len(buf)-1])
 	}
 
 	reader := bytes.NewReader(buf[1 : len(buf)-1]) // skip markers
 
 	var term uint32
 	if err := binary.Read(reader, binary.BigEndian, &term); err != nil {
-		return RaftLogEntry{}, fmt.Errorf("failed to read term: %w", err)
+		return nil, fmt.Errorf("failed to read term: %w", err)
 	}
 
 	var index uint64
 	if err := binary.Read(reader, binary.BigEndian, &index); err != nil {
-		return RaftLogEntry{}, fmt.Errorf("failed to read index: %w", err)
+		return nil, fmt.Errorf("failed to read index: %w", err)
 	}
 
 	commands, err := io.ReadAll(reader)
 	if err != nil {
-		return RaftLogEntry{}, fmt.Errorf("failed to read commands: %w", err)
+		return nil, fmt.Errorf("failed to read commands: %w", err)
 	}
 
-	return RaftLogEntry{
+	return &RaftLogEntry{
 		Term:     term,
 		Index:    index,
 		Commands: commands,

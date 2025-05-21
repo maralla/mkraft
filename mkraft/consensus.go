@@ -31,7 +31,8 @@ type MajorityRequestVoteResp struct {
 
 type ConsensusIface interface {
 	RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest) (*MajorityRequestVoteResp, error)
-	AppendEntriesSendForConsensus(ctx context.Context, reqForEachPeer map[string]*rpc.AppendEntriesRequest, currentTerm uint32) (*AppendEntriesConsensusResp, error)
+	AppendEntriesSendForConsensus(
+		ctx context.Context, peerReq map[string]*rpc.AppendEntriesRequest, currentTerm uint32) (*AppendEntriesConsensusResp, error)
 }
 
 type ConsensusImpl struct {
@@ -161,7 +162,7 @@ func (c *ConsensusImpl) RequestVoteSendForConsensus(ctx context.Context, request
 }
 
 func (c *ConsensusImpl) AppendEntriesSendForConsensus(
-	ctx context.Context, reqForEachPeer map[string]*rpc.AppendEntriesRequest, currentTerm uint32) (*AppendEntriesConsensusResp, error) {
+	ctx context.Context, peerReq map[string]*rpc.AppendEntriesRequest, currentTerm uint32) (*AppendEntriesConsensusResp, error) {
 	requestID := common.GetRequestID(ctx)
 	total := c.membershipMgr.GetMemberCount()
 	peerClients, err := c.membershipMgr.GetAllPeerClientsV2()
@@ -183,9 +184,12 @@ func (c *ConsensusImpl) AppendEntriesSendForConsensus(
 		go func(nodeID string, client InternalClientIface) {
 			ctxWithTimeout, cancel := context.WithTimeout(ctx, c.cfg.GetElectionTimeout())
 			defer cancel()
-			request := reqForEachPeer[nodeID]
+			request := peerReq[nodeID]
 			// FAN-IN
-			allRespChan <- client.SendAppendEntries(ctxWithTimeout, request)
+			resp := client.SendAppendEntries(ctxWithTimeout, request)
+			// todo: important, the consensus algorithm shall be a part of the node or it cannot update the index
+			// update the peers' index
+			allRespChan <- resp
 		}(nodeID, member)
 	}
 

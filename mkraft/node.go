@@ -2,6 +2,7 @@ package mkraft
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/maki3cat/mkraft/common"
@@ -80,6 +81,7 @@ func NewNode(
 		requestVoteChan:   make(chan *RequestVoteInternalReq, bufferSize),
 		appendEntryChan:   make(chan *AppendEntriesInternalReq, bufferSize),
 		LeaderId:          "",
+		stateRWLock:       &sync.RWMutex{},
 	}
 	node.sem.Acquire(context.Background(), 1)
 	defer node.sem.Release(1)
@@ -134,6 +136,14 @@ type Node struct {
 	nextIndex  map[string]uint64 // map[peerID]nextIndex, index of the next log entry to send to that server
 	matchIndex map[string]uint64 // map[peerID]matchIndex, index of highest log entry known to be replicated on that server
 
+	// a RW mutex for all thestates in this node
+	stateRWLock *sync.RWMutex
+}
+
+func (n *Node) getCurrentTerm() uint32 {
+	n.stateRWLock.RLock()
+	defer n.stateRWLock.RUnlock()
+	return n.CurrentTerm
 }
 
 func (n *Node) getPeersMatchIndex(nodeID string) uint64 {
@@ -154,10 +164,11 @@ func (node *Node) updateCommitIdx(commitIdx uint64) {
 	node.commitIndex = commitIdx
 }
 
-func (node *Node) updateLastAppliedIdx(lastAppliedIdx uint64) {
-	node.lastApplied = lastAppliedIdx
+func (node *Node) addLastAppliedIdx(numberOfCommand uint64) {
+	node.lastApplied = node.lastApplied + numberOfCommand
 }
 
+// todo: this method can be very problematic
 func (n *Node) catchupAppliedIdx() error {
 	if n.lastApplied < n.commitIndex {
 		logs, err := n.raftLog.GetLogsFromIdx(n.lastApplied + 1)
@@ -167,7 +178,7 @@ func (n *Node) catchupAppliedIdx() error {
 		}
 		for idx, log := range logs {
 			n.statemachine.ApplyCommand(log.Commands, n.lastApplied+1+uint64(idx))
-			n.updateLastAppliedIdx(n.lastApplied + 1 + uint64(idx))
+			n.addLastAppliedIdx(1)
 		}
 		return nil
 	}

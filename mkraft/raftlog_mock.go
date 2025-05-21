@@ -84,10 +84,10 @@ func (mr *MockRaftLogsIfaceMockRecorder) GetLastLogIdxAndTerm() *gomock.Call {
 }
 
 // GetLogsFromIdx mocks base method.
-func (m *MockRaftLogsIface) GetLogsFromIdx(index uint64) ([]RaftLogEntry, error) {
+func (m *MockRaftLogsIface) GetLogsFromIdx(index uint64) ([]*RaftLogEntry, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetLogsFromIdx", index)
-	ret0, _ := ret[0].([]RaftLogEntry)
+	ret0, _ := ret[0].([]*RaftLogEntry)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

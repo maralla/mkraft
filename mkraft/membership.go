@@ -50,6 +50,7 @@ type MembershipMgrIface interface {
 	GetMemberCount() int // current in use or set up ? setup shall be in the conf ?
 	GetAllPeerClients() ([]InternalClientIface, error)
 	GetAllPeerClientsV2() (map[string]InternalClientIface, error)
+	GetAllPeerNodeIDs() ([]string, error)
 	GracefulShutdown()
 }
 
@@ -68,6 +69,21 @@ func (mgr *StaticMembershipMgr) GracefulShutdown() {
 		value.(InternalClientIface).Close()
 		return true
 	})
+}
+
+func (mgr *StaticMembershipMgr) GetAllPeerNodeIDs() ([]string, error) {
+	membership := mgr.cfg.GetMembership()
+	peers := make([]string, 0)
+	for _, nodeInfo := range membership.AllMembers {
+		if nodeInfo.NodeID != membership.CurrentNodeID {
+			peers = append(peers, nodeInfo.NodeID)
+		}
+	}
+	if len(peers) == 0 {
+		mgr.logger.Error("no peers found without errors")
+		return nil, errors.New("no peers found without errors")
+	}
+	return peers, nil
 }
 
 func (mgr *StaticMembershipMgr) getPeerClient(nodeID string) (InternalClientIface, error) {

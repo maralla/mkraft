@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
 )
@@ -115,7 +114,7 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 					Term:     n.CurrentTerm,
 					LeaderId: n.NodeId,
 				}
-				go n.callAppendEntries(ctx, heartbeatReq)
+				go n.handleHeartbeat(ctx, heartbeatReq)
 			}
 		}
 	}
@@ -180,88 +179,138 @@ func (n *Node) clientCommandsTaskWorker(ctx context.Context, heartbeatTicker *ti
 				n.logger.Warn("leader's worker context done, exiting")
 				return
 			case clientCmd := <-n.clientCommandChan:
-				heartbeatTicker.Reset(n.cfg.GetLeaderHeartbeatPeriod())
-				// one-goroutine handles this request in serialization,
-				// but we use batching to improve performance
-				// todo: batching is not implemented yet
+				heartbeatTicker.Stop()
 				batchingSize := n.cfg.GetRaftNodeRequestBufferSize() - 1
 				clientCommands := readMultipleFromChannel(n.clientCommandChan, batchingSize)
 				clientCommands = append(clientCommands, clientCmd)
-				n.handleClientCommand(ctx, clientCommands)
+				error := n.handleClientCommand(ctx, clientCommands)
+				if error != nil {
+					n.logger.Error("error in handling client command", zap.Error(error))
+					for _, clientCommand := range clientCommands {
+						clientCommand.RespChan <- &RPCRespWrapper[*rpc.ClientCommandResponse]{
+							Resp: nil,
+							Err:  error,
+						}
+					}
+				}
+				heartbeatTicker.Reset(n.cfg.GetLeaderHeartbeatPeriod())
 			}
 		}
 	}
 }
 
+func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]CatchupLogs, error) {
+	result := make(map[string]CatchupLogs)
+	for _, peerNodeID := range peerNodeIDs {
+		nextID := n.getPeersNextIndex(peerNodeID)
+		logs, err := n.raftLog.GetLogsFromIdx(nextID)
+		if err != nil {
+			n.logger.Error("failed to get logs from index", zap.Error(err))
+			return nil, err
+		}
+		prevLogIndex := nextID - 1
+		prevTerm, error := n.raftLog.GetTermByIndex(prevLogIndex)
+		if error != nil {
+			n.logger.Error("failed to get term by index", zap.Error(error))
+			return nil, error
+		}
+		result[peerNodeID] = CatchupLogs{
+			lastLogIndex: prevLogIndex,
+			lastLogTerm:  prevTerm,
+			entries:      logs,
+		}
+	}
+	return result, nil
+}
+
 // todo: shall add batching
-// happy path: 1) the leader is alive and the followers are alive
+// happy path: 1) the leader is alive and the followers are alive (done)
 // problem-1: the leader is alive but minority followers are dead -> can be handled by the retry mechanism
 // problem-2: the leader is alive but majority followers are dead
 // problem-3: the leader is stale
-func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*ClientCommandInternalReq) {
+func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*ClientCommandInternalReq) error {
 
 	var subTasksToWait sync.WaitGroup
 	subTasksToWait.Add(2)
-	errors := make(chan error, 2)
+	errChan := make(chan error, 2)
+	currentTerm := n.getCurrentTerm()
 
-	// (1) appends the command to the local as a new entry
-	// todo: how to get the response
+	// prep:
+	// get logs from the raft logs for each client
+	// before the task-1 trying to change the logs and task-2 reading the logs in parallel and we don't know who is faster
+	peerNodeIDs, err := n.membership.GetAllPeerNodeIDs()
+	cathupLogsForPeers, err := n.getLogsToCatchupForPeers(peerNodeIDs)
+	if err != nil {
+		return err
+	}
+
+	// task1: appends the command to the local as a new entry
 	go func(ctx context.Context) {
 		defer subTasksToWait.Done()
 		commands := make([][]byte, len(clientCommands))
 		for i, clientCommand := range clientCommands {
 			commands[i] = clientCommand.Req.Command
 		}
-		errors <- n.raftLog.AppendLogsInBatch(ctx, commands, int(n.CurrentTerm))
+		errChan <- n.raftLog.AppendLogsInBatch(ctx, commands, int(currentTerm))
 	}(ctx)
 
-	// (2) sends the command of appendEntries to all the followers in parallel to replicate the entry
-	index, term := n.raftLog.GetLastLogIdxAndTerm()
-	entries := make([]*rpc.LogEntry, len(clientCommands))
-	for i, clientCommand := range clientCommands {
-		entries[i] = &rpc.LogEntry{
-			Data: clientCommand.Req.Command,
-		}
-	}
-	req := &rpc.AppendEntriesRequest{
-		Term:         n.CurrentTerm,
-		LeaderId:     n.NodeId,
-		PrevLogIndex: index,
-		PrevLogTerm:  term,
-		Entries:      entries,
-		LeaderCommit: n.commitIndex,
-	}
-	// todo: how to get the response
-	// todo: how to maintain the node state?
+	// task2 sends the command of appendEntries to all the followers in parallel to replicate the entry
 	go func(ctx context.Context) {
+		newCommands := make([]*rpc.LogEntry, len(clientCommands))
+		for i, clientCommand := range clientCommands {
+			newCommands[i] = &rpc.LogEntry{
+				Data: clientCommand.Req.Command,
+			}
+		}
+		reqs := make(map[string]*rpc.AppendEntriesRequest, len(peerNodeIDs))
+		for nodeID, catchup := range cathupLogsForPeers {
+			catchupCommands := make([]*rpc.LogEntry, len(catchup.entries))
+			for i, log := range catchup.entries {
+				catchupCommands[i] = &rpc.LogEntry{
+					Data: log.Commands,
+				}
+			}
+			reqs[nodeID] = &rpc.AppendEntriesRequest{
+				Term:         currentTerm,
+				LeaderId:     n.NodeId,
+				PrevLogIndex: catchup.lastLogIndex,
+				PrevLogTerm:  catchup.lastLogTerm,
+				Entries:      append(catchupCommands, newCommands...),
+			}
+		}
 		defer subTasksToWait.Done()
-		err := n.callAppendEntries(ctx, req)
-		errors <- err
+		n.consensus.AppendEntriesSendForConsensus(ctx, reqs, n.CurrentTerm)
+		errChan <- err
 	}(ctx)
 
-	// (3) when the entry has been safely replicated, the leader applies the entry to the state machine
+	// todo: what if task1 fails and task2 succeeds?
+	// todo: what if task1 succeeds and task2 fails?
+	// task3 when the entry has been safely replicated, the leader applies the entry to the state machine
 	subTasksToWait.Wait()
-	close(errors)
-	for err := range errors {
+	close(errChan)
+	var returnedErr error = nil
+	for err := range errChan {
 		if err != nil {
 			n.logger.Error("error in appending log to raft log", zap.Error(err))
-			// todo: maki, the paper doesn't mention how to handle this error, so we handle happy path only
-			panic("I don't know how to handle this error")
+			if returnedErr == nil {
+				returnedErr = err
+			} else {
+				returnedErr = errors.New(err.Error() + returnedErr.Error())
+			}
 		}
 	}
 
 	// (4) the leader applies the command, and responds to the client
-	newCommitID := req.PrevLogIndex + uint64(len(req.Entries))
+	newCommitID := n.raftLog.GetLastLogIdx()
 	n.updateCommitIdx(newCommitID)
 
 	// (5) apply the command
-	for idx, clientCommand := range clientCommands {
-		count := idx + 1
+	for _, clientCommand := range clientCommands {
 		internalReq := clientCommand
 		// todo: possibly, the statemachine shall has a unique ID for the command
 		// todo: the apply command shall be async with apply and get result
 		applyResp, err := n.statemachine.ApplyCommand(internalReq.Req.Command, newCommitID)
-		n.updateLastAppliedIdx(req.PrevLogIndex + uint64(count))
+		n.addLastAppliedIdx(1)
 		if err != nil {
 			n.logger.Error("error in applying command to state machine", zap.Error(err))
 			internalReq.RespChan <- &RPCRespWrapper[*rpc.ClientCommandResponse]{
@@ -278,99 +327,56 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*Client
 			}
 		}
 	}
-
 	// (5) if the follower run slowly or crash, the leader will retry to send the appendEntries indefinitely
-	// todo: how to do get the slower follower and resend the req?
-	// can start a goroutine to send the appendEntries to the slower follower
-
-	// todo: how to maintain the server index
-}
-
-// synchronous, should be called in a goroutine
-// todo: (1) the leader shall send the appendEntries from the each peer's nextIndex, so the logs are not the same for each peer
-// todo: (2) on response, the leader shall update the nextIndex and matchIndex for the follower
-// todo: (3) the leader election and inconsistency logic is not implemented yet
-func (n *Node) callAppendEntriesV2(ctx context.Context, req *rpc.AppendEntriesRequest) error {
-	// todo: to be implemented
-	peerNodeIDtoClient, err := n.membership.GetAllPeerClientsV2()
-	if err != nil {
-		n.logger.Error("failed to get all peer clients", zap.Error(err))
-	}
-	var reqForEachPeer map[string]*rpc.AppendEntriesRequest
-	for nodeID, _ := range peerNodeIDtoClient {
-		nextID := n.getPeersNextIndex(nodeID)
-		logs, err := n.raftLog.GetLogsFromIdx(nextID)
-		if err != nil {
-			n.logger.Error("failed to get logs from index", zap.Error(err))
-			return err
-		}
-		prevLogIndex := nextID - 1
-		prevLogTerm, err := n.raftLog.GetTermByIndex(prevLogIndex)
-		if err != nil {
-			n.logger.Error("failed to get term by index", zap.Error(err))
-		}
-		copiedReq := &rpc.AppendEntriesRequest{
-			Term:         req.Term,
-			LeaderId:     req.LeaderId,
-			LeaderCommit: req.LeaderCommit,
-			PrevLogIndex: prevLogIndex,
-			PrevLogTerm:  prevLogTerm,
-		}
-		copiedReq.Entries = make([]*rpc.LogEntry, len(logs))
-		for i, log := range logs {
-			copiedReq.Entries[i] = &rpc.LogEntry{
-				Data: log.Commands,
-			}
-		}
-		reqForEachPeer[nodeID] = copiedReq
-	}
-	n.consensus.AppendEntriesSendForConsensusV2(ctx, req)
+	// this is send thru appendEntreis triggered by heartbeat or the client command
 	return nil
 }
 
 // synchronous, should be called in a goroutine
+// todo: shall re-construct using the new logic
 // todo: (1) the leader shall send the appendEntries from the each peer's nextIndex, so the logs are not the same for each peer
 // todo: (2) on response, the leader shall update the nextIndex and matchIndex for the follower
 // todo: (3) the leader election and inconsistency logic is not implemented yet
-func (n *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) error {
+func (n *Node) handleHeartbeat(ctx context.Context, req *rpc.AppendEntriesRequest) error {
+	return nil
 
-	ctx, requestID := common.GetOrGenerateRequestID(ctx)
-	errChan := make(chan error, 1)
-	respChan := make(chan *AppendEntriesConsensusResp, 1)
-	go func(ctx context.Context) {
-		ctxTimeout, _ := context.WithTimeout(ctx, n.cfg.GetRPCRequestTimeout())
-		// since normally we don't wait for the stragglers,
-		// if we call cancel, there will be errors in the clients to the stragglers
-		consensusResp, err := n.consensus.AppendEntriesSendForConsensus(ctxTimeout, req)
-		if err != nil {
-			errChan <- err
-		} else {
-			respChan <- consensusResp
-		}
-	}(ctx)
+	// ctx, requestID := common.GetOrGenerateRequestID(ctx)
+	// errChan := make(chan error, 1)
+	// respChan := make(chan *AppendEntriesConsensusResp, 1)
+	// go func(ctx context.Context) {
+	// 	ctxTimeout, _ := context.WithTimeout(ctx, n.cfg.GetRPCRequestTimeout())
+	// 	// since normally we don't wait for the stragglers,
+	// 	// if we call cancel, there will be errors in the clients to the stragglers
+	// 	consensusResp, err := n.consensus.AppendEntriesSendForConsensus(ctxTimeout, req)
+	// 	if err != nil {
+	// 		errChan <- err
+	// 	} else {
+	// 		respChan <- consensusResp
+	// 	}
+	// }(ctx)
 
-	select {
-	case <-ctx.Done():
-		n.logger.Warn("raft node main context done, exiting", zap.String("requestID", requestID))
-		return common.ContextDoneErr()
-	case err := <-errChan:
-		n.logger.Error(
-			"error in sending append entries to one node", zap.Error(err), zap.String("requestID", requestID))
-		return err
-	case resp := <-respChan:
-		if resp.Success {
-			// maintain the index
-			if len(req.Entries) != 0 {
+	// select {
+	// case <-ctx.Done():
+	// 	n.logger.Warn("raft node main context done, exiting", zap.String("requestID", requestID))
+	// 	return common.ContextDoneErr()
+	// case err := <-errChan:
+	// 	n.logger.Error(
+	// 		"error in sending append entries to one node", zap.Error(err), zap.String("requestID", requestID))
+	// 	return err
+	// case resp := <-respChan:
+	// 	if resp.Success {
+	// 		// maintain the index
+	// 		if len(req.Entries) != 0 {
 
-			}
-			n.logger.Info("append entries success", zap.String("requestID", requestID))
-			// todo: shall deliver the result
-		} else {
-			n.leaderDegradationChan <- TermRank(resp.Term)
-			n.logger.Warn("append entries failed", zap.String("requestID", requestID))
-		}
-		return nil
-	}
+	// 		}
+	// 		n.logger.Info("append entries success", zap.String("requestID", requestID))
+	// 		// todo: shall deliver the result
+	// 	} else {
+	// 		n.leaderDegradationChan <- TermRank(resp.Term)
+	// 		n.logger.Warn("append entries failed", zap.String("requestID", requestID))
+	// 	}
+	// 	return nil
+	// }
 
 }
 
