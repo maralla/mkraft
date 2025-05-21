@@ -40,8 +40,11 @@ type TermRank int
 var _ NodeIface = (*Node)(nil)
 
 type NodeIface interface {
+	// todo: lost requestID and other values in the context
 	VoteRequest(req *utils.RequestVoteInternalReq)
+	// todo: lost requestID and other values in the context
 	AppendEntryRequest(req *utils.AppendEntriesInternalReq)
+	// todo: lost requestID and other values in the context
 	ClientCommand(req *utils.ClientCommandInternalReq)
 
 	Start(ctx context.Context)
@@ -62,8 +65,8 @@ func NewNode(
 	// todo: can be a problem of these two intializations
 	// zero can be problematic, but these can also be a problem
 	// we can fix with happy path first like start from a new cluster, and never fails
-	lastAppliedIdx := statemachine.GetLatestAppliedIndex()
-	lastCommitIdx, _ := raftlog.GetLastLogIdxAndTerm()
+	// lastAppliedIdx := statemachine.GetLatestAppliedIndex()
+	// lastCommitIdx, _ := raftlog.GetLastLogIdxAndTerm()
 
 	node := &Node{
 		raftLog:      raftlog,
@@ -87,10 +90,10 @@ func NewNode(
 		CurrentTerm: 0,
 		VotedFor:    "",
 
-		commitIndex: lastCommitIdx,
-		lastApplied: lastAppliedIdx,
-		nextIndex:   make(map[string]uint64),
-		matchIndex:  make(map[string]uint64),
+		commitIndex: 0,
+		lastApplied: 0,
+		nextIndex:   make(map[string]uint64, 6),
+		matchIndex:  make(map[string]uint64, 6),
 	}
 
 	node.sem.Acquire(context.Background(), 1)
