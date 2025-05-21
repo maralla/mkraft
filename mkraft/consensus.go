@@ -141,6 +141,7 @@ func (c *Node) ConsensusRequestVote(ctx context.Context, request *rpc.RequestVot
 	return nil, errors.New("this should not happen, the consensus algorithm is not implmented correctly")
 }
 
+// also update the peer index in this method
 func (n *Node) ConsensusAppendEntries(
 	ctx context.Context, peerReq map[string]*rpc.AppendEntriesRequest, currentTerm uint32) (*AppendEntriesConsensusResp, error) {
 	requestID := common.GetRequestID(ctx)

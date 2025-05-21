@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/mkraft/plugs"
 	"github.com/maki3cat/mkraft/mkraft/utils"
 	"github.com/maki3cat/mkraft/rpc"
@@ -33,8 +34,6 @@ How the Shared Rule works for Leaders with 3 scenarios:
 (2) If command received from client:
 
 	append entry to local log, respond after entry applied to state machine; (5.3) (OK)
-
-	--todo: not implemented yet
 
 (3) If last log index ≥ nextIndex for a follower: send AppendEntries RPC with log entries starting at nextIndex for the follower;
 If successful: update nextIndex and matchIndex for follower
@@ -84,15 +83,16 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	// we need to clean the channel when the leader quits,
 	// and reset the channels when the leader comes back
 
+	// workers for the leader, subgoroutines
 	ctxForWorker, cancelWorker := context.WithCancel(ctx)
 	defer cancelWorker()
+
 	go n.leaderCommonTaskWorker(ctxForWorker)
 
 	heartbeatDuration := n.cfg.GetLeaderHeartbeatPeriod()
 	tickerForHeartbeat := time.NewTicker(heartbeatDuration)
 	defer tickerForHeartbeat.Stop()
 	go n.clientCommandsTaskWorker(ctxForWorker, tickerForHeartbeat)
-	go n.resendSlowerFollowerWorker(ctxForWorker)
 
 	for {
 		select {
@@ -107,25 +107,24 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 			case newTerm := <-n.leaderDegradationChan:
 				n.State = StateFollower
 				n.SetVoteForAndTerm(n.VotedFor, uint32(newTerm))
-				// shall first change the state, so that new client commands won't flood in when we close the channel
-				n.closeClientCommandChan()
 				go n.RunAsFollower(ctx)
 				return
 			case <-tickerForHeartbeat.C:
-				heartbeatReq := &rpc.AppendEntriesRequest{
-					Term:     n.CurrentTerm,
-					LeaderId: n.NodeId,
+				// it seems here can block until the heartbeat finishes
+				// the assumption is that the rpc timeout is short and the handling of rpc response
+				// is fast enough
+				tickerForHeartbeat.Stop()
+				err := n.handleHeartbeat(ctx)
+				if err != nil {
+					n.logger.Error("error in sending heartbeat", zap.Error(err))
 				}
-				go n.handleHeartbeat(ctx, heartbeatReq)
+				tickerForHeartbeat.Reset(heartbeatDuration)
 			}
 		}
 	}
 }
 
-func (n *Node) resendSlowerFollowerWorker(ctx context.Context) {
-	n.logger.Warn("resendSlowerFollowerWorker has not been implemented yet")
-}
-
+// separate goroutine for the this task
 func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
 	for {
 		select {
@@ -169,18 +168,21 @@ func (n *Node) leaderCommonTaskWorker(ctx context.Context) {
 	}
 }
 
+// separate goroutine for the this task
 func (n *Node) clientCommandsTaskWorker(ctx context.Context, heartbeatTicker *time.Ticker) {
+	defer n.closeClientCommandChan()
 	for {
 		select {
 		case <-ctx.Done():
-			n.logger.Warn("leader's worker context done, exiting")
+			n.logger.Warn("exiting leader's worker for handling commands Task")
 			return
 		default:
 			select {
 			case <-ctx.Done():
-				n.logger.Warn("leader's worker context done, exiting")
+				n.logger.Warn("exiting leader's worker for handling commands Task")
 				return
 			case clientCmd := <-n.clientCommandChan:
+				// todo: has race with the heartbeat timer, but since it is idempotent, it is okay
 				heartbeatTicker.Stop()
 				batchingSize := n.cfg.GetRaftNodeRequestBufferSize() - 1
 				clientCommands := utils.ReadMultipleFromChannel(n.clientCommandChan, batchingSize)
@@ -225,6 +227,7 @@ func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]plugs.
 	return result, nil
 }
 
+// synchronous call
 // todo: shall add batching
 // happy path: 1) the leader is alive and the followers are alive (done)
 // problem-1: the leader is alive but minority followers are dead -> can be handled by the retry mechanism
@@ -234,7 +237,6 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.
 
 	var subTasksToWait sync.WaitGroup
 	subTasksToWait.Add(2)
-	errChan := make(chan error, 2)
 	currentTerm := n.getCurrentTerm()
 
 	// prep:
@@ -250,17 +252,22 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.
 	}
 
 	// task1: appends the command to the local as a new entry
+	errorChanTask1 := make(chan error, 1)
 	go func(ctx context.Context) {
 		defer subTasksToWait.Done()
 		commands := make([][]byte, len(clientCommands))
 		for i, clientCommand := range clientCommands {
 			commands[i] = clientCommand.Req.Command
 		}
-		errChan <- n.raftLog.AppendLogsInBatch(ctx, commands, int(currentTerm))
+		errorChanTask1 <- n.raftLog.AppendLogsInBatch(ctx, commands, int(currentTerm))
 	}(ctx)
 
 	// task2 sends the command of appendEntries to all the followers in parallel to replicate the entry
+	respChan := make(chan *AppendEntriesConsensusResp, 1)
+	errorChanTask2 := make(chan error, 1)
 	go func(ctx context.Context) {
+		defer subTasksToWait.Done()
+		ctxTimeout, _ := context.WithTimeout(ctx, n.cfg.GetRPCRequestTimeout())
 		newCommands := make([]*rpc.LogEntry, len(clientCommands))
 		for i, clientCommand := range clientCommands {
 			newCommands[i] = &rpc.LogEntry{
@@ -283,25 +290,32 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.
 				Entries:      append(catchupCommands, newCommands...),
 			}
 		}
-		defer subTasksToWait.Done()
-		n.ConsensusAppendEntries(ctx, reqs, n.CurrentTerm)
-		errChan <- err
+		resp, err := n.ConsensusAppendEntries(ctxTimeout, reqs, n.CurrentTerm)
+		respChan <- resp
+		errorChanTask2 <- err
 	}(ctx)
 
 	// todo: what if task1 fails and task2 succeeds?
 	// todo: what if task1 succeeds and task2 fails?
 	// task3 when the entry has been safely replicated, the leader applies the entry to the state machine
 	subTasksToWait.Wait()
-	close(errChan)
-	var returnedErr error = nil
-	for err := range errChan {
-		if err != nil {
-			n.logger.Error("error in appending log to raft log", zap.Error(err))
-			if returnedErr == nil {
-				returnedErr = err
-			} else {
-				returnedErr = errors.New(err.Error() + returnedErr.Error())
-			}
+	// maki: not sure how to handle the error?
+	if err := <-errorChanTask1; err != nil {
+		n.logger.Error("error in appending logs to raft log", zap.Error(err))
+		panic("not sure how to handle the error")
+	}
+	if err := <-errorChanTask2; err != nil {
+		n.logger.Error("error in sending append entries to one node", zap.Error(err))
+		panic("not sure how to handle the error")
+	}
+	resp := <-respChan
+	if !resp.Success {
+		if resp.Term > currentTerm {
+			n.leaderDegradationChan <- TermRank(resp.Term)
+			return nil
+		} else {
+			// todo: the unsafe panic is temporarily used for debugging
+			panic("failed append entries, but without not a higher term")
 		}
 	}
 
@@ -310,6 +324,7 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.
 	n.updateCommitIdx(newCommitID)
 
 	// (5) apply the command
+	// todo: shall refine the statemachine interface
 	for _, clientCommand := range clientCommands {
 		internalReq := clientCommand
 		// todo: possibly, the statemachine shall has a unique ID for the command
@@ -337,52 +352,68 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.
 	return nil
 }
 
-// synchronous, should be called in a goroutine
-// todo: shall re-construct using the new logic
-// todo: (1) the leader shall send the appendEntries from the each peer's nextIndex, so the logs are not the same for each peer
-// todo: (2) on response, the leader shall update the nextIndex and matchIndex for the follower
-// todo: (3) the leader election and inconsistency logic is not implemented yet
-func (n *Node) handleHeartbeat(ctx context.Context, req *rpc.AppendEntriesRequest) error {
-	return nil
+// synchronous
+func (n *Node) handleHeartbeat(ctx context.Context) error {
+	ctx, requestID := common.GetOrGenerateRequestID(ctx)
+	currentTerm := n.getCurrentTerm()
+	peerNodeIDs, err := n.membership.GetAllPeerNodeIDs()
+	if err != nil {
+		return err
+	}
+	cathupLogsForPeers, err := n.getLogsToCatchupForPeers(peerNodeIDs)
+	if err != nil {
+		return err
+	}
+	reqs := make(map[string]*rpc.AppendEntriesRequest, len(peerNodeIDs))
+	for nodeID, catchup := range cathupLogsForPeers {
+		catchupCommands := make([]*rpc.LogEntry, len(catchup.Entries))
+		for i, log := range catchup.Entries {
+			catchupCommands[i] = &rpc.LogEntry{
+				Data: log.Commands,
+			}
+		}
+		reqs[nodeID] = &rpc.AppendEntriesRequest{
+			Term:         currentTerm,
+			LeaderId:     n.NodeId,
+			PrevLogIndex: catchup.LastLogIndex,
+			PrevLogTerm:  catchup.LastLogTerm,
+			Entries:      catchupCommands,
+		}
+	}
+	errChan := make(chan error, 1)
+	respChan := make(chan *AppendEntriesConsensusResp, 1)
 
-	// ctx, requestID := common.GetOrGenerateRequestID(ctx)
-	// errChan := make(chan error, 1)
-	// respChan := make(chan *AppendEntriesConsensusResp, 1)
-	// go func(ctx context.Context) {
-	// 	ctxTimeout, _ := context.WithTimeout(ctx, n.cfg.GetRPCRequestTimeout())
-	// 	// since normally we don't wait for the stragglers,
-	// 	// if we call cancel, there will be errors in the clients to the stragglers
-	// 	consensusResp, err := n.consensus.AppendEntriesSendForConsensus(ctxTimeout, req)
-	// 	if err != nil {
-	// 		errChan <- err
-	// 	} else {
-	// 		respChan <- consensusResp
-	// 	}
-	// }(ctx)
+	go func(ctx context.Context) {
+		ctxTimeout, _ := context.WithTimeout(ctx, n.cfg.GetRPCRequestTimeout())
+		resp, err := n.ConsensusAppendEntries(ctxTimeout, reqs, n.CurrentTerm)
+		errChan <- err
+		respChan <- resp
+	}(ctx)
 
-	// select {
-	// case <-ctx.Done():
-	// 	n.logger.Warn("raft node main context done, exiting", zap.String("requestID", requestID))
-	// 	return common.ContextDoneErr()
-	// case err := <-errChan:
-	// 	n.logger.Error(
-	// 		"error in sending append entries to one node", zap.Error(err), zap.String("requestID", requestID))
-	// 	return err
-	// case resp := <-respChan:
-	// 	if resp.Success {
-	// 		// maintain the index
-	// 		if len(req.Entries) != 0 {
-
-	// 		}
-	// 		n.logger.Info("append entries success", zap.String("requestID", requestID))
-	// 		// todo: shall deliver the result
-	// 	} else {
-	// 		n.leaderDegradationChan <- TermRank(resp.Term)
-	// 		n.logger.Warn("append entries failed", zap.String("requestID", requestID))
-	// 	}
-	// 	return nil
-	// }
-
+	select {
+	case <-ctx.Done():
+		n.logger.Warn("raft node main context done, exiting", zap.String("requestID", requestID))
+		return common.ContextDoneErr()
+	case err := <-errChan:
+		n.logger.Error(
+			"error in sending append entries to one node", zap.Error(err), zap.String("requestID", requestID))
+		return err
+	case resp := <-respChan:
+		if resp.Success {
+			// maintain the index
+			n.logger.Info("append entries success", zap.String("requestID", requestID))
+			// todo: shall deliver the result
+		} else {
+			if resp.Term > currentTerm {
+				n.logger.Warn("peer's term is greater than current term", zap.String("requestID", requestID))
+				n.leaderDegradationChan <- TermRank(resp.Term)
+			} else {
+				// todo: the unsafe panic is temporarily used for debugging
+				panic("failed append entries, but without not a higher term")
+			}
+		}
+		return nil
+	}
 }
 
 func (n *Node) closeClientCommandChan() {
