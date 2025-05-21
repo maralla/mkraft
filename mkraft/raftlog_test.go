@@ -28,7 +28,7 @@ func TestAppendLogsInBatchAndGetLogsFromIndex(t *testing.T) {
 			t.Fatalf("AppendLogsInBatch failed: %v", err)
 		}
 
-		entries, err := logs.GetLogsFromIndex(1)
+		entries, err := logs.GetLogsFromIdx(1)
 		if err != nil {
 			t.Fatalf("GetLogsFromIndex failed: %v", err)
 		}
@@ -51,7 +51,7 @@ func TestAppendLogsInBatchAndGetLogsFromIndex(t *testing.T) {
 
 func TestGetPrevLogIndexAndTerm(t *testing.T) {
 	withTempLogFile(t, func(logs RaftLogsIface, _ string) {
-		index, term := logs.GetPrevLogIndexAndTerm()
+		index, term := logs.GetLastLogIdxAndTerm()
 		if index != 0 || term != 0 {
 			t.Errorf("expected (0,0) for empty logs, got (%d,%d)", index, term)
 		}
@@ -61,7 +61,7 @@ func TestGetPrevLogIndexAndTerm(t *testing.T) {
 		if err := logs.AppendLogsInBatch(context.Background(), commands, termVal); err != nil {
 			t.Fatalf("AppendLogsInBatch failed: %v", err)
 		}
-		index, term = logs.GetPrevLogIndexAndTerm()
+		index, term = logs.GetLastLogIdxAndTerm()
 		if index != 1 || term != uint32(termVal) {
 			t.Errorf("expected (1,%d), got (%d,%d)", termVal, index, term)
 		}
@@ -70,7 +70,7 @@ func TestGetPrevLogIndexAndTerm(t *testing.T) {
 
 func TestGetLogsFromIndex_InvalidIndex(t *testing.T) {
 	withTempLogFile(t, func(logs RaftLogsIface, _ string) {
-		_, err := logs.GetLogsFromIndex(1)
+		_, err := logs.GetLogsFromIdx(1)
 		if err == nil {
 			t.Error("expected error for index 1 on empty logs")
 		}
@@ -94,7 +94,7 @@ func TestPersistenceAndLoad(t *testing.T) {
 	}
 	{
 		logs := NewRaftLogsImplAndLoad(filePath)
-		entries, err := logs.GetLogsFromIndex(1)
+		entries, err := logs.GetLogsFromIdx(1)
 		fmt.Printf("entries: %v\n", entries)
 		if err != nil {
 			t.Fatalf("GetLogsFromIndex failed after reload: %v", err)

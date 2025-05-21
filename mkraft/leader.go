@@ -216,7 +216,7 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*Client
 	}(ctx)
 
 	// (2) sends the command of appendEntries to all the followers in parallel to replicate the entry
-	index, term := n.raftLog.GetPrevLogIndexAndTerm()
+	index, term := n.raftLog.GetLastLogIdxAndTerm()
 	entries := make([]*rpc.LogEntry, len(clientCommands))
 	for i, clientCommand := range clientCommands {
 		entries[i] = &rpc.LogEntry{
@@ -290,7 +290,17 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*Client
 // todo: (1) the leader shall send the appendEntries from the each peer's nextIndex, so the logs are not the same for each peer
 // todo: (2) on response, the leader shall update the nextIndex and matchIndex for the follower
 // todo: (3) the leader election and inconsistency logic is not implemented yet
+func (n *Node) callAppendEntriesV2(ctx context.Context, req *rpc.AppendEntriesRequest) error {
+	// todo: to be implemented
+	return nil
+}
+
+// synchronous, should be called in a goroutine
+// todo: (1) the leader shall send the appendEntries from the each peer's nextIndex, so the logs are not the same for each peer
+// todo: (2) on response, the leader shall update the nextIndex and matchIndex for the follower
+// todo: (3) the leader election and inconsistency logic is not implemented yet
 func (n *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) error {
+
 	ctx, requestID := common.GetOrGenerateRequestID(ctx)
 	errChan := make(chan error, 1)
 	respChan := make(chan *AppendEntriesConsensusResp, 1)
@@ -328,6 +338,7 @@ func (n *Node) callAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequ
 		}
 		return nil
 	}
+
 }
 
 func (n *Node) closeClientCommandChan() {

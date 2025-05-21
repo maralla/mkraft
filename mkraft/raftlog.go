@@ -13,9 +13,10 @@ import (
 var _ RaftLogsIface = (*SimpleRaftLogsImpl)(nil)
 
 type RaftLogsIface interface {
-	GetPrevLogIndexAndTerm() (uint64, uint32)
+	GetLastLogIdxAndTerm() (uint64, uint32)
+	GetLastLogIdx() uint64
 	// index is included
-	GetLogsFromIndex(index uint64) ([]RaftLogEntry, error)
+	GetLogsFromIdx(index uint64) ([]RaftLogEntry, error)
 	AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error
 }
 
@@ -61,8 +62,15 @@ type SimpleRaftLogsImpl struct {
 
 const LogMarker byte = '#'
 
+func (rl *SimpleRaftLogsImpl) GetLastLogIdx() uint64 {
+	rl.mutex.Lock()
+	defer rl.mutex.Unlock()
+	// todo: since it uses slice, the uint64 is not necessary
+	return uint64(len(rl.logs))
+}
+
 // index is included
-func (rl *SimpleRaftLogsImpl) GetLogsFromIndex(index uint64) ([]RaftLogEntry, error) {
+func (rl *SimpleRaftLogsImpl) GetLogsFromIdx(index uint64) ([]RaftLogEntry, error) {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 	sliceIndex := int(index) - 1
@@ -75,7 +83,7 @@ func (rl *SimpleRaftLogsImpl) GetLogsFromIndex(index uint64) ([]RaftLogEntry, er
 }
 
 // index starts from 1
-func (rl *SimpleRaftLogsImpl) GetPrevLogIndexAndTerm() (uint64, uint32) {
+func (rl *SimpleRaftLogsImpl) GetLastLogIdxAndTerm() (uint64, uint32) {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 	if len(rl.logs) == 0 {

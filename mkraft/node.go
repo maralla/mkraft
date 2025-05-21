@@ -2,7 +2,6 @@ package mkraft
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/maki3cat/mkraft/common"
@@ -59,7 +58,7 @@ func NewNode(
 	consensus := NewConsensus(logger, membership, cfg)
 
 	lastAppliedIdx := statemachine.GetLatestAppliedIndex()
-	lastCommitIdx, _ := raftlog.GetPrevLogIndexAndTerm()
+	lastCommitIdx, _ := raftlog.GetLastLogIdxAndTerm()
 
 	node := &Node{
 		lastApplied: lastAppliedIdx,
@@ -81,7 +80,6 @@ func NewNode(
 		requestVoteChan:   make(chan *RequestVoteInternalReq, bufferSize),
 		appendEntryChan:   make(chan *AppendEntriesInternalReq, bufferSize),
 		LeaderId:          "",
-		mutexForIdx:       sync.Mutex{},
 	}
 	node.sem.Acquire(context.Background(), 1)
 	defer node.sem.Release(1)
@@ -125,10 +123,9 @@ type Node struct {
 	// LogEntries
 
 	// Paper page 4:
-	// todo should be protected by mutex state
+	// todo: since right now we serialize appendEntries, we don't add mutex for this
 	//	Volatile state on all servers (both initialized to 0, increase monotonically)
 	//  index of the highest log entry known to be committed
-	mutexForIdx sync.Mutex
 	commitIndex uint64
 	// index of the highest log entry applied to state machine
 	lastApplied uint64
@@ -139,9 +136,31 @@ type Node struct {
 
 }
 
+func (n *Node) getPeersMatchIndex(nodeID string) uint64 {
+	if index, ok := n.matchIndex[nodeID]; ok {
+		return index
+	}
+	return 0
+}
+
+func (n *Node) getPeersNextIndex(nodeID string) uint64 {
+	if index, ok := n.nextIndex[nodeID]; ok {
+		return index
+	}
+	return n.raftLog.GetLastLogIdx() + 1
+}
+
+func (node *Node) updateCommitIdx(commitIdx uint64) {
+	node.commitIndex = commitIdx
+}
+
+func (node *Node) updateLastAppliedIdx(lastAppliedIdx uint64) {
+	node.lastApplied = lastAppliedIdx
+}
+
 func (n *Node) catchupAppliedIdx() error {
 	if n.lastApplied < n.commitIndex {
-		logs, err := n.raftLog.GetLogsFromIndex(n.lastApplied + 1)
+		logs, err := n.raftLog.GetLogsFromIdx(n.lastApplied + 1)
 		if err != nil {
 			n.logger.Error("failed to get logs from index", zap.Error(err))
 			return err
@@ -153,18 +172,6 @@ func (n *Node) catchupAppliedIdx() error {
 		return nil
 	}
 	return nil
-}
-
-func (node *Node) updateCommitIdx(commitIdx uint64) {
-	node.mutexForIdx.Lock()
-	defer node.mutexForIdx.Unlock()
-	node.commitIndex = commitIdx
-}
-
-func (node *Node) updateLastAppliedIdx(lastAppliedIdx uint64) {
-	node.mutexForIdx.Lock()
-	defer node.mutexForIdx.Unlock()
-	node.lastApplied = lastAppliedIdx
 }
 
 // maki: go gymnastics for sync values
