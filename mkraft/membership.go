@@ -49,6 +49,7 @@ type MembershipMgrIface interface {
 	// todo: may need to be re-constructed when dynamic membership is added
 	GetMemberCount() int // current in use or set up ? setup shall be in the conf ?
 	GetAllPeerClients() ([]InternalClientIface, error)
+	GetAllPeerClientsV2() (map[string]InternalClientIface, error)
 	GracefulShutdown()
 }
 
@@ -108,6 +109,25 @@ func (mgr *StaticMembershipMgr) GetAllPeerClients() ([]InternalClientIface, erro
 				continue
 			}
 			peers = append(peers, client)
+		}
+	}
+	if len(peers) == 0 {
+		return peers, errors.New("no peers found without errors")
+	}
+	return peers, nil
+}
+
+func (mgr *StaticMembershipMgr) GetAllPeerClientsV2() (map[string]InternalClientIface, error) {
+	membership := mgr.cfg.GetMembership()
+	peers := make(map[string]InternalClientIface)
+	for _, nodeInfo := range membership.AllMembers {
+		if nodeInfo.NodeID != membership.CurrentNodeID {
+			client, err := mgr.getPeerClient(nodeInfo.NodeID)
+			if err != nil {
+				mgr.logger.Error("failed to create new client", zap.String("nodeID", membership.CurrentNodeID), zap.Error(err))
+				continue
+			}
+			peers[nodeInfo.NodeID] = client
 		}
 	}
 	if len(peers) == 0 {

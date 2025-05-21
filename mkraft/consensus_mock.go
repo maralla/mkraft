@@ -42,18 +42,18 @@ func (m *MockConsensusIface) EXPECT() *MockConsensusIfaceMockRecorder {
 }
 
 // AppendEntriesSendForConsensus mocks base method.
-func (m *MockConsensusIface) AppendEntriesSendForConsensus(ctx context.Context, request *rpc.AppendEntriesRequest) (*AppendEntriesConsensusResp, error) {
+func (m *MockConsensusIface) AppendEntriesSendForConsensus(ctx context.Context, reqForEachPeer map[string]*rpc.AppendEntriesRequest, currentTerm uint32) (*AppendEntriesConsensusResp, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AppendEntriesSendForConsensus", ctx, request)
+	ret := m.ctrl.Call(m, "AppendEntriesSendForConsensus", ctx, reqForEachPeer, currentTerm)
 	ret0, _ := ret[0].(*AppendEntriesConsensusResp)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // AppendEntriesSendForConsensus indicates an expected call of AppendEntriesSendForConsensus.
-func (mr *MockConsensusIfaceMockRecorder) AppendEntriesSendForConsensus(ctx, request any) *gomock.Call {
+func (mr *MockConsensusIfaceMockRecorder) AppendEntriesSendForConsensus(ctx, reqForEachPeer, currentTerm any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendEntriesSendForConsensus", reflect.TypeOf((*MockConsensusIface)(nil).AppendEntriesSendForConsensus), ctx, request)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendEntriesSendForConsensus", reflect.TypeOf((*MockConsensusIface)(nil).AppendEntriesSendForConsensus), ctx, reqForEachPeer, currentTerm)
 }
 
 // RequestVoteSendForConsensus mocks base method.

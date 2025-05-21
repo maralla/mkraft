@@ -31,7 +31,7 @@ type MajorityRequestVoteResp struct {
 
 type ConsensusIface interface {
 	RequestVoteSendForConsensus(ctx context.Context, request *rpc.RequestVoteRequest) (*MajorityRequestVoteResp, error)
-	AppendEntriesSendForConsensus(ctx context.Context, request *rpc.AppendEntriesRequest) (*AppendEntriesConsensusResp, error)
+	AppendEntriesSendForConsensus(ctx context.Context, reqForEachPeer map[string]*rpc.AppendEntriesRequest, currentTerm uint32) (*AppendEntriesConsensusResp, error)
 }
 
 type ConsensusImpl struct {
@@ -160,18 +160,11 @@ func (c *ConsensusImpl) RequestVoteSendForConsensus(ctx context.Context, request
 	return nil, errors.New("this should not happen, the consensus algorithm is not implmented correctly")
 }
 
-/*
-* Synchronous API:
-* contains async workers to call all peers appendEtnries
-* and wait for the majority of them to respond
-* the expected timeout is just simple one-round trip timeout configuration
- */
 func (c *ConsensusImpl) AppendEntriesSendForConsensus(
-	ctx context.Context, request *rpc.AppendEntriesRequest) (*AppendEntriesConsensusResp, error) {
-
+	ctx context.Context, reqForEachPeer map[string]*rpc.AppendEntriesRequest, currentTerm uint32) (*AppendEntriesConsensusResp, error) {
 	requestID := common.GetRequestID(ctx)
 	total := c.membershipMgr.GetMemberCount()
-	peerClients, err := c.membershipMgr.GetAllPeerClients()
+	peerClients, err := c.membershipMgr.GetAllPeerClientsV2()
 	if err != nil {
 		c.logger.Error("error in getting all peer clients",
 			zap.Error(err),
@@ -185,15 +178,15 @@ func (c *ConsensusImpl) AppendEntriesSendForConsensus(
 	}
 
 	allRespChan := make(chan RPCRespWrapper[*rpc.AppendEntriesResponse], len(peerClients))
-	for _, member := range peerClients {
-		memberHandle := member
+	for nodeID, member := range peerClients {
 		// FAN-OUT
-		go func() {
+		go func(nodeID string, client InternalClientIface) {
 			ctxWithTimeout, cancel := context.WithTimeout(ctx, c.cfg.GetElectionTimeout())
 			defer cancel()
+			request := reqForEachPeer[nodeID]
 			// FAN-IN
-			allRespChan <- memberHandle.SendAppendEntries(ctxWithTimeout, request)
-		}()
+			allRespChan <- client.SendAppendEntries(ctxWithTimeout, request)
+		}(nodeID, member)
 	}
 
 	// STOPPING SHORT
@@ -212,7 +205,7 @@ func (c *ConsensusImpl) AppendEntriesSendForConsensus(
 				continue
 			} else {
 				resp := res.Resp
-				if resp.Term > request.Term {
+				if resp.Term > currentTerm {
 					c.logger.Info("peer's term is greater than current term",
 						zap.String("requestID", requestID))
 					return &AppendEntriesConsensusResp{
@@ -220,12 +213,12 @@ func (c *ConsensusImpl) AppendEntriesSendForConsensus(
 						Success: false,
 					}, nil
 				}
-				if resp.Term == request.Term {
+				if resp.Term == currentTerm {
 					if resp.Success {
 						peerVoteAccumulated++
 						if calculateIfMajorityMet(total, peerVoteAccumulated) {
 							return &AppendEntriesConsensusResp{
-								Term:    request.Term,
+								Term:    resp.Term,
 								Success: true,
 							}, nil
 						}
@@ -241,10 +234,9 @@ func (c *ConsensusImpl) AppendEntriesSendForConsensus(
 						}
 					}
 				}
-				if resp.Term < request.Term {
+				if resp.Term < currentTerm {
 					c.logger.Error(
 						"invairant failed, smaller term is not overwritten by larger term",
-						zap.String("request", request.String()),
 						zap.String("response", resp.String()),
 						zap.String("requestID", requestID))
 					panic("this should not happen, the consensus algorithm is not implmented correctly")

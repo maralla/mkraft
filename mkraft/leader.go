@@ -292,6 +292,39 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*Client
 // todo: (3) the leader election and inconsistency logic is not implemented yet
 func (n *Node) callAppendEntriesV2(ctx context.Context, req *rpc.AppendEntriesRequest) error {
 	// todo: to be implemented
+	peerNodeIDtoClient, err := n.membership.GetAllPeerClientsV2()
+	if err != nil {
+		n.logger.Error("failed to get all peer clients", zap.Error(err))
+	}
+	var reqForEachPeer map[string]*rpc.AppendEntriesRequest
+	for nodeID, _ := range peerNodeIDtoClient {
+		nextID := n.getPeersNextIndex(nodeID)
+		logs, err := n.raftLog.GetLogsFromIdx(nextID)
+		if err != nil {
+			n.logger.Error("failed to get logs from index", zap.Error(err))
+			return err
+		}
+		prevLogIndex := nextID - 1
+		prevLogTerm, err := n.raftLog.GetTermByIndex(prevLogIndex)
+		if err != nil {
+			n.logger.Error("failed to get term by index", zap.Error(err))
+		}
+		copiedReq := &rpc.AppendEntriesRequest{
+			Term:         req.Term,
+			LeaderId:     req.LeaderId,
+			LeaderCommit: req.LeaderCommit,
+			PrevLogIndex: prevLogIndex,
+			PrevLogTerm:  prevLogTerm,
+		}
+		copiedReq.Entries = make([]*rpc.LogEntry, len(logs))
+		for i, log := range logs {
+			copiedReq.Entries[i] = &rpc.LogEntry{
+				Data: log.Commands,
+			}
+		}
+		reqForEachPeer[nodeID] = copiedReq
+	}
+	n.consensus.AppendEntriesSendForConsensusV2(ctx, req)
 	return nil
 }
 

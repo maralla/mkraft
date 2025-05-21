@@ -54,6 +54,21 @@ func (mr *MockMembershipMgrIfaceMockRecorder) GetAllPeerClients() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllPeerClients", reflect.TypeOf((*MockMembershipMgrIface)(nil).GetAllPeerClients))
 }
 
+// GetAllPeerClientsV2 mocks base method.
+func (m *MockMembershipMgrIface) GetAllPeerClientsV2() (map[string]InternalClientIface, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllPeerClientsV2")
+	ret0, _ := ret[0].(map[string]InternalClientIface)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllPeerClientsV2 indicates an expected call of GetAllPeerClientsV2.
+func (mr *MockMembershipMgrIfaceMockRecorder) GetAllPeerClientsV2() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllPeerClientsV2", reflect.TypeOf((*MockMembershipMgrIface)(nil).GetAllPeerClientsV2))
+}
+
 // GetMemberCount mocks base method.
 func (m *MockMembershipMgrIface) GetMemberCount() int {
 	m.ctrl.T.Helper()
