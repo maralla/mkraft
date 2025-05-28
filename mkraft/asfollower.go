@@ -59,7 +59,7 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 					}
 					electionTicker.Stop()
 					// for the follower, the node state has no reason to change because of the request
-					resp := n.receiveVoteRequest(requestVoteInternal.Req)
+					resp := n.handleVoteRequest(requestVoteInternal.Req)
 					wrappedResp := utils.RPCRespWrapper[*rpc.RequestVoteResponse]{
 						Resp: resp,
 						Err:  nil,
@@ -70,7 +70,7 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 					// todo: to maintain logs and index and state machine of the follower
 					electionTicker.Stop()
 					// for the follower, the node state has no reason to change because of the request
-					resp := n.receiveAppendEntires(req.Req)
+					resp := n.handlerAppendEntries(req.Req)
 					wrappedResp := utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 						Resp: resp,
 						Err:  nil,

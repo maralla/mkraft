@@ -2,10 +2,7 @@ package mkraft
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"sync"
-	"time"
 
 	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/mkraft/peers"
@@ -155,129 +152,6 @@ type Node struct {
 	matchIndex map[string]uint64 // map[peerID]matchIndex, index of highest log entry known to be replicated on that server
 }
 
-func (n *Node) getStateFileName() string {
-	return "raftstate"
-}
-
-// load from file system, shall be called at the beginning of the node
-func (n *Node) loadCurrentTermAndVotedFor() error {
-	n.stateRWLock.Lock()
-	defer n.stateRWLock.Unlock()
-
-	// if not exists, initialize to default values
-	if _, err := os.Stat(n.getStateFileName()); os.IsNotExist(err) {
-		n.logger.Info("raft state file does not exist, initializing to default values")
-		n.CurrentTerm = 0
-		n.VotedFor = ""
-		return nil
-	}
-
-	file, err := os.Open(n.getStateFileName())
-	if err != nil {
-		if os.IsNotExist(err) {
-			n.logger.Info("raft state file does not exist, initializing to default values")
-			n.CurrentTerm = 0
-			n.VotedFor = ""
-			return nil
-		}
-		return err
-	}
-	defer file.Close()
-
-	var term uint32
-	var voteFor string
-	cnt, err := fmt.Fscanf(file, "%d,%s", &term, &voteFor)
-	if err != nil {
-		return fmt.Errorf("error reading raft state file: %w", err)
-	}
-
-	if cnt != 2 {
-		return fmt.Errorf("expected 2 values in raft state file, got %d", cnt)
-	}
-
-	n.CurrentTerm = term
-	n.VotedFor = voteFor
-
-	n.logger.Debug("loadCurrentTermAndVotedFor",
-		zap.String("fileName", n.getStateFileName()),
-		zap.Int("bytesRead", cnt),
-		zap.Uint32("term", n.CurrentTerm),
-		zap.String("voteFor", n.VotedFor),
-	)
-	return nil
-}
-
-// store to file system, shall be called when the term or votedFor changes
-func (n *Node) storeCurrentTermAndVotedFor(term uint32, voteFor string) error {
-	n.stateRWLock.Lock()
-	defer n.stateRWLock.Unlock()
-	shouldReturn, err := n.unsafeUpdateNodeTermAndVoteFor(term, voteFor)
-	if shouldReturn {
-		return err
-	}
-	n.CurrentTerm = term
-	return nil
-}
-
-func (n *Node) updateCurrentTermAndVotedForAsCandidate() error {
-	n.stateRWLock.Lock()
-	defer n.stateRWLock.Unlock()
-	term := n.CurrentTerm + 1
-	voteFor := n.NodeId
-	shouldReturn, err := n.unsafeUpdateNodeTermAndVoteFor(term, voteFor)
-	if shouldReturn {
-		return err
-	}
-	n.CurrentTerm = term
-	return nil
-}
-
-func (n *Node) unsafeUpdateNodeTermAndVoteFor(term uint32, voteFor string) (bool, error) {
-	formatted := time.Now().Format("20060102150405.000")
-	numericTimestamp := formatted[:len(formatted)-4] + formatted[len(formatted)-3:]
-	fileName := fmt.Sprintf("%s_%s.tmp", n.getStateFileName(), numericTimestamp)
-
-	file, err := os.Create(fileName)
-	if err != nil {
-		return true, err
-	}
-
-	cnt, err := file.WriteString(fmt.Sprintf("%d,%s", term, voteFor))
-	n.logger.Debug("storeCurrentTermAndVotedFor",
-		zap.String("fileName", fileName),
-		zap.Int("bytesWritten", cnt),
-		zap.Uint32("term", term),
-		zap.String("voteFor", voteFor),
-		zap.Error(err),
-	)
-
-	err = file.Sync()
-	if err != nil {
-		n.logger.Error("error syncing file", zap.String("fileName", fileName), zap.Error(err))
-		return true, err
-	}
-	err = file.Close()
-	if err != nil {
-		n.logger.Error("error closing file", zap.String("fileName", fileName), zap.Error(err))
-		return true, err
-	}
-
-	err = os.Rename(fileName, n.getStateFileName())
-	if err != nil {
-		panic(err)
-	}
-
-	n.VotedFor = voteFor
-	return false, nil
-}
-
-// normal read
-func (n *Node) getCurrentTerm() uint32 {
-	n.stateRWLock.RLock()
-	defer n.stateRWLock.RUnlock()
-	return n.CurrentTerm
-}
-
 func (node *Node) VoteRequest(req *utils.RequestVoteInternalReq) {
 	node.requestVoteChan <- req
 }
@@ -303,12 +177,12 @@ func (node *Node) Stop(ctx context.Context) {
 
 // maki: jthis method should be a part of the consensus algorithm
 // todo: right now this method doesn't check the current state of the node
-// todo: checks the receiveVoteRequest works correctly for any state of the node, candidate or leader or follower
+// todo: checks the handleVoteRequest works correctly for any state of the node, candidate or leader or follower
 // todo: not sure what state shall be changed inside or outside in the caller
-func (node *Node) receiveVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
+func (node *Node) handleVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
 
 	var response rpc.RequestVoteResponse
-	currentTerm := node.getCurrentTerm()
+	currentTerm, voteFor := node.getCurrentTermAndVoteFor()
 
 	if req.Term > currentTerm {
 		err := node.storeCurrentTermAndVotedFor(req.Term, req.CandidateId) // did vote for the candidate
@@ -329,8 +203,10 @@ func (node *Node) receiveVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVo
 			VoteGranted: false,
 		}
 	} else {
-		if node.VotedFor == "" || node.VotedFor == req.CandidateId {
-			node.VotedFor = req.CandidateId
+		if voteFor == "" {
+			node.logger.Error("shouldn't happen, but voteFor is empty")
+		}
+		if voteFor == req.CandidateId {
 			response = rpc.RequestVoteResponse{
 				Term:        currentTerm,
 				VoteGranted: true,
@@ -348,7 +224,7 @@ func (node *Node) receiveVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVo
 // maki: jthis method should be a part of the consensus algorithm
 // todo: right now this method doesn't check the current state of the node
 // todo: not sure what state shall be changed inside or outside in the caller
-func (n *Node) receiveAppendEntires(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
+func (n *Node) handlerAppendEntries(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
 	var response rpc.AppendEntriesResponse
 	reqTerm := uint32(req.Term)
 	currentTerm := n.getCurrentTerm()

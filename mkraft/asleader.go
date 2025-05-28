@@ -182,7 +182,7 @@ func (n *Node) leaderWorkerForCommon(ctx context.Context) {
 				if !internalReq.IsTimeout.Load() {
 					// no-IO operation
 					req := internalReq.Req
-					resp := n.receiveVoteRequest(req)
+					resp := n.handleVoteRequest(req)
 					wrappedResp := &utils.RPCRespWrapper[*rpc.RequestVoteResponse]{
 						Resp: resp,
 						Err:  nil,
@@ -195,7 +195,7 @@ func (n *Node) leaderWorkerForCommon(ctx context.Context) {
 				}
 			case internalReq := <-n.appendEntryChan: // commonRule: same with candidate
 				// todo: shall add appendEntry operations which shall be a goroutine
-				resp := n.receiveAppendEntires(internalReq.Req)
+				resp := n.handlerAppendEntries(internalReq.Req)
 				wrapper := utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 					Resp: resp,
 					Err:  nil,

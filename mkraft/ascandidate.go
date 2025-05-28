@@ -91,7 +91,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 					}
 					req := requestVoteInternal.Req
 					resChan := requestVoteInternal.RespChan
-					resp := n.receiveVoteRequest(req)
+					resp := n.handleVoteRequest(req)
 					wrappedResp := utils.RPCRespWrapper[*rpc.RequestVoteResponse]{
 						Resp: resp,
 						Err:  nil,
@@ -104,7 +104,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 						return
 					}
 				case req := <-n.appendEntryChan: // commonRule: handling appendEntry from a leader which can be stale or new
-					resp := n.receiveAppendEntires(req.Req)
+					resp := n.handlerAppendEntries(req.Req)
 					wrappedResp := utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 						Resp: resp,
 						Err:  nil,
