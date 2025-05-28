@@ -338,7 +338,7 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.
 		// todo: possibly, the statemachine shall has a unique ID for the command
 		// todo: the apply command shall be async with apply and get result
 		applyResp, err := n.statemachine.ApplyCommand(internalReq.Req.Command, newCommitID)
-		n.addLastAppliedIdx(1)
+		n.incrementLastApplied(1)
 		if err != nil {
 			n.logger.Error("error in applying command to state machine", zap.Error(err))
 			internalReq.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{

@@ -1,12 +1,14 @@
 package node
 
 import (
-	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
 )
 
+// section1: for indices of commidID and lastApplied which are owned by all the nodes
 // it is called when the node starts, so it will apply all logs from lastApplied to commitIndex
 // these applied logs don't need to be sent to clients
+// todo: pattern: decoupling the 2 layers
+// todo: huge reconstruction, that decouple log replication and statemachine apply
 func (n *Node) catchupAppliedIdxOnStartup() error {
 	n.stateRWLock.Lock()
 	defer n.stateRWLock.Unlock()
@@ -31,48 +33,64 @@ func (n *Node) catchupAppliedIdxOnStartup() error {
 	return nil
 }
 
-// utils to manage indexes for the node
-// maki: after success for this node, but does this require majority?
-func (n *Node) updatePeerIndexAfterAppendEntries(nodeID string, req *rpc.AppendEntriesRequest) {
-	newIdx := req.PrevLogIndex + uint64(len(req.Entries))
+func (n *Node) updateCommitIdx(commitIdx uint64) {
 	n.stateRWLock.Lock()
 	defer n.stateRWLock.Unlock()
-	n.matchIndex[nodeID] = newIdx
-	n.nextIndex[nodeID] = newIdx
+	if commitIdx > n.commitIndex {
+		n.commitIndex = commitIdx
+	} else {
+		n.logger.Warn("commit index is not updated, it is smaller than current commit index",
+			zap.Uint64("commitIdx", commitIdx),
+			zap.Uint64("currentCommitIndex", n.commitIndex))
+	}
 }
 
-// func (n *Node) updatePeersIndex(nodeID string, nextIndex, matchIndex uint64) {
-// 	n.stateRWLock.Lock()
-// 	defer n.stateRWLock.Unlock()
-// 	n.matchIndex[nodeID] = matchIndex
-// 	n.nextIndex[nodeID] = nextIndex
-// }
+func (n *Node) incrementLastApplied(numberOfCommand uint64) {
+	n.stateRWLock.Lock()
+	defer n.stateRWLock.Unlock()
+	n.lastApplied = n.lastApplied + numberOfCommand
+}
 
-// func (n *Node) getPeersMatchIndex(nodeID string) uint64 {
-// 	if index, ok := n.matchIndex[nodeID]; ok {
-// 		return index
-// 	}
-// 	return 0
-// }
+// section2: for indices of leaders, nextIndex/matchIndex
+// maki: Updating a follower’s match/next index is independent of whether consensus is reached.
+// Updating matchIndex/nextIndex is a per-follower operation.
+// Reaching consensus (a majority of nodes having the same entry) is a cluster-wide operation.
+func (n *Node) incrementPeersNextIndexOnSuccess(nodeID string, logCnt uint64) {
+	n.stateRWLock.Lock()
+	defer n.stateRWLock.Unlock()
+	if _, exists := n.nextIndex[nodeID]; exists {
+		n.nextIndex[nodeID] = n.nextIndex[nodeID] + logCnt
+		n.matchIndex[nodeID] = n.nextIndex[nodeID] + logCnt
+	} else {
+		n.nextIndex[nodeID] = logCnt + 1
+		n.matchIndex[nodeID] = logCnt
+	}
+}
+
+// important invariant: matchIndex[follower] ≤ nextIndex[follower] - 1
+// if the matchIndex is less than nextIndex-1, appendEntries will fail and the follower's nextIndex will be decremented
+func (n *Node) decrementPeersNextIndexOnFailure(nodeID string) {
+	n.stateRWLock.Lock()
+	defer n.stateRWLock.Unlock()
+	if n.nextIndex[nodeID] > 1 {
+		n.nextIndex[nodeID] -= 1
+	} else {
+		n.logger.Error("next index is already at 1, cannot decrement", zap.String("nodeID", nodeID))
+	}
+}
 
 func (n *Node) getPeersNextIndex(nodeID string) uint64 {
 	n.stateRWLock.RLock()
 	defer n.stateRWLock.RUnlock()
 	if index, ok := n.nextIndex[nodeID]; ok {
 		return index
+	} else {
+		n.nextIndex[nodeID], n.matchIndex[nodeID] = n.getInitDefaultValuesForPeer()
+		return n.nextIndex[nodeID]
 	}
-	// default value
-	return n.raftLog.GetLastLogIdx() + 1
 }
 
-func (n *Node) updateCommitIdx(commitIdx uint64) {
-	n.stateRWLock.Lock()
-	defer n.stateRWLock.Unlock()
-	n.commitIndex = commitIdx
-}
-
-func (n *Node) addLastAppliedIdx(numberOfCommand uint64) {
-	n.stateRWLock.Lock()
-	defer n.stateRWLock.Unlock()
-	n.lastApplied = n.lastApplied + numberOfCommand
+// returns nextIndex, matchIndex
+func (n *Node) getInitDefaultValuesForPeer() (uint64, uint64) {
+	return n.raftLog.GetLastLogIdx() + 1, 0
 }
