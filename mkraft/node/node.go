@@ -1,4 +1,4 @@
-package mkraft
+package node
 
 import (
 	"context"
@@ -56,8 +56,6 @@ func NewNode(
 	cfg common.ConfigIface,
 	logger *zap.Logger,
 	membership peers.MembershipMgrIface,
-	raftlog plugs.RaftLogsIface,
-	statemachine plugs.StateMachineIface,
 ) NodeIface {
 	bufferSize := cfg.GetRaftNodeRequestBufferSize()
 
@@ -68,11 +66,9 @@ func NewNode(
 	// lastCommitIdx, _ := raftlog.GetLastLogIdxAndTerm()
 
 	node := &Node{
-		raftLog:      raftlog,
-		membership:   membership,
-		cfg:          cfg,
-		logger:       logger,
-		statemachine: statemachine,
+		membership: membership,
+		cfg:        cfg,
+		logger:     logger,
 
 		stateRWLock: &sync.RWMutex{},
 		sem:         semaphore.NewWeighted(1),
@@ -85,7 +81,7 @@ func NewNode(
 		requestVoteChan:       make(chan *utils.RequestVoteInternalReq, bufferSize),
 		appendEntryChan:       make(chan *utils.AppendEntriesInternalReq, bufferSize),
 
-		// todo: how should this be initialized and maintained
+		// persistent state on all servers
 		CurrentTerm: 0,
 		VotedFor:    "",
 
@@ -95,6 +91,12 @@ func NewNode(
 		matchIndex:  make(map[string]uint64, 6),
 	}
 
+	// initialize the raft log and statemachine
+	raftLogIface := plugs.NewRaftLogsImplAndLoad(cfg.GetRaftLogFilePath())
+	statemachine := plugs.NewStateMachineNoOpImpl()
+	node.raftLog = raftLogIface
+	node.statemachine = statemachine
+
 	// load persistent state
 	err := node.loadCurrentTermAndVotedFor()
 	if err != nil {
@@ -102,7 +104,7 @@ func NewNode(
 		panic(err)
 	}
 	// load logs
-	node.catchupAppliedIdx()
+	node.catchupAppliedIdxOnStartup()
 
 	node.sem.Acquire(context.Background(), 1)
 	defer node.sem.Release(1)

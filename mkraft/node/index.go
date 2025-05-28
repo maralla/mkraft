@@ -1,13 +1,13 @@
-package mkraft
+package node
 
 import (
 	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
 )
 
-// todo: this method can be very problematic, need to double check
-func (n *Node) catchupAppliedIdx() error {
-
+// it is called when the node starts, so it will apply all logs from lastApplied to commitIndex
+// these applied logs don't need to be sent to clients
+func (n *Node) catchupAppliedIdxOnStartup() error {
 	n.stateRWLock.Lock()
 	defer n.stateRWLock.Unlock()
 
@@ -18,6 +18,7 @@ func (n *Node) catchupAppliedIdx() error {
 			return err
 		}
 		for idx, log := range logs {
+			// todo: apply command needs reconstruction
 			_, err := n.statemachine.ApplyCommand(log.Commands, n.lastApplied+1+uint64(idx))
 			if err != nil {
 				n.logger.Error("failed to apply command", zap.Error(err))
@@ -30,8 +31,7 @@ func (n *Node) catchupAppliedIdx() error {
 	return nil
 }
 
-// utils
-
+// utils to manage indexes for the node
 // maki: after success for this node, but does this require majority?
 func (n *Node) updatePeerIndexAfterAppendEntries(nodeID string, req *rpc.AppendEntriesRequest) {
 	newIdx := req.PrevLogIndex + uint64(len(req.Entries))

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/maki3cat/mkraft/mkraft/node"
 	"github.com/maki3cat/mkraft/mkraft/utils"
 	pb "github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/mock/gomock"
@@ -14,7 +15,7 @@ import (
 // Example for TestRequestVote_Success
 func TestRequestVote_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	node := NewMockNodeIface(ctrl)
+	node := node.NewMockNodeIface(ctrl)
 	defer ctrl.Finish()
 
 	handlers := &Handlers{
@@ -53,7 +54,7 @@ func TestRequestVote_Success(t *testing.T) {
 
 func TestRequestVote_Error(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	node := NewMockNodeIface(ctrl)
+	node := node.NewMockNodeIface(ctrl)
 	defer ctrl.Finish()
 
 	handlers := &Handlers{
@@ -89,7 +90,7 @@ func TestRequestVote_Error(t *testing.T) {
 
 func TestAppendEntries_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	node := NewMockNodeIface(ctrl)
+	node := node.NewMockNodeIface(ctrl)
 	defer ctrl.Finish()
 
 	handlers := &Handlers{
@@ -132,7 +133,7 @@ func TestAppendEntries_Success(t *testing.T) {
 
 func TestAppendEntries_Error(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	node := NewMockNodeIface(ctrl)
+	node := node.NewMockNodeIface(ctrl)
 	defer ctrl.Finish()
 
 	handlers := &Handlers{
@@ -172,7 +173,7 @@ func TestAppendEntries_Error(t *testing.T) {
 
 func TestClientCommand_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	node := NewMockNodeIface(ctrl)
+	node := node.NewMockNodeIface(ctrl)
 	defer ctrl.Finish()
 
 	handlers := &Handlers{
@@ -209,7 +210,7 @@ func TestClientCommand_Success(t *testing.T) {
 
 func TestClientCommand_Error(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	node := NewMockNodeIface(ctrl)
+	node := node.NewMockNodeIface(ctrl)
 	defer ctrl.Finish()
 
 	handlers := &Handlers{

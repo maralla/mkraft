@@ -1,4 +1,4 @@
-package mkraft
+package node
 
 import (
 	"fmt"
@@ -8,6 +8,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// the Persistent state on all servers: currentTerm, votedFor
+// the logs are managed by RaftLogImpl, which is a separate file
 func (n *Node) getStateFileName() string {
 	return "raftstate"
 }
