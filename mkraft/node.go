@@ -2,6 +2,8 @@ package mkraft
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -96,10 +98,18 @@ func NewNode(
 		matchIndex:  make(map[string]uint64, 6),
 	}
 
+	// load persistent state
+	err := node.loadCurrentTermAndVotedFor()
+	if err != nil {
+		node.logger.Error("error loading current term and voted for", zap.Error(err))
+		panic(err)
+	}
+	// load logs
+	node.catchupAppliedIdx()
+
 	node.sem.Acquire(context.Background(), 1)
 	defer node.sem.Release(1)
 
-	node.catchupAppliedIdx()
 	return node
 }
 
@@ -132,8 +142,6 @@ type Node struct {
 	appendEntryChan chan *utils.AppendEntriesInternalReq
 
 	// Persistent state on all servers
-	// todo: how/why to make it persistent? (embedded db?)
-	// todo: change to concurrency safe
 	CurrentTerm uint32 // required, persistent (todo: haven't get persisted yet)
 	VotedFor    string // required, persistent (todo: haven't get persisted yet, why ?)
 	// LogEntries
@@ -147,21 +155,127 @@ type Node struct {
 	matchIndex map[string]uint64 // map[peerID]matchIndex, index of highest log entry known to be replicated on that server
 }
 
+func (n *Node) getStateFileName() string {
+	return "raftstate"
+}
+
+// load from file system, shall be called at the beginning of the node
+func (n *Node) loadCurrentTermAndVotedFor() error {
+	n.stateRWLock.Lock()
+	defer n.stateRWLock.Unlock()
+
+	// if not exists, initialize to default values
+	if _, err := os.Stat(n.getStateFileName()); os.IsNotExist(err) {
+		n.logger.Info("raft state file does not exist, initializing to default values")
+		n.CurrentTerm = 0
+		n.VotedFor = ""
+		return nil
+	}
+
+	file, err := os.Open(n.getStateFileName())
+	if err != nil {
+		if os.IsNotExist(err) {
+			n.logger.Info("raft state file does not exist, initializing to default values")
+			n.CurrentTerm = 0
+			n.VotedFor = ""
+			return nil
+		}
+		return err
+	}
+	defer file.Close()
+
+	var term uint32
+	var voteFor string
+	cnt, err := fmt.Fscanf(file, "%d,%s", &term, &voteFor)
+	if err != nil {
+		return fmt.Errorf("error reading raft state file: %w", err)
+	}
+
+	if cnt != 2 {
+		return fmt.Errorf("expected 2 values in raft state file, got %d", cnt)
+	}
+
+	n.CurrentTerm = term
+	n.VotedFor = voteFor
+
+	n.logger.Debug("loadCurrentTermAndVotedFor",
+		zap.String("fileName", n.getStateFileName()),
+		zap.Int("bytesRead", cnt),
+		zap.Uint32("term", n.CurrentTerm),
+		zap.String("voteFor", n.VotedFor),
+	)
+	return nil
+}
+
+// store to file system, shall be called when the term or votedFor changes
+func (n *Node) storeCurrentTermAndVotedFor(term uint32, voteFor string) error {
+	n.stateRWLock.Lock()
+	defer n.stateRWLock.Unlock()
+	shouldReturn, err := n.unsafeUpdateNodeTermAndVoteFor(term, voteFor)
+	if shouldReturn {
+		return err
+	}
+	n.CurrentTerm = term
+	return nil
+}
+
+func (n *Node) updateCurrentTermAndVotedForAsCandidate() error {
+	n.stateRWLock.Lock()
+	defer n.stateRWLock.Unlock()
+	term := n.CurrentTerm + 1
+	voteFor := n.NodeId
+	shouldReturn, err := n.unsafeUpdateNodeTermAndVoteFor(term, voteFor)
+	if shouldReturn {
+		return err
+	}
+	n.CurrentTerm = term
+	return nil
+}
+
+func (n *Node) unsafeUpdateNodeTermAndVoteFor(term uint32, voteFor string) (bool, error) {
+	formatted := time.Now().Format("20060102150405.000")
+	numericTimestamp := formatted[:len(formatted)-4] + formatted[len(formatted)-3:]
+	fileName := fmt.Sprintf("%s_%s.tmp", n.getStateFileName(), numericTimestamp)
+
+	file, err := os.Create(fileName)
+	if err != nil {
+		return true, err
+	}
+
+	cnt, err := file.WriteString(fmt.Sprintf("%d,%s", term, voteFor))
+	n.logger.Debug("storeCurrentTermAndVotedFor",
+		zap.String("fileName", fileName),
+		zap.Int("bytesWritten", cnt),
+		zap.Uint32("term", term),
+		zap.String("voteFor", voteFor),
+		zap.Error(err),
+	)
+
+	err = file.Sync()
+	if err != nil {
+		n.logger.Error("error syncing file", zap.String("fileName", fileName), zap.Error(err))
+		return true, err
+	}
+	err = file.Close()
+	if err != nil {
+		n.logger.Error("error closing file", zap.String("fileName", fileName), zap.Error(err))
+		return true, err
+	}
+
+	err = os.Rename(fileName, n.getStateFileName())
+	if err != nil {
+		panic(err)
+	}
+
+	n.VotedFor = voteFor
+	return false, nil
+}
+
+// normal read
 func (n *Node) getCurrentTerm() uint32 {
 	n.stateRWLock.RLock()
 	defer n.stateRWLock.RUnlock()
 	return n.CurrentTerm
-}
-
-// maki: go gymnastics for sync values
-// todo: add sync for these values?
-func (node *Node) SetVoteForAndTerm(voteFor string, term uint32) {
-	node.VotedFor = voteFor
-	node.CurrentTerm = term
-}
-
-func (node *Node) ResetVoteFor() {
-	node.VotedFor = ""
 }
 
 func (node *Node) VoteRequest(req *utils.RequestVoteInternalReq) {
@@ -183,30 +297,6 @@ func (node *Node) Stop(ctx context.Context) {
 	close(node.clientCommandChan)
 }
 
-func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteResp {
-	ctx, requestID := common.GetOrGenerateRequestID(ctx)
-	consensusChan := make(chan *MajorityRequestVoteResp, 1)
-	node.CurrentTerm++
-	node.VotedFor = node.NodeId
-	req := &rpc.RequestVoteRequest{
-		Term:        node.CurrentTerm,
-		CandidateId: node.NodeId,
-	}
-	ctxTimeout, _ := context.WithTimeout(
-		ctx, time.Duration(node.cfg.GetElectionTimeout()))
-	go func() {
-		resp, err := node.ConsensusRequestVote(ctxTimeout, req)
-		if err != nil {
-			node.logger.Error(
-				"error in RequestVoteSendForConsensus", zap.String("requestID", requestID), zap.Error(err))
-			return
-		} else {
-			consensusChan <- resp
-		}
-	}()
-	return consensusChan
-}
-
 // TODO: THE WHOLE MODULE SHALL BE REFACTORED TO BE AN INTEGRAL OF THE CONSENSUS ALGORITHM
 // The decision of consensus upon receiving a request
 // can be independent of the current state of the node
@@ -216,29 +306,38 @@ func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteR
 // todo: checks the receiveVoteRequest works correctly for any state of the node, candidate or leader or follower
 // todo: not sure what state shall be changed inside or outside in the caller
 func (node *Node) receiveVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
+
 	var response rpc.RequestVoteResponse
-	if req.Term > node.CurrentTerm {
-		node.VotedFor = req.CandidateId
-		node.CurrentTerm = req.Term
+	currentTerm := node.getCurrentTerm()
+
+	if req.Term > currentTerm {
+		err := node.storeCurrentTermAndVotedFor(req.Term, req.CandidateId) // did vote for the candidate
+		if err != nil {
+			node.logger.Error(
+				"error in storeCurrentTermAndVotedFor", zap.Error(err),
+				zap.String("nId", node.NodeId),
+				zap.Uint32("term", req.Term), zap.String("candidateId", req.CandidateId))
+			panic(err) // critical error, cannot continue
+		}
 		response = rpc.RequestVoteResponse{
 			Term:        req.Term,
 			VoteGranted: true,
 		}
-	} else if req.Term < node.CurrentTerm {
+	} else if req.Term < currentTerm {
 		response = rpc.RequestVoteResponse{
-			Term:        node.CurrentTerm,
+			Term:        currentTerm,
 			VoteGranted: false,
 		}
 	} else {
 		if node.VotedFor == "" || node.VotedFor == req.CandidateId {
 			node.VotedFor = req.CandidateId
 			response = rpc.RequestVoteResponse{
-				Term:        node.CurrentTerm,
+				Term:        currentTerm,
 				VoteGranted: true,
 			}
 		} else {
 			response = rpc.RequestVoteResponse{
-				Term:        node.CurrentTerm,
+				Term:        currentTerm,
 				VoteGranted: false,
 			}
 		}
@@ -249,24 +348,32 @@ func (node *Node) receiveVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVo
 // maki: jthis method should be a part of the consensus algorithm
 // todo: right now this method doesn't check the current state of the node
 // todo: not sure what state shall be changed inside or outside in the caller
-func (node *Node) receiveAppendEntires(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
+func (n *Node) receiveAppendEntires(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
 	var response rpc.AppendEntriesResponse
 	reqTerm := uint32(req.Term)
-	if reqTerm > node.CurrentTerm {
-		// todo: tell the leader/candidate to change the state to follower
+	currentTerm := n.getCurrentTerm()
+
+	if reqTerm > currentTerm {
+		err := n.storeCurrentTermAndVotedFor(reqTerm, "") // did not vote for anyone
+		if err != nil {
+			n.logger.Error(
+				"error in storeCurrentTermAndVotedFor", zap.Error(err),
+				zap.String("nId", n.NodeId))
+			panic(err) // critical error, cannot continue
+		}
 		response = rpc.AppendEntriesResponse{
-			Term:    node.CurrentTerm,
+			Term:    currentTerm,
 			Success: true,
 		}
-	} else if reqTerm < node.CurrentTerm {
+	} else if reqTerm < currentTerm {
 		response = rpc.AppendEntriesResponse{
-			Term:    node.CurrentTerm,
+			Term:    currentTerm,
 			Success: false,
 		}
 	} else {
 		// should accecpet it directly?
 		response = rpc.AppendEntriesResponse{
-			Term:    node.CurrentTerm,
+			Term:    currentTerm,
 			Success: true,
 		}
 	}

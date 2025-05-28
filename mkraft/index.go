@@ -5,6 +5,31 @@ import (
 	"go.uber.org/zap"
 )
 
+// todo: this method can be very problematic, need to double check
+func (n *Node) catchupAppliedIdx() error {
+
+	n.stateRWLock.Lock()
+	defer n.stateRWLock.Unlock()
+
+	if n.lastApplied < n.commitIndex {
+		logs, err := n.raftLog.GetLogsFromIdxIncluded(n.lastApplied + 1)
+		if err != nil {
+			n.logger.Error("failed to get logs from index", zap.Error(err))
+			return err
+		}
+		for idx, log := range logs {
+			_, err := n.statemachine.ApplyCommand(log.Commands, n.lastApplied+1+uint64(idx))
+			if err != nil {
+				n.logger.Error("failed to apply command", zap.Error(err))
+				return err
+			}
+			n.lastApplied = n.lastApplied + 1
+		}
+		return nil
+	}
+	return nil
+}
+
 // utils
 
 // maki: after success for this node, but does this require majority?
@@ -50,29 +75,4 @@ func (n *Node) addLastAppliedIdx(numberOfCommand uint64) {
 	n.stateRWLock.Lock()
 	defer n.stateRWLock.Unlock()
 	n.lastApplied = n.lastApplied + numberOfCommand
-}
-
-// todo: this method can be very problematic, need to double check
-func (n *Node) catchupAppliedIdx() error {
-
-	n.stateRWLock.Lock()
-	defer n.stateRWLock.Unlock()
-
-	if n.lastApplied < n.commitIndex {
-		logs, err := n.raftLog.GetLogsFromIdxIncluded(n.lastApplied + 1)
-		if err != nil {
-			n.logger.Error("failed to get logs from index", zap.Error(err))
-			return err
-		}
-		for idx, log := range logs {
-			_, err := n.statemachine.ApplyCommand(log.Commands, n.lastApplied+1+uint64(idx))
-			if err != nil {
-				n.logger.Error("failed to apply command", zap.Error(err))
-				return err
-			}
-			n.lastApplied = n.lastApplied + 1
-		}
-		return nil
-	}
-	return nil
 }

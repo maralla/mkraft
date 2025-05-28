@@ -106,7 +106,11 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 				return
 			case newTerm := <-n.leaderDegradationChan:
 				n.State = StateFollower
-				n.SetVoteForAndTerm(n.VotedFor, uint32(newTerm))
+				err := n.storeCurrentTermAndVotedFor(uint32(newTerm), "") // downgrade to follower but did not vote for anyone
+				if err != nil {
+					n.logger.Error("error in storing current term and voted for", zap.Error(err))
+					panic(err) // critical error, cannot continue
+				}
 				go n.RunAsFollower(ctx)
 				return
 			case <-tickerForHeartbeat.C:
@@ -294,7 +298,7 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.
 				Entries:      append(catchupCommands, newCommands...),
 			}
 		}
-		resp, err := n.ConsensusAppendEntries(ctxTimeout, reqs, n.CurrentTerm)
+		resp, err := n.ConsensusAppendEntries(ctxTimeout, reqs, n.getCurrentTerm())
 		respChan <- resp
 		errorChanTask2 <- err
 	}(ctx)
