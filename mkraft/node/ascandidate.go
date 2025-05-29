@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// todo: add handle appendEntries from a leader which is new -> can defer the logic to follower
 /*
 PAPER (quote):
 Shared Rule: if any RPC request or response is received from a server with a higher term,

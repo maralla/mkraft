@@ -8,19 +8,14 @@ import (
 	"github.com/maki3cat/mkraft/rpc"
 )
 
-// todo, maki: shall check if we need priority of a speicifc channel in our select
+// todo: add handle appendEntries from a leader which may delete/overwrite logs
 /*
-PAPER (quote):
-Shared Rule: if any RPC request or response is received from a server with a higher term,
-convert to follower
-How the Shared Rule works for Followers:
-(1) handle request of AppendEntriesRPC initiated by another server
-(2) handle reuqest of RequestVoteRPC initiated by another server
+PAPER:
 
-Speicial Rules for Followers
-Respond to RPCs from candidates and leaders
-If election timeout elapses without receiving AppendEntries RPC from current leader
-or granting vote to candidate: convert to candidate
+Follower are passive and they don't initiate any requests,
+and only respond to requests from candidates and leaders.
+
+If times out, the follower will convert to candidate state.
 */
 func (n *Node) RunAsFollower(ctx context.Context) {
 

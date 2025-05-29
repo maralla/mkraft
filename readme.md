@@ -11,6 +11,7 @@ Raft guarantees that each of these properties is true at all the time
 - Election Safety: at most one leader can be elected in a given term (not time but term) -> ($5.2 Leader Election)
 #### Log Replication ($5.3)
 - Leader Append-only: a leader never overwrites or deletes entries in its logs; it only appends new entries; -> ($5.3 Log Replication)
+(but followers may overwrite or truncate their logs)
 - Log Matching: if two logs contain an entry with the same index and term, then logs are identical in all entries up through the given index; -> ($5.3 Log Replication)
 #### Safety ($5.4)
 - Leader Completeness: if a log entry is commited in a given term, then that entry will be present in the logs of the leaders for all higher numbered terms; ($5.4)

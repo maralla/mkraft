@@ -82,7 +82,7 @@ func NewNode(
 		appendEntryChan:       make(chan *utils.AppendEntriesInternalReq, bufferSize),
 
 		// persistent state on all servers
-		CurrentTerm: 0,
+		CurrentTerm: 0, // as the logical clock in Raft to allow detection of stale messages
 		VotedFor:    "",
 
 		commitIndex: 0,
@@ -174,6 +174,7 @@ func (node *Node) AppendEntryRequest(req *utils.AppendEntriesInternalReq) {
 
 func (n *Node) ClientCommand(req *utils.ClientCommandInternalReq) {
 	if n.State != StateLeader {
+		// todo: shall add the feature of "redirection to the leader"
 		n.logger.Warn("Client command received but node is not a leader, dropping request",
 			zap.String("nodeID", n.NodeId))
 		req.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
