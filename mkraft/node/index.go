@@ -37,7 +37,9 @@ func (n *Node) updateCommitIdx(commitIdx uint64) {
 	n.stateRWLock.Lock()
 	defer n.stateRWLock.Unlock()
 	if commitIdx > n.commitIndex {
-		n.commitIndex = commitIdx
+		// update the commitIndex = min(leaderCommit, index of last new entry in the log)
+		newIndex := min(n.raftLog.GetLastLogIdx(), commitIdx)
+		n.commitIndex = newIndex
 	} else {
 		n.logger.Warn("commit index is not updated, it is smaller than current commit index",
 			zap.Uint64("commitIdx", commitIdx),
