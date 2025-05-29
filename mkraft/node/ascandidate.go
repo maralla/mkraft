@@ -1,14 +1,16 @@
-package mkraft
+package node
 
 import (
 	"context"
 	"time"
 
+	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/mkraft/utils"
 	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
 )
 
+// todo: add handle appendEntries from a leader which is new -> can defer the logic to follower
 /*
 PAPER (quote):
 Shared Rule: if any RPC request or response is received from a server with a higher term,
@@ -41,6 +43,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 
 	ticker := time.NewTicker(n.cfg.GetElectionTimeout())
 	for {
+		currentTerm := n.getCurrentTerm()
 		select {
 		case <-ctx.Done():
 			n.logger.Warn("raft node's main context done, exiting")
@@ -60,18 +63,23 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 						go n.RunAsLeader(ctx)
 						return
 					} else {
-						if response.Term > n.CurrentTerm {
+						if response.Term > currentTerm {
 							// some one has become a leader
 							// voteCancel()
-							n.CurrentTerm = response.Term
-							n.ResetVoteFor()
+							err := n.storeCurrentTermAndVotedFor(response.Term, "") // did not vote for anyone
+							if err != nil {
+								n.logger.Error(
+									"error in storeCurrentTermAndVotedFor", zap.Error(err),
+									zap.String("nId", n.NodeId))
+								panic(err) // critical error, cannot continue
+							}
 							n.State = StateFollower
 							go n.RunAsFollower(ctx)
 							return
 						} else {
 							n.logger.Info(
 								"not enough votes, re-elect again",
-								zap.Int("term", int(n.CurrentTerm)), zap.String("nId", n.NodeId))
+								zap.Int("term", int(currentTerm)), zap.String("nId", n.NodeId))
 						}
 					}
 				case <-ticker.C: // last election timeout withno response
@@ -84,7 +92,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 					}
 					req := requestVoteInternal.Req
 					resChan := requestVoteInternal.RespChan
-					resp := n.receiveVoteRequest(req)
+					resp := n.handleVoteRequest(req)
 					wrappedResp := utils.RPCRespWrapper[*rpc.RequestVoteResponse]{
 						Resp: resp,
 						Err:  nil,
@@ -97,7 +105,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 						return
 					}
 				case req := <-n.appendEntryChan: // commonRule: handling appendEntry from a leader which can be stale or new
-					resp := n.receiveAppendEntires(req.Req)
+					resp := n.handlerAppendEntries(req.Req)
 					wrappedResp := utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 						Resp: resp,
 						Err:  nil,
@@ -106,7 +114,6 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 					if resp.Success {
 						// this means there is a leader there
 						n.State = StateFollower
-						n.CurrentTerm = req.Req.Term
 						go n.RunAsFollower(ctx)
 						return
 					}
@@ -114,4 +121,34 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteResp {
+	ctx, requestID := common.GetOrGenerateRequestID(ctx)
+	consensusChan := make(chan *MajorityRequestVoteResp, 1)
+
+	err := node.updateCurrentTermAndVotedForAsCandidate()
+	if err != nil {
+		node.logger.Error(
+			"error in updateCurrentTermAndVotedForAsCandidate", zap.String("requestID", requestID), zap.Error(err))
+		panic(err) // critical error, cannot continue
+	}
+
+	req := &rpc.RequestVoteRequest{
+		Term:        node.getCurrentTerm(),
+		CandidateId: node.NodeId,
+	}
+	ctxTimeout, _ := context.WithTimeout(
+		ctx, time.Duration(node.cfg.GetElectionTimeout()))
+	go func() {
+		resp, err := node.ConsensusRequestVote(ctxTimeout, req)
+		if err != nil {
+			node.logger.Error(
+				"error in RequestVoteSendForConsensus", zap.String("requestID", requestID), zap.Error(err))
+			return
+		} else {
+			consensusChan <- resp
+		}
+	}()
+	return consensusChan
 }

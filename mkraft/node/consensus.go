@@ -1,4 +1,4 @@
-package mkraft
+package node
 
 import (
 	"context"
@@ -168,8 +168,12 @@ func (n *Node) ConsensusAppendEntries(
 			req := peerReq[nodeID]
 			// FAN-IN
 			resp := client.SendAppendEntries(ctxWithTimeout, req)
-			if resp.Err == nil && resp.Resp.Success {
-				n.updatePeerIndexAfterAppendEntries(nodeID, req)
+			if resp.Err == nil {
+				if resp.Resp.Success {
+					n.incrementPeersNextIndexOnSuccess(nodeID, uint64(len(req.Entries)))
+				} else {
+					n.decrementPeersNextIndexOnFailure(nodeID)
+				}
 			}
 			// update the peers' index
 			allRespChan <- resp

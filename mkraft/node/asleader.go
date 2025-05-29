@@ -1,4 +1,4 @@
-package mkraft
+package node
 
 import (
 	"context"
@@ -106,7 +106,11 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 				return
 			case newTerm := <-n.leaderDegradationChan:
 				n.State = StateFollower
-				n.SetVoteForAndTerm(n.VotedFor, uint32(newTerm))
+				err := n.storeCurrentTermAndVotedFor(uint32(newTerm), "") // downgrade to follower but did not vote for anyone
+				if err != nil {
+					n.logger.Error("error in storing current term and voted for", zap.Error(err))
+					panic(err) // critical error, cannot continue
+				}
 				go n.RunAsFollower(ctx)
 				return
 			case <-tickerForHeartbeat.C:
@@ -178,7 +182,7 @@ func (n *Node) leaderWorkerForCommon(ctx context.Context) {
 				if !internalReq.IsTimeout.Load() {
 					// no-IO operation
 					req := internalReq.Req
-					resp := n.receiveVoteRequest(req)
+					resp := n.handleVoteRequest(req)
 					wrappedResp := &utils.RPCRespWrapper[*rpc.RequestVoteResponse]{
 						Resp: resp,
 						Err:  nil,
@@ -191,7 +195,7 @@ func (n *Node) leaderWorkerForCommon(ctx context.Context) {
 				}
 			case internalReq := <-n.appendEntryChan: // commonRule: same with candidate
 				// todo: shall add appendEntry operations which shall be a goroutine
-				resp := n.receiveAppendEntires(internalReq.Req)
+				resp := n.handlerAppendEntries(internalReq.Req)
 				wrapper := utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 					Resp: resp,
 					Err:  nil,
@@ -294,7 +298,7 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.
 				Entries:      append(catchupCommands, newCommands...),
 			}
 		}
-		resp, err := n.ConsensusAppendEntries(ctxTimeout, reqs, n.CurrentTerm)
+		resp, err := n.ConsensusAppendEntries(ctxTimeout, reqs, n.getCurrentTerm())
 		respChan <- resp
 		errorChanTask2 <- err
 	}(ctx)
@@ -334,7 +338,7 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.
 		// todo: possibly, the statemachine shall has a unique ID for the command
 		// todo: the apply command shall be async with apply and get result
 		applyResp, err := n.statemachine.ApplyCommand(internalReq.Req.Command, newCommitID)
-		n.addLastAppliedIdx(1)
+		n.incrementLastApplied(1)
 		if err != nil {
 			n.logger.Error("error in applying command to state machine", zap.Error(err))
 			internalReq.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
@@ -430,8 +434,4 @@ func (n *Node) closeClientCommandChan() {
 			}
 		}
 	}
-}
-
-func (n *Node) ClientCommand(req *utils.ClientCommandInternalReq) {
-	n.clientCommandChan <- req
 }

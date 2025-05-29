@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/maki3cat/mkraft/common"
+	"github.com/maki3cat/mkraft/mkraft/node"
 	"github.com/maki3cat/mkraft/mkraft/utils"
 	pb "github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
@@ -12,10 +13,10 @@ import (
 type Handlers struct {
 	pb.UnimplementedRaftServiceServer
 	logger *zap.Logger
-	node   NodeIface
+	node   node.NodeIface
 }
 
-func NewHandlers(logger *zap.Logger, node NodeIface) *Handlers {
+func NewHandlers(logger *zap.Logger, node node.NodeIface) *Handlers {
 	return &Handlers{
 		logger: logger,
 		node:   node,

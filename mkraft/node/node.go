@@ -1,9 +1,8 @@
-package mkraft
+package node
 
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/mkraft/peers"
@@ -57,8 +56,6 @@ func NewNode(
 	cfg common.ConfigIface,
 	logger *zap.Logger,
 	membership peers.MembershipMgrIface,
-	raftlog plugs.RaftLogsIface,
-	statemachine plugs.StateMachineIface,
 ) NodeIface {
 	bufferSize := cfg.GetRaftNodeRequestBufferSize()
 
@@ -69,11 +66,9 @@ func NewNode(
 	// lastCommitIdx, _ := raftlog.GetLastLogIdxAndTerm()
 
 	node := &Node{
-		raftLog:      raftlog,
-		membership:   membership,
-		cfg:          cfg,
-		logger:       logger,
-		statemachine: statemachine,
+		membership: membership,
+		cfg:        cfg,
+		logger:     logger,
 
 		stateRWLock: &sync.RWMutex{},
 		sem:         semaphore.NewWeighted(1),
@@ -86,8 +81,8 @@ func NewNode(
 		requestVoteChan:       make(chan *utils.RequestVoteInternalReq, bufferSize),
 		appendEntryChan:       make(chan *utils.AppendEntriesInternalReq, bufferSize),
 
-		// todo: how should this be initialized and maintained
-		CurrentTerm: 0,
+		// persistent state on all servers
+		CurrentTerm: 0, // as the logical clock in Raft to allow detection of stale messages
 		VotedFor:    "",
 
 		commitIndex: 0,
@@ -96,10 +91,24 @@ func NewNode(
 		matchIndex:  make(map[string]uint64, 6),
 	}
 
+	// initialize the raft log and statemachine
+	raftLogIface := plugs.NewRaftLogsImplAndLoad(cfg.GetRaftLogFilePath())
+	statemachine := plugs.NewStateMachineNoOpImpl()
+	node.raftLog = raftLogIface
+	node.statemachine = statemachine
+
+	// load persistent state
+	err := node.loadCurrentTermAndVotedFor()
+	if err != nil {
+		node.logger.Error("error loading current term and voted for", zap.Error(err))
+		panic(err)
+	}
+	// load logs
+	node.catchupAppliedIdxOnStartup()
+
 	node.sem.Acquire(context.Background(), 1)
 	defer node.sem.Release(1)
 
-	node.catchupAppliedIdx()
 	return node
 }
 
@@ -132,8 +141,6 @@ type Node struct {
 	appendEntryChan chan *utils.AppendEntriesInternalReq
 
 	// Persistent state on all servers
-	// todo: how/why to make it persistent? (embedded db?)
-	// todo: change to concurrency safe
 	CurrentTerm uint32 // required, persistent (todo: haven't get persisted yet)
 	VotedFor    string // required, persistent (todo: haven't get persisted yet, why ?)
 	// LogEntries
@@ -147,32 +154,6 @@ type Node struct {
 	matchIndex map[string]uint64 // map[peerID]matchIndex, index of highest log entry known to be replicated on that server
 }
 
-func (n *Node) getCurrentTerm() uint32 {
-	n.stateRWLock.RLock()
-	defer n.stateRWLock.RUnlock()
-	return n.CurrentTerm
-}
-
-// maki: go gymnastics for sync values
-// todo: add sync for these values?
-func (node *Node) SetVoteForAndTerm(voteFor string, term uint32) {
-	node.VotedFor = voteFor
-	node.CurrentTerm = term
-}
-
-func (node *Node) ResetVoteFor() {
-	node.VotedFor = ""
-}
-
-func (node *Node) VoteRequest(req *utils.RequestVoteInternalReq) {
-	node.requestVoteChan <- req
-}
-
-func (node *Node) AppendEntryRequest(req *utils.AppendEntriesInternalReq) {
-	node.appendEntryChan <- req
-}
-
-// servers start up as followers
 func (node *Node) Start(ctx context.Context) {
 	go node.RunAsFollower(ctx)
 }
@@ -183,92 +164,23 @@ func (node *Node) Stop(ctx context.Context) {
 	close(node.clientCommandChan)
 }
 
-func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteResp {
-	ctx, requestID := common.GetOrGenerateRequestID(ctx)
-	consensusChan := make(chan *MajorityRequestVoteResp, 1)
-	node.CurrentTerm++
-	node.VotedFor = node.NodeId
-	req := &rpc.RequestVoteRequest{
-		Term:        node.CurrentTerm,
-		CandidateId: node.NodeId,
-	}
-	ctxTimeout, _ := context.WithTimeout(
-		ctx, time.Duration(node.cfg.GetElectionTimeout()))
-	go func() {
-		resp, err := node.ConsensusRequestVote(ctxTimeout, req)
-		if err != nil {
-			node.logger.Error(
-				"error in RequestVoteSendForConsensus", zap.String("requestID", requestID), zap.Error(err))
-			return
-		} else {
-			consensusChan <- resp
-		}
-	}()
-	return consensusChan
+func (node *Node) VoteRequest(req *utils.RequestVoteInternalReq) {
+	node.requestVoteChan <- req
 }
 
-// TODO: THE WHOLE MODULE SHALL BE REFACTORED TO BE AN INTEGRAL OF THE CONSENSUS ALGORITHM
-// The decision of consensus upon receiving a request
-// can be independent of the current state of the node
-
-// maki: jthis method should be a part of the consensus algorithm
-// todo: right now this method doesn't check the current state of the node
-// todo: checks the receiveVoteRequest works correctly for any state of the node, candidate or leader or follower
-// todo: not sure what state shall be changed inside or outside in the caller
-func (node *Node) receiveVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
-	var response rpc.RequestVoteResponse
-	if req.Term > node.CurrentTerm {
-		node.VotedFor = req.CandidateId
-		node.CurrentTerm = req.Term
-		response = rpc.RequestVoteResponse{
-			Term:        req.Term,
-			VoteGranted: true,
-		}
-	} else if req.Term < node.CurrentTerm {
-		response = rpc.RequestVoteResponse{
-			Term:        node.CurrentTerm,
-			VoteGranted: false,
-		}
-	} else {
-		if node.VotedFor == "" || node.VotedFor == req.CandidateId {
-			node.VotedFor = req.CandidateId
-			response = rpc.RequestVoteResponse{
-				Term:        node.CurrentTerm,
-				VoteGranted: true,
-			}
-		} else {
-			response = rpc.RequestVoteResponse{
-				Term:        node.CurrentTerm,
-				VoteGranted: false,
-			}
-		}
-	}
-	return &response
+func (node *Node) AppendEntryRequest(req *utils.AppendEntriesInternalReq) {
+	node.appendEntryChan <- req
 }
 
-// maki: jthis method should be a part of the consensus algorithm
-// todo: right now this method doesn't check the current state of the node
-// todo: not sure what state shall be changed inside or outside in the caller
-func (node *Node) receiveAppendEntires(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
-	var response rpc.AppendEntriesResponse
-	reqTerm := uint32(req.Term)
-	if reqTerm > node.CurrentTerm {
-		// todo: tell the leader/candidate to change the state to follower
-		response = rpc.AppendEntriesResponse{
-			Term:    node.CurrentTerm,
-			Success: true,
+func (n *Node) ClientCommand(req *utils.ClientCommandInternalReq) {
+	if n.State != StateLeader {
+		// todo: shall add the feature of "redirection to the leader"
+		n.logger.Warn("Client command received but node is not a leader, dropping request",
+			zap.String("nodeID", n.NodeId))
+		req.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
+			Err: utils.ErrNotLeader,
 		}
-	} else if reqTerm < node.CurrentTerm {
-		response = rpc.AppendEntriesResponse{
-			Term:    node.CurrentTerm,
-			Success: false,
-		}
-	} else {
-		// should accecpet it directly?
-		response = rpc.AppendEntriesResponse{
-			Term:    node.CurrentTerm,
-			Success: true,
-		}
+		return
 	}
-	return &response
+	n.clientCommandChan <- req
 }
