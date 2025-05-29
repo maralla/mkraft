@@ -435,7 +435,3 @@ func (n *Node) closeClientCommandChan() {
 		}
 	}
 }
-
-func (n *Node) ClientCommand(req *utils.ClientCommandInternalReq) {
-	n.clientCommandChan <- req
-}

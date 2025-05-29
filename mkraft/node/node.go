@@ -154,15 +154,6 @@ type Node struct {
 	matchIndex map[string]uint64 // map[peerID]matchIndex, index of highest log entry known to be replicated on that server
 }
 
-func (node *Node) VoteRequest(req *utils.RequestVoteInternalReq) {
-	node.requestVoteChan <- req
-}
-
-func (node *Node) AppendEntryRequest(req *utils.AppendEntriesInternalReq) {
-	node.appendEntryChan <- req
-}
-
-// servers start up as followers
 func (node *Node) Start(ctx context.Context) {
 	go node.RunAsFollower(ctx)
 }
@@ -173,87 +164,22 @@ func (node *Node) Stop(ctx context.Context) {
 	close(node.clientCommandChan)
 }
 
-// TODO: THE WHOLE MODULE SHALL BE REFACTORED TO BE AN INTEGRAL OF THE CONSENSUS ALGORITHM
-// The decision of consensus upon receiving a request
-// can be independent of the current state of the node
-
-// maki: jthis method should be a part of the consensus algorithm
-// todo: right now this method doesn't check the current state of the node
-// todo: checks the handleVoteRequest works correctly for any state of the node, candidate or leader or follower
-// todo: not sure what state shall be changed inside or outside in the caller
-func (node *Node) handleVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
-
-	var response rpc.RequestVoteResponse
-	currentTerm, voteFor := node.getCurrentTermAndVoteFor()
-
-	if req.Term > currentTerm {
-		err := node.storeCurrentTermAndVotedFor(req.Term, req.CandidateId) // did vote for the candidate
-		if err != nil {
-			node.logger.Error(
-				"error in storeCurrentTermAndVotedFor", zap.Error(err),
-				zap.String("nId", node.NodeId),
-				zap.Uint32("term", req.Term), zap.String("candidateId", req.CandidateId))
-			panic(err) // critical error, cannot continue
-		}
-		response = rpc.RequestVoteResponse{
-			Term:        req.Term,
-			VoteGranted: true,
-		}
-	} else if req.Term < currentTerm {
-		response = rpc.RequestVoteResponse{
-			Term:        currentTerm,
-			VoteGranted: false,
-		}
-	} else {
-		if voteFor == "" {
-			node.logger.Error("shouldn't happen, but voteFor is empty")
-		}
-		if voteFor == req.CandidateId {
-			response = rpc.RequestVoteResponse{
-				Term:        currentTerm,
-				VoteGranted: true,
-			}
-		} else {
-			response = rpc.RequestVoteResponse{
-				Term:        currentTerm,
-				VoteGranted: false,
-			}
-		}
-	}
-	return &response
+func (node *Node) VoteRequest(req *utils.RequestVoteInternalReq) {
+	node.requestVoteChan <- req
 }
 
-// maki: jthis method should be a part of the consensus algorithm
-// todo: right now this method doesn't check the current state of the node
-// todo: not sure what state shall be changed inside or outside in the caller
-func (n *Node) handlerAppendEntries(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
-	var response rpc.AppendEntriesResponse
-	reqTerm := uint32(req.Term)
-	currentTerm := n.getCurrentTerm()
+func (node *Node) AppendEntryRequest(req *utils.AppendEntriesInternalReq) {
+	node.appendEntryChan <- req
+}
 
-	if reqTerm > currentTerm {
-		err := n.storeCurrentTermAndVotedFor(reqTerm, "") // did not vote for anyone
-		if err != nil {
-			n.logger.Error(
-				"error in storeCurrentTermAndVotedFor", zap.Error(err),
-				zap.String("nId", n.NodeId))
-			panic(err) // critical error, cannot continue
+func (n *Node) ClientCommand(req *utils.ClientCommandInternalReq) {
+	if n.State != StateLeader {
+		n.logger.Warn("Client command received but node is not a leader, dropping request",
+			zap.String("nodeID", n.NodeId))
+		req.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
+			Err: utils.ErrNotLeader,
 		}
-		response = rpc.AppendEntriesResponse{
-			Term:    currentTerm,
-			Success: true,
-		}
-	} else if reqTerm < currentTerm {
-		response = rpc.AppendEntriesResponse{
-			Term:    currentTerm,
-			Success: false,
-		}
-	} else {
-		// should accecpet it directly?
-		response = rpc.AppendEntriesResponse{
-			Term:    currentTerm,
-			Success: true,
-		}
+		return
 	}
-	return &response
+	n.clientCommandChan <- req
 }
