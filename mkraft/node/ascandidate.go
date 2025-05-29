@@ -152,3 +152,35 @@ func (node *Node) runOneElection(ctx context.Context) chan *MajorityRequestVoteR
 	}()
 	return consensusChan
 }
+
+func (n *Node) handlerAppendEntriesAsCandidate(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
+	var response rpc.AppendEntriesResponse
+	reqTerm := uint32(req.Term)
+	currentTerm := n.getCurrentTerm()
+
+	if reqTerm > currentTerm {
+		err := n.storeCurrentTermAndVotedFor(reqTerm, "") // did not vote for anyone
+		if err != nil {
+			n.logger.Error(
+				"error in storeCurrentTermAndVotedFor", zap.Error(err),
+				zap.String("nId", n.NodeId))
+			panic(err) // critical error, cannot continue
+		}
+		response = rpc.AppendEntriesResponse{
+			Term:    currentTerm,
+			Success: true,
+		}
+	} else if reqTerm < currentTerm {
+		response = rpc.AppendEntriesResponse{
+			Term:    currentTerm,
+			Success: false,
+		}
+	} else {
+		// should accecpet it directly?
+		response = rpc.AppendEntriesResponse{
+			Term:    currentTerm,
+			Success: true,
+		}
+	}
+	return &response
+}
