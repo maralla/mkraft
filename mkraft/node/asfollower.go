@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/mkraft/utils"
 	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
@@ -63,10 +64,8 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 					requestVoteInternal.RespChan <- &wrappedResp
 					electionTicker.Reset(n.cfg.GetElectionTimeout())
 				case req := <-n.appendEntryChan:
-					// todo: to maintain logs and index and state machine of the follower
 					electionTicker.Stop()
-					// for the follower, the node state has no reason to change because of the request
-					resp := n.handlerAppendEntriesAsFollower(req.Req)
+					resp := n.handlerAppendEntriesAsFollower(ctx, req.Req)
 					wrappedResp := utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 						Resp: resp,
 						Err:  nil,
@@ -79,7 +78,8 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 	}
 }
 
-func (n *Node) handlerAppendEntriesAsFollower(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
+func (n *Node) handlerAppendEntriesAsFollower(ctx context.Context, req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
+	defer n.updateCommitIdx(req.LeaderCommit)
 	var response rpc.AppendEntriesResponse
 	reqTerm := uint32(req.Term)
 	currentTerm := n.getCurrentTerm()
@@ -91,32 +91,40 @@ func (n *Node) handlerAppendEntriesAsFollower(req *rpc.AppendEntriesRequest) *rp
 		return &response
 	}
 
-	if n.raftLog.CheckPreLog(req.PrevLogIndex, req.PrevLogTerm) == false {
-		response = rpc.AppendEntriesResponse{
-			Term:    currentTerm,
-			Success: false,
-		}
-		return &response
-	}
-
+	// update the term
 	if reqTerm > currentTerm {
 		err := n.storeCurrentTermAndVotedFor(reqTerm, "") // did not vote for anyone
 		if err != nil {
 			n.logger.Error(
 				"error in storeCurrentTermAndVotedFor", zap.Error(err),
 				zap.String("nId", n.NodeId))
-			panic(err) // critical error, cannot continue
-		}
-		response = rpc.AppendEntriesResponse{
-			Term:    currentTerm,
-			Success: true,
-		}
-	} else {
-		// should accecpet it directly?
-		response = rpc.AppendEntriesResponse{
-			Term:    currentTerm,
-			Success: true,
+			panic(err) // todo: critical error, cannot continue, not sure how to handle this
 		}
 	}
-	return &response
+
+	// append logs
+	logs := make([][]byte, len(req.Entries))
+	for idx, entry := range req.Entries {
+		logs[idx] = entry.Data
+	}
+	err := n.raftLog.AppendLogsInBatchWithCheck(ctx, req.PrevLogIndex, logs, req.Term)
+	if err != nil {
+		if err == common.ErrPreLogNotMatch {
+			response = rpc.AppendEntriesResponse{
+				Term:    currentTerm,
+				Success: false,
+			}
+			return &response
+		} else {
+			panic(err) // todo: critical error, cannot continue, not sure how to handle this
+		}
+	} else {
+		response = rpc.AppendEntriesResponse{
+			Term:    currentTerm,
+			Success: true,
+		}
+		// update the commit index
+		return &response
+	}
+
 }
