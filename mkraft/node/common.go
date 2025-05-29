@@ -7,14 +7,7 @@ import (
 
 // shared by leader/follower/candidate
 
-// TODO: THE WHOLE MODULE SHALL BE REFACTORED TO BE AN INTEGRAL OF THE CONSENSUS ALGORITHM
-// The decision of consensus upon receiving a request
-// can be independent of the current state of the node
-
-// maki: jthis method should be a part of the consensus algorithm
-// todo: right now this method doesn't check the current state of the node
-// todo: checks the handleVoteRequest works correctly for any state of the node, candidate or leader or follower
-// todo: not sure what state shall be changed inside or outside in the caller
+// this method doesn't check the current state of the node
 func (node *Node) handleVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
 
 	var response rpc.RequestVoteResponse
@@ -41,6 +34,8 @@ func (node *Node) handleVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVot
 	} else {
 		if voteFor == "" {
 			node.logger.Error("shouldn't happen, but voteFor is empty")
+			// temporary solution, should be fixed with a safer implementation later
+			panic("shouldn't happen, but voteFor is empty")
 		}
 		if voteFor == req.CandidateId {
 			response = rpc.RequestVoteResponse{
@@ -60,6 +55,10 @@ func (node *Node) handleVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVot
 // maki: jthis method should be a part of the consensus algorithm
 // todo: right now this method doesn't check the current state of the node
 // todo: not sure what state shall be changed inside or outside in the caller
+
+// Given the property that only one leader with one specific term can exist,
+// if the current node is a leader, the AppendEntriesRequest cannot have a term that is the same as the current term;
+// if the current node is a follower or candidate, the req.Term can be >/=/< the current term.
 func (n *Node) handlerAppendEntries(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
 	var response rpc.AppendEntriesResponse
 	reqTerm := uint32(req.Term)

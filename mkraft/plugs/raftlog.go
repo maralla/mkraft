@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"sync"
+
+	"github.com/maki3cat/mkraft/common"
 )
 
 var _ RaftLogsIface = (*SimpleRaftLogsImpl)(nil)
@@ -16,9 +18,12 @@ type RaftLogsIface interface {
 	GetLastLogIdxAndTerm() (uint64, uint32)
 	GetLastLogIdx() uint64
 	GetTermByIndex(index uint64) (uint32, error)
+
 	// index is included
 	GetLogsFromIdxIncluded(index uint64) ([]*RaftLogEntry, error)
 	AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error
+	AppendLogsInBatchWithCheck(ctx context.Context, preLogIndex uint64, commandList [][]byte, term int) error
+	CheckPreLog(ctx context.Context, preLogIndex uint64, commandList [][]byte, term int) bool
 }
 type CatchupLogs struct {
 	LastLogIndex uint64
@@ -118,7 +123,20 @@ func (rl *SimpleRaftLogsImpl) GetLastLogIdxAndTerm() (uint64, uint32) {
 func (rl *SimpleRaftLogsImpl) AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
+	return rl.unsafeAppendLogs(commandList, term)
+}
 
+func (rl *SimpleRaftLogsImpl) AppendLogsInBatchWithCheck(ctx context.Context, preLogIndex uint64, commandList [][]byte, term int) error {
+	rl.mutex.Lock()
+	defer rl.mutex.Unlock()
+	validLog := preLogIndex == uint64(len(rl.logs)) && rl.logs[preLogIndex-1].Term == uint32(term)
+	if !validLog {
+		return common.ErrPreLogNotMatch
+	}
+	return rl.unsafeAppendLogs(commandList, term)
+}
+
+func (rl *SimpleRaftLogsImpl) unsafeAppendLogs(commandList [][]byte, term int) error {
 	var buffers bytes.Buffer
 	entries := make([]*RaftLogEntry, len(commandList))
 
@@ -140,6 +158,12 @@ func (rl *SimpleRaftLogsImpl) AppendLogsInBatch(ctx context.Context, commandList
 	rl.file.Sync() // forced to sync the file to disk
 	rl.logs = append(rl.logs, entries...)
 	return nil
+}
+
+func (rl *SimpleRaftLogsImpl) CheckPreLog(ctx context.Context, preLogIndex uint64, commandList [][]byte, term int) bool {
+	rl.mutex.Lock()
+	defer rl.mutex.Unlock()
+	return preLogIndex == uint64(len(rl.logs)) && rl.logs[preLogIndex-1].Term == uint32(term)
 }
 
 func (rl *SimpleRaftLogsImpl) load() error {

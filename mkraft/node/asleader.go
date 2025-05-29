@@ -105,7 +105,7 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 				n.logger.Warn("raft node main context done, exiting")
 				return
 			case newTerm := <-n.leaderDegradationChan:
-				n.State = StateFollower
+				n.SetNodeState(StateFollower)
 				err := n.storeCurrentTermAndVotedFor(uint32(newTerm), "") // downgrade to follower but did not vote for anyone
 				if err != nil {
 					n.logger.Error("error in storing current term and voted for", zap.Error(err))
@@ -194,20 +194,92 @@ func (n *Node) leaderWorkerForCommon(ctx context.Context) {
 					}
 				}
 			case internalReq := <-n.appendEntryChan: // commonRule: same with candidate
-				// todo: shall add appendEntry operations which shall be a goroutine
-				resp := n.handlerAppendEntries(internalReq.Req)
+
+				// todo: to consider a separate goroutine for this
+				resp := n.handlerAppendEntriesAsLeader(ctx, internalReq.Req)
 				wrapper := utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 					Resp: resp,
 					Err:  nil,
 				}
 				internalReq.RespChan <- &wrapper
-				if resp.Success {
-					n.leaderDegradationChan <- TermRank(resp.Term)
-					return
-				}
 			}
 		}
 	}
+}
+
+// maki: this is a very tricky part, shall discuss with the professor
+func (n *Node) handlerAppendEntriesAsLeader(ctx context.Context, req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
+
+	// 1) the req.Term is smaller -> shall ignore (simple)
+	// 2) the req.Term is greater -> shall convert to follower, but at the same time,
+	// the client commands and append entries may be exist at the same time (tricky)
+	// 3) the req.Term is equal -> shalln't handle, panic (simple)
+
+	var response rpc.AppendEntriesResponse
+	reqTerm := uint32(req.Term)
+	currentTerm := n.getCurrentTerm()
+
+	if reqTerm > currentTerm {
+		n.leaderDegradationChan <- TermRank(reqTerm)
+		// 2nd store the current term and voted for
+		err := n.storeCurrentTermAndVotedFor(reqTerm, "") // did not vote for anyone
+		if err != nil {
+			n.logger.Error(
+				"error in storeCurrentTermAndVotedFor", zap.Error(err),
+				zap.String("nId", n.NodeId))
+			panic(err) // critical error, cannot continue
+		}
+
+		// 3rd reply the response
+		if req.PrevLogIndex != n.lastApplied {
+			// if the term is smaller but success is false, it means the log is not consistent
+			response = rpc.AppendEntriesResponse{
+				Term:    currentTerm,
+				Success: false,
+			}
+		} else {
+			// maki: this is a tricky part, need to doc this part for reviews
+			// that race condition may happen between the client command and append entries
+			// and we handle this with the mechanism inside raft log which constitutes mutex and check prelog(term and index)
+			logs := make([][]byte, len(req.Entries))
+			for i, entry := range req.Entries {
+				logs[i] = entry.Data
+			}
+			err := n.raftLog.AppendLogsInBatchWithCheck(ctx, req.PrevLogIndex, logs, int(reqTerm))
+			if err != nil {
+				if errors.Is(err, common.ErrPreLogNotMatch) {
+					n.logger.Error("pre log not match, cannot append logs", zap.Error(err))
+					response = rpc.AppendEntriesResponse{
+						Term:    currentTerm,
+						Success: false,
+					}
+				} else {
+					// todo: temproary solution, shall handle the error properly
+					// unlike a server that handles a request, this panics the whole server, which is not good
+					n.logger.Error("error in appending logs to raft log", zap.Error(err))
+					panic("not sure how to handle the error")
+				}
+			} else {
+				// if the logs are appended successfully, then the response is success
+				response = rpc.AppendEntriesResponse{
+					Term:    currentTerm,
+					Success: true,
+				}
+				// update the commit index
+				newCommitID := n.raftLog.GetLastLogIdx()
+				n.updateCommitIdx(newCommitID)
+				n.incrementLastApplied(1) // increment the last applied index
+			}
+		}
+	} else if reqTerm < currentTerm {
+		response = rpc.AppendEntriesResponse{
+			Term:    currentTerm,
+			Success: false,
+		}
+	} else {
+		panic("shouldn't happen, break the property of Election Safety")
+	}
+	return &response
 }
 
 func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]plugs.CatchupLogs, error) {

@@ -76,8 +76,9 @@ func NewNode(
 		NodeId:            nodeId,
 		State:             StateFollower, // servers start up as followers
 		clientCommandChan: make(chan *utils.ClientCommandInternalReq, bufferSize),
-		// todo:  what should the length of the channel be?
-		leaderDegradationChan: make(chan TermRank, 1),
+
+		// todo: 10 is arbitrary, can be changed later, the current descision is that the chan length is >= leader workers count
+		leaderDegradationChan: make(chan TermRank, 10),
 		requestVoteChan:       make(chan *utils.RequestVoteInternalReq, bufferSize),
 		appendEntryChan:       make(chan *utils.AppendEntriesInternalReq, bufferSize),
 
@@ -113,8 +114,6 @@ func NewNode(
 }
 
 // the Raft Server Node
-// maki: go gymnastics for sync values
-// todo: add sync for these values?
 type Node struct {
 	raftLog      plugs.RaftLogsIface // required, persistent
 	membership   peers.MembershipMgrIface
@@ -152,6 +151,29 @@ type Node struct {
 	// required, volatile, on leaders only, reinitialized after election, initialized to leader last log index+1
 	nextIndex  map[string]uint64 // map[peerID]nextIndex, index of the next log entry to send to that server
 	matchIndex map[string]uint64 // map[peerID]matchIndex, index of highest log entry known to be replicated on that server
+}
+
+func (node *Node) GetNodeState() NodeState {
+	node.stateRWLock.RLock()
+	defer node.stateRWLock.RUnlock()
+
+	return node.State
+}
+
+func (node *Node) SetNodeState(state NodeState) {
+	node.stateRWLock.Lock()
+	defer node.stateRWLock.Unlock()
+
+	if node.State == state {
+		return // no change
+	}
+
+	node.logger.Info("Node state changed",
+		zap.String("nodeID", node.NodeId),
+		zap.String("oldState", node.State.String()),
+		zap.String("newState", state.String()))
+
+	node.State = state
 }
 
 func (node *Node) Start(ctx context.Context) {
