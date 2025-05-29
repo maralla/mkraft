@@ -93,7 +93,7 @@ func NewNode(
 	}
 
 	// initialize the raft log and statemachine
-	raftLogIface := plugs.NewRaftLogsImplAndLoad(cfg.GetRaftLogFilePath())
+	raftLogIface := plugs.NewRaftLogsImplAndLoad(cfg.GetRaftLogFilePath(), logger)
 	statemachine := plugs.NewStateMachineNoOpImpl()
 	node.raftLog = raftLogIface
 	node.statemachine = statemachine

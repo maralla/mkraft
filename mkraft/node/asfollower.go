@@ -220,7 +220,7 @@ func (n *Node) handlerAppendEntriesAsNoLeader(ctx context.Context, req *rpc.Appe
 	for idx, entry := range req.Entries {
 		logs[idx] = entry.Data
 	}
-	err := n.raftLog.AppendLogsInBatchWithCheck(ctx, req.PrevLogIndex, logs, req.Term)
+	err := n.raftLog.UpdateLogsInBatch(ctx, req.PrevLogIndex, logs, req.Term)
 	if err != nil {
 		if err == common.ErrPreLogNotMatch {
 			response = rpc.AppendEntriesResponse{

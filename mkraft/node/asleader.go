@@ -245,7 +245,7 @@ func (n *Node) handlerAppendEntriesAsLeader(ctx context.Context, req *rpc.Append
 			for i, entry := range req.Entries {
 				logs[i] = entry.Data
 			}
-			err := n.raftLog.AppendLogsInBatchWithCheck(ctx, req.PrevLogIndex, logs, reqTerm)
+			err := n.raftLog.UpdateLogsInBatch(ctx, req.PrevLogIndex, logs, reqTerm)
 			if err != nil {
 				if errors.Is(err, common.ErrPreLogNotMatch) {
 					n.logger.Error("pre log not match, cannot append logs", zap.Error(err))
