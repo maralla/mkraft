@@ -5,10 +5,19 @@
 
 https://raft.github.io/
 
+### Basic Raft Properties and Mechanisms that guarantee them
+Raft guarantees that each of these properties is true at all the time
+#### Leader Election ($5.2)
+- Election Safety: at most one leader can be elected in a given term (not time but term) -> ($5.2 Leader Election)
+#### Log Replication ($5.3)
+- Leader Append-only: a leader never overwrites or deletes entries in its logs; it only appends new entries; -> ($5.3 Log Replication)
+- Log Matching: if two logs contain an entry with the same index and term, then logs are identical in all entries up through the given index; -> ($5.3 Log Replication)
+#### Safety ($5.4)
+- Leader Completeness: if a log entry is commited in a given term, then that entry will be present in the logs of the leaders for all higher numbered terms; ($5.4)
+- State Machine Safety: if a server has applied a log entry at a given index to its state machine, no other server will ever apply a different log entry for the same index ($5.4.3)
+
 ## In-Progress
 AppendEntries of Paper
-
-
 
 ## Backlog
 
