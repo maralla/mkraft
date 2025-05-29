@@ -58,13 +58,19 @@ func (n *Node) incrementLastApplied(numberOfCommand uint64) {
 func (n *Node) incrementPeersNextIndexOnSuccess(nodeID string, logCnt uint64) {
 	n.stateRWLock.Lock()
 	defer n.stateRWLock.Unlock()
+
+	// important
+	// According to the Log Matching Property in Raft:
+	// once appendEntries is successful,
+	// the follower's matchIndex should be equal to the index of the last entry appended,
+	// and the nextIndex should be matchIndex + 1
+
 	if _, exists := n.nextIndex[nodeID]; exists {
 		n.nextIndex[nodeID] = n.nextIndex[nodeID] + logCnt
-		n.matchIndex[nodeID] = n.nextIndex[nodeID] + logCnt
 	} else {
 		n.nextIndex[nodeID] = logCnt + 1
-		n.matchIndex[nodeID] = logCnt
 	}
+	n.matchIndex[nodeID] = n.nextIndex[nodeID] - 1
 }
 
 // important invariant: matchIndex[follower] ≤ nextIndex[follower] - 1
