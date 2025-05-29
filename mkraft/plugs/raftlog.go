@@ -21,9 +21,9 @@ type RaftLogsIface interface {
 
 	// index is included
 	GetLogsFromIdxIncluded(index uint64) ([]*RaftLogEntry, error)
-	AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error
-	AppendLogsInBatchWithCheck(ctx context.Context, preLogIndex uint64, commandList [][]byte, term int) error
-	CheckPreLog(ctx context.Context, preLogIndex uint64, commandList [][]byte, term int) bool
+	AppendLogsInBatch(ctx context.Context, commandList [][]byte, term uint32) error
+	AppendLogsInBatchWithCheck(ctx context.Context, preLogIndex uint64, commandList [][]byte, term uint32) error
+	CheckPreLog(preLogIndex uint64, term uint32) bool
 }
 type CatchupLogs struct {
 	LastLogIndex uint64
@@ -120,13 +120,13 @@ func (rl *SimpleRaftLogsImpl) GetLastLogIdxAndTerm() (uint64, uint32) {
 	return uint64(index), lastLog.Term
 }
 
-func (rl *SimpleRaftLogsImpl) AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error {
+func (rl *SimpleRaftLogsImpl) AppendLogsInBatch(ctx context.Context, commandList [][]byte, term uint32) error {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 	return rl.unsafeAppendLogs(commandList, term)
 }
 
-func (rl *SimpleRaftLogsImpl) AppendLogsInBatchWithCheck(ctx context.Context, preLogIndex uint64, commandList [][]byte, term int) error {
+func (rl *SimpleRaftLogsImpl) AppendLogsInBatchWithCheck(ctx context.Context, preLogIndex uint64, commandList [][]byte, term uint32) error {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 	validLog := preLogIndex == uint64(len(rl.logs)) && rl.logs[preLogIndex-1].Term == uint32(term)
@@ -136,7 +136,7 @@ func (rl *SimpleRaftLogsImpl) AppendLogsInBatchWithCheck(ctx context.Context, pr
 	return rl.unsafeAppendLogs(commandList, term)
 }
 
-func (rl *SimpleRaftLogsImpl) unsafeAppendLogs(commandList [][]byte, term int) error {
+func (rl *SimpleRaftLogsImpl) unsafeAppendLogs(commandList [][]byte, term uint32) error {
 	var buffers bytes.Buffer
 	entries := make([]*RaftLogEntry, len(commandList))
 
@@ -160,7 +160,7 @@ func (rl *SimpleRaftLogsImpl) unsafeAppendLogs(commandList [][]byte, term int) e
 	return nil
 }
 
-func (rl *SimpleRaftLogsImpl) CheckPreLog(ctx context.Context, preLogIndex uint64, commandList [][]byte, term int) bool {
+func (rl *SimpleRaftLogsImpl) CheckPreLog(preLogIndex uint64, term uint32) bool {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 	return preLogIndex == uint64(len(rl.logs)) && rl.logs[preLogIndex-1].Term == uint32(term)

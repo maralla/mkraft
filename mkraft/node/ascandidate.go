@@ -105,7 +105,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 						return
 					}
 				case req := <-n.appendEntryChan: // commonRule: handling appendEntry from a leader which can be stale or new
-					resp := n.handlerAppendEntries(req.Req)
+					resp := n.handlerAppendEntriesAsCandidate(req.Req)
 					wrappedResp := utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 						Resp: resp,
 						Err:  nil,

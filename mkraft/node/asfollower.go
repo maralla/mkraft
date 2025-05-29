@@ -6,6 +6,7 @@ import (
 
 	"github.com/maki3cat/mkraft/mkraft/utils"
 	"github.com/maki3cat/mkraft/rpc"
+	"go.uber.org/zap"
 )
 
 // todo: add handle appendEntries from a leader which may delete/overwrite logs
@@ -65,7 +66,7 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 					// todo: to maintain logs and index and state machine of the follower
 					electionTicker.Stop()
 					// for the follower, the node state has no reason to change because of the request
-					resp := n.handlerAppendEntries(req.Req)
+					resp := n.handlerAppendEntriesAsFollower(req.Req)
 					wrappedResp := utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 						Resp: resp,
 						Err:  nil,
@@ -76,4 +77,46 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (n *Node) handlerAppendEntriesAsFollower(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
+	var response rpc.AppendEntriesResponse
+	reqTerm := uint32(req.Term)
+	currentTerm := n.getCurrentTerm()
+	if reqTerm < currentTerm {
+		response = rpc.AppendEntriesResponse{
+			Term:    currentTerm,
+			Success: false,
+		}
+		return &response
+	}
+
+	if n.raftLog.CheckPreLog(req.PrevLogIndex, req.PrevLogTerm) == false {
+		response = rpc.AppendEntriesResponse{
+			Term:    currentTerm,
+			Success: false,
+		}
+		return &response
+	}
+
+	if reqTerm > currentTerm {
+		err := n.storeCurrentTermAndVotedFor(reqTerm, "") // did not vote for anyone
+		if err != nil {
+			n.logger.Error(
+				"error in storeCurrentTermAndVotedFor", zap.Error(err),
+				zap.String("nId", n.NodeId))
+			panic(err) // critical error, cannot continue
+		}
+		response = rpc.AppendEntriesResponse{
+			Term:    currentTerm,
+			Success: true,
+		}
+	} else {
+		// should accecpet it directly?
+		response = rpc.AppendEntriesResponse{
+			Term:    currentTerm,
+			Success: true,
+		}
+	}
+	return &response
 }

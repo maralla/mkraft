@@ -245,7 +245,7 @@ func (n *Node) handlerAppendEntriesAsLeader(ctx context.Context, req *rpc.Append
 			for i, entry := range req.Entries {
 				logs[i] = entry.Data
 			}
-			err := n.raftLog.AppendLogsInBatchWithCheck(ctx, req.PrevLogIndex, logs, int(reqTerm))
+			err := n.raftLog.AppendLogsInBatchWithCheck(ctx, req.PrevLogIndex, logs, reqTerm)
 			if err != nil {
 				if errors.Is(err, common.ErrPreLogNotMatch) {
 					n.logger.Error("pre log not match, cannot append logs", zap.Error(err))
@@ -339,7 +339,7 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.
 		for i, clientCommand := range clientCommands {
 			commands[i] = clientCommand.Req.Command
 		}
-		errorChanTask1 <- n.raftLog.AppendLogsInBatch(ctx, commands, int(currentTerm))
+		errorChanTask1 <- n.raftLog.AppendLogsInBatch(ctx, commands, currentTerm)
 	}(ctx)
 
 	// task2 sends the command of appendEntries to all the followers in parallel to replicate the entry

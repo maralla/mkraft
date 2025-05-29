@@ -52,14 +52,39 @@ func (node *Node) handleVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVot
 	return &response
 }
 
-// maki: jthis method should be a part of the consensus algorithm
-// todo: right now this method doesn't check the current state of the node
-// todo: not sure what state shall be changed inside or outside in the caller
+func (n *Node) handlerAppendEntriesAsCandidate(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
+	var response rpc.AppendEntriesResponse
+	reqTerm := uint32(req.Term)
+	currentTerm := n.getCurrentTerm()
 
-// Given the property that only one leader with one specific term can exist,
-// if the current node is a leader, the AppendEntriesRequest cannot have a term that is the same as the current term;
-// if the current node is a follower or candidate, the req.Term can be >/=/< the current term.
-func (n *Node) handlerAppendEntries(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
+	if reqTerm > currentTerm {
+		err := n.storeCurrentTermAndVotedFor(reqTerm, "") // did not vote for anyone
+		if err != nil {
+			n.logger.Error(
+				"error in storeCurrentTermAndVotedFor", zap.Error(err),
+				zap.String("nId", n.NodeId))
+			panic(err) // critical error, cannot continue
+		}
+		response = rpc.AppendEntriesResponse{
+			Term:    currentTerm,
+			Success: true,
+		}
+	} else if reqTerm < currentTerm {
+		response = rpc.AppendEntriesResponse{
+			Term:    currentTerm,
+			Success: false,
+		}
+	} else {
+		// should accecpet it directly?
+		response = rpc.AppendEntriesResponse{
+			Term:    currentTerm,
+			Success: true,
+		}
+	}
+	return &response
+}
+
+func (n *Node) handlerAppendEntriesAsFollower(req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
 	var response rpc.AppendEntriesResponse
 	reqTerm := uint32(req.Term)
 	currentTerm := n.getCurrentTerm()
