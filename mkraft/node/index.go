@@ -78,6 +78,11 @@ func (n *Node) incrementPeersNextIndexOnSuccess(nodeID string, logCnt uint64) {
 func (n *Node) decrementPeersNextIndexOnFailure(nodeID string) {
 	n.stateRWLock.Lock()
 	defer n.stateRWLock.Unlock()
+
+	// todo: there can be improvement of efficiency here, refer to the paper page 8 first paragraph
+	n.logger.Warn("fixing inconsistent logs for peer",
+		zap.String("nodeID", nodeID))
+
 	if n.nextIndex[nodeID] > 1 {
 		n.nextIndex[nodeID] -= 1
 	} else {
