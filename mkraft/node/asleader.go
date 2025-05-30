@@ -87,12 +87,14 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	ctxForWorker, cancelWorker := context.WithCancel(ctx)
 	defer cancelWorker()
 
-	go n.leaderWorkerForCommon(ctxForWorker)
+	go n.leaderWorkerForCommon(ctxForWorker, "NO.1")
 
 	heartbeatDuration := n.cfg.GetLeaderHeartbeatPeriod()
 	tickerForHeartbeat := time.NewTicker(heartbeatDuration)
 	defer tickerForHeartbeat.Stop()
-	go n.leaderWorkerForClient(ctxForWorker, tickerForHeartbeat)
+	go n.leaderWorkerForClient(ctxForWorker, tickerForHeartbeat, "NO.2")
+
+	go n.leaderWorkerToApplyCommand(ctxForWorker, "NO.3")
 
 	for {
 		select {
@@ -128,20 +130,62 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	}
 }
 
+func (n *Node) leaderWorkerToApplyCommand(ctx context.Context, workerName string) {
+	for {
+		select {
+		case <-ctx.Done():
+			n.logger.Warn("worker-" + workerName + "-exiting leader's worker for applying commands")
+			return
+		default:
+			select {
+			case clientCmd := <-n.clientCommandChan:
+				clientCommands := make([]*utils.ClientCommandInternalReq, 1, n.cfg.GetRaftNodeRequestBufferSize())
+				clientCommands[0] = clientCmd
+				clientCommands = append(clientCommands, utils.ReadMultipleFromChannel(n.clientCommandChan, n.cfg.GetRaftNodeRequestBufferSize()-1)...)
+
+				for _, cmd := range clientCommands {
+					applyResp, err := n.statemachine.ApplyCommand(cmd.Req.Command)
+					if err != nil {
+						// todo: shall handle the error properly, this is not the error inside the statemachine but the error of the log application
+						// shall retry indefinitely until success, or, panic
+						// todo: error handling of all the server, currently we only handle happy path, and use panic to handle the error on the critical path
+						n.logger.Error("error in applying command to state machine", zap.Error(err))
+						panic(err)
+					} else {
+						n.incrementLastApplied(1)
+						clientResp := &rpc.ClientCommandResponse{
+							Result: applyResp,
+						}
+						cmd.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
+							Resp: clientResp,
+							Err:  nil,
+						}
+
+					}
+				}
+			case <-ctx.Done():
+				n.logger.Warn("worker-" + workerName + "-exiting leader's worker for applying commands")
+				return
+
+			}
+		}
+	}
+}
+
 // todo: can be merged to main
 // separate goroutine for the this task
 // handling requests from clients in a serializable and batched way
-func (n *Node) leaderWorkerForClient(ctx context.Context, heartbeatTicker *time.Ticker) {
+func (n *Node) leaderWorkerForClient(ctx context.Context, heartbeatTicker *time.Ticker, workerName string) {
 	defer n.closeClientCommandChan()
 	for {
 		select {
 		case <-ctx.Done():
-			n.logger.Warn("exiting leader's worker for handling commands Task")
+			n.logger.Warn("worker-" + workerName + "-exiting leader's worker for handling commands Task")
 			return
 		default:
 			select {
 			case <-ctx.Done():
-				n.logger.Warn("exiting leader's worker for handling commands Task")
+				n.logger.Warn("worker-" + workerName + "-exiting leader's worker for handling commands Task")
 				return
 			case clientCmd := <-n.clientCommandChan:
 				// todo: has race with the heartbeat timer, but since it is idempotent, it is okay
@@ -167,16 +211,16 @@ func (n *Node) leaderWorkerForClient(ctx context.Context, heartbeatTicker *time.
 }
 
 // separate goroutine for the this task
-func (n *Node) leaderWorkerForCommon(ctx context.Context) {
+func (n *Node) leaderWorkerForCommon(ctx context.Context, workerName string) {
 	for {
 		select {
 		case <-ctx.Done():
-			n.logger.Warn("leader's worker context done, exiting")
+			n.logger.Warn("worker-" + workerName + "-leader's worker context done, exiting")
 			return
 		default:
 			select {
 			case <-ctx.Done():
-				n.logger.Warn("leader's worker context done, exiting")
+				n.logger.Warn("worker-" + workerName + "-leader's worker context done, exiting")
 				return
 			case internalReq := <-n.requestVoteChan: // commonRule: same with candidate
 				if !internalReq.IsTimeout.Load() {
@@ -403,32 +447,10 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.
 	newCommitID := n.raftLog.GetLastLogIdx()
 	n.updateCommitIdx(newCommitID)
 
-	// (5) apply the command
-	// todo: shall refine the statemachine interface
+	// (5) send to the apply command channel
 	for _, clientCommand := range clientCommands {
-		internalReq := clientCommand
-		// todo: possibly, the statemachine shall has a unique ID for the command
-		// todo: the apply command shall be async with apply and get result
-		applyResp, err := n.statemachine.ApplyCommand(internalReq.Req.Command, newCommitID)
-		n.incrementLastApplied(1)
-		if err != nil {
-			n.logger.Error("error in applying command to state machine", zap.Error(err))
-			internalReq.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
-				Resp: nil,
-				Err:  err,
-			}
-		} else {
-			clientResp := &rpc.ClientCommandResponse{
-				Result: applyResp,
-			}
-			internalReq.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
-				Resp: clientResp,
-				Err:  nil,
-			}
-		}
+		n.applyCommandChan <- clientCommand
 	}
-	// (5) if the follower run slowly or crash, the leader will retry to send the appendEntries indefinitely
-	// this is send thru appendEntreis triggered by heartbeat or the client command
 	return nil
 }
 

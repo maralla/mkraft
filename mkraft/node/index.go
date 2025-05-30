@@ -19,9 +19,9 @@ func (n *Node) catchupAppliedIdxOnStartup() error {
 			n.logger.Error("failed to get logs from index", zap.Error(err))
 			return err
 		}
-		for idx, log := range logs {
+		for _, log := range logs {
 			// todo: apply command needs reconstruction
-			_, err := n.statemachine.ApplyCommand(log.Commands, n.lastApplied+1+uint64(idx))
+			_, err := n.statemachine.ApplyCommand(log.Commands)
 			if err != nil {
 				n.logger.Error("failed to apply command", zap.Error(err))
 				return err
