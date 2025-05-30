@@ -14,6 +14,25 @@ import (
 	"go.uber.org/zap"
 )
 
+func (n *Node) recordLeaderState() {
+	stateFilePath := "leader.tmp"
+	file, err := os.OpenFile(stateFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		n.logger.Error("failed to open state file", zap.Error(err))
+		panic(err)
+	}
+	defer file.Close()
+
+	currentTime := time.Now().Format(time.RFC3339)
+	entry := currentTime + " " + n.NodeId + "\n"
+
+	_, writeErr := file.WriteString(entry)
+	if writeErr != nil {
+		n.logger.Error("failed to append NodeID to state file", zap.Error(writeErr))
+		panic(writeErr)
+	}
+}
+
 /*
 SECTION1: THE COMMON RULE (paper)
 If any RPC request or response is received from a server with a higher term,
@@ -53,22 +72,7 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	defer n.sem.Release(1)
 
 	// debugging
-	stateFilePath := "state.tmp"
-	file, err := os.OpenFile(stateFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		n.logger.Error("failed to open state file", zap.Error(err))
-		return
-	}
-	defer file.Close()
-
-	currentTime := time.Now().Format(time.RFC3339)
-	entry := currentTime + " " + n.NodeId + "\n"
-
-	_, writeErr := file.WriteString(entry)
-	if writeErr != nil {
-		n.logger.Error("failed to append NodeID to state file", zap.Error(writeErr))
-		return
-	}
+	n.recordLeaderState()
 
 	// leader:
 	// (1) leader-task-1: handle client commands and send append entries -> goroutine-worker-1 handled by clientCommandsTaskWorker
@@ -76,8 +80,11 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	// (3) common-task-1: handle voting requests from other candidates -> goroutine-worker-2
 	// (4) common-task-2: handle append entries requests from other candidates -> goroutine-worker-2
 
-	n.applyToStateMachineSignalChan = make(chan *utils.ClientCommandInternalReq, n.cfg.GetRaftNodeRequestBufferSize())
+	// reset the states
+	n.leaderShallDegrade = false
+	n.applyToStateMachineSignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
 	n.leaderDegradationChan = make(chan TermRank, n.cfg.GetRaftNodeRequestBufferSize())
+	n.leaderWorkersWaitGroup.Add(2) //todo:  makes the leader more complex, try not to use it
 
 	// these channels cannot be closed because they are created in the main thread but used in the worker
 	// we need to clean the channel when the leader quits,
@@ -92,9 +99,7 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	heartbeatDuration := n.cfg.GetLeaderHeartbeatPeriod()
 	tickerForHeartbeat := time.NewTicker(heartbeatDuration)
 	defer tickerForHeartbeat.Stop()
-	go n.leaderWorkerForClient(ctxForWorker, tickerForHeartbeat, "NO.2")
-
-	go n.leaderWorkerToApplyCommand(ctxForWorker, "NO.3")
+	go n.leaderWorkerForClientCommands(ctxForWorker, tickerForHeartbeat, "NO.2")
 
 	for {
 		select {
@@ -120,7 +125,7 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 				// the assumption is that the rpc timeout is short and the handling of rpc response
 				// is fast enough
 				tickerForHeartbeat.Stop()
-				err := n.handleHeartbeat(ctx)
+				err := n.syncDoHeartbeatAsLeader(ctx)
 				if err != nil {
 					n.logger.Error("error in sending heartbeat", zap.Error(err))
 				}
@@ -130,12 +135,29 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	}
 }
 
-// todo: can be merged to main
+func (n *Node) getLeaderShallDegrade() bool {
+	n.stateRWLock.RLock()
+	defer n.stateRWLock.RUnlock()
+	return n.leaderShallDegrade
+}
+
+func (n *Node) setLeaderShallDegrade(shallDegrade bool) {
+	n.stateRWLock.Lock()
+	defer n.stateRWLock.Unlock()
+	n.leaderShallDegrade = shallDegrade
+}
+
 // separate goroutine for the this task
-// handling requests from clients in a serializable and batched way
-func (n *Node) leaderWorkerForClient(ctx context.Context, heartbeatTicker *time.Ticker, workerName string) {
+// handling requests from clients and do log replication
+func (n *Node) leaderWorkerForClientCommands(ctx context.Context, heartbeatTicker *time.Ticker, workerName string) {
 	defer n.closeClientCommandChan()
 	for {
+
+		if n.getLeaderShallDegrade() {
+			n.logger.Warn("leader shall degrade, exiting leader's worker-" + workerName + " for handling commands Task")
+			return
+		}
+
 		select {
 		case <-ctx.Done():
 			n.logger.Warn("worker-" + workerName + "-exiting leader's worker for handling commands Task")
@@ -145,22 +167,16 @@ func (n *Node) leaderWorkerForClient(ctx context.Context, heartbeatTicker *time.
 			case <-ctx.Done():
 				n.logger.Warn("worker-" + workerName + "-exiting leader's worker for handling commands Task")
 				return
-			case clientCmd := <-n.applyToStateMachineSignalChan:
+			case clientCmd := <-n.clientCommandChan:
 				// todo: has race with the heartbeat timer, but since it is idempotent, it is okay
 				heartbeatTicker.Stop()
-
 				batchingSize := n.cfg.GetRaftNodeRequestBufferSize() - 1
-				clientCommands := utils.ReadMultipleFromChannel(n.applyToStateMachineSignalChan, batchingSize)
+				clientCommands := utils.ReadMultipleFromChannel(n.clientCommandChan, batchingSize)
 				clientCommands = append(clientCommands, clientCmd)
-				error := n.handleClientCommand(ctx, clientCommands)
+				error := n.syncDoLogReplicationAsLeader(ctx, clientCommands)
 				if error != nil {
-					n.logger.Error("error in handling client command", zap.Error(error))
-					for _, clientCommand := range clientCommands {
-						clientCommand.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
-							Resp: nil,
-							Err:  error,
-						}
-					}
+					// todo: temporary solution, shall handle the error properly
+					panic(error)
 				}
 				heartbeatTicker.Reset(n.cfg.GetLeaderHeartbeatPeriod())
 			}
@@ -285,6 +301,7 @@ func (n *Node) handlerAppendEntriesAsLeader(ctx context.Context, req *rpc.Append
 	return &response
 }
 
+// todo: what does this function do?
 func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]plugs.CatchupLogs, error) {
 	result := make(map[string]plugs.CatchupLogs)
 	for _, peerNodeID := range peerNodeIDs {
@@ -316,7 +333,7 @@ func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]plugs.
 // problem-1: the leader is alive but minority followers are dead -> can be handled by the retry mechanism
 // problem-2: the leader is alive but majority followers are dead
 // problem-3: the leader is stale
-func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.ClientCommandInternalReq) error {
+func (n *Node) syncDoLogReplicationAsLeader(ctx context.Context, clientCommands []*utils.ClientCommandInternalReq) error {
 
 	var subTasksToWait sync.WaitGroup
 	subTasksToWait.Add(2)
@@ -378,6 +395,7 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.
 		errorChanTask2 <- err
 	}(ctx)
 
+	// todo: shall retry forever?
 	// todo: what if task1 fails and task2 succeeds?
 	// todo: what if task1 succeeds and task2 fails?
 	// task3 when the entry has been safely replicated, the leader applies the entry to the state machine
@@ -392,28 +410,28 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.
 		panic("not sure how to handle the error")
 	}
 	resp := <-respChan
-	if !resp.Success {
+	if !resp.Success { // no consensus
 		if resp.Term > currentTerm {
+			n.setLeaderShallDegrade(true)
 			n.leaderDegradationChan <- TermRank(resp.Term)
 			return nil
 		} else {
 			// todo: the unsafe panic is temporarily used for debugging
 			panic("failed append entries, but without not a higher term")
 		}
+	} else { // consensus
+		// (4) the leader applies the command, and responds to the client
+		newCommitID := n.raftLog.GetLastLogIdx()
+		n.updateCommitIdx(newCommitID)
+
+		// (5) send to the apply command channel
+		n.applyToStateMachineSignalChan <- true
+		// todo: store the
+		return nil
 	}
-
-	// (4) the leader applies the command, and responds to the client
-	newCommitID := n.raftLog.GetLastLogIdx()
-	n.updateCommitIdx(newCommitID)
-
-	// (5) send to the apply command channel
-	n.applyToStateMachineSignalChan <- true
-	// todo: store the
-	return nil
 }
 
-// synchronous
-func (n *Node) handleHeartbeat(ctx context.Context) error {
+func (n *Node) syncDoHeartbeatAsLeader(ctx context.Context) error {
 	ctx, requestID := common.GetOrGenerateRequestID(ctx)
 	currentTerm := n.getCurrentTerm()
 	peerNodeIDs, err := n.membership.GetAllPeerNodeIDs()
@@ -478,7 +496,7 @@ func (n *Node) handleHeartbeat(ctx context.Context) error {
 
 func (n *Node) closeClientCommandChan() {
 	close(n.applyToStateMachineSignalChan)
-	for request := range n.applyToStateMachineSignalChan {
+	for request := range n.clientCommandChan {
 		if request != nil {
 			request.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
 				Resp: nil,

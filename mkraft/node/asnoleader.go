@@ -294,6 +294,10 @@ func (node *Node) runOneElectionAsCandidate(ctx context.Context) chan *MajorityR
 // leader shall reply yet others not
 // currently, apply to the state machine in serial
 func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, workerName string) {
+
+	// reset the channel, todo: the size of the channel should be re-considered
+	n.applyToStateMachineSignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
+
 	for {
 		select {
 		case <-ctx.Done():

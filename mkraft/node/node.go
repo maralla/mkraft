@@ -81,8 +81,11 @@ func NewNode(
 		applyToStateMachineSignalChan: make(chan bool, 10),
 
 		// todo: 10 is arbitrary, can be changed later, the current descision is that the chan length is >= leader workers count
-		leaderDegradationChan: make(chan TermRank, 10),
-		requestVoteChan:       make(chan *utils.RequestVoteInternalReq, bufferSize),
+		leaderDegradationChan:  make(chan TermRank, 10),
+		leaderShallDegrade:     false,
+		leaderWorkersWaitGroup: sync.WaitGroup{},
+
+		requestVoteChan: make(chan *utils.RequestVoteInternalReq, bufferSize),
 
 		appendEntryChan: make(chan *utils.AppendEntriesInternalReq, bufferSize),
 
@@ -138,7 +141,10 @@ type Node struct {
 	// reset these 2 data structures everytime a new leader is elected
 	clientCommandChan             chan *utils.ClientCommandInternalReq
 	applyToStateMachineSignalChan chan bool
-	leaderDegradationChan         chan TermRank
+
+	leaderDegradationChan  chan TermRank
+	leaderShallDegrade     bool
+	leaderWorkersWaitGroup sync.WaitGroup
 
 	// shared by all states
 	requestVoteChan chan *utils.RequestVoteInternalReq
