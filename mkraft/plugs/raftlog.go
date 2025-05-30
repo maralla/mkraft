@@ -15,6 +15,7 @@ import (
 
 var _ RaftLogsIface = (*SimpleRaftLogsImpl)(nil)
 
+// todo: shall change all uint/uint64 to types that really make sense in golang system, consider len(logs) cannot be uint64
 type RaftLogsIface interface {
 	// logIndex starts from 1, so the first log is at index 1
 	GetLastLogIdxAndTerm() (uint64, uint32)
