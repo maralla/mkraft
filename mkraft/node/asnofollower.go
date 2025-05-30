@@ -27,7 +27,15 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 	n.logger.Info("node acquires to run in FOLLOWER state")
 	n.sem.Acquire(ctx, 1)
 	n.logger.Info("acquired semaphore in FOLLOWER state")
-	defer n.sem.Release(1)
+
+	workerCtx, cancel := context.WithCancel(ctx)
+	go n.noLeaderWorkerToApplyCommandToStateMachine(workerCtx, "candidate")
+	defer func() {
+		cancel()
+		n.logger.Info("candidate worker exited successfully")
+		// wait for the worker to exit first, then release the semaphore
+		n.sem.Release(1)
+	}()
 
 	electionTicker := time.NewTicker(n.cfg.GetElectionTimeout())
 	defer electionTicker.Stop()
@@ -103,7 +111,16 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 	n.logger.Info("node starts to acquiring CANDIDATE state")
 	n.sem.Acquire(ctx, 1)
 	n.logger.Info("node has acquired semaphore in CANDIDATE state")
-	defer n.sem.Release(1)
+
+	// when the node changes the state, the worker shall exit
+	workerCtx, cancel := context.WithCancel(ctx)
+	go n.noLeaderWorkerToApplyCommandToStateMachine(workerCtx, "candidate")
+	defer func() {
+		cancel()
+		n.logger.Info("candidate worker exited successfully")
+		// wait for the worker to exit first, then release the semaphore
+		n.sem.Release(1)
+	}()
 
 	consensusChan := n.runOneElectionAsCandidate(ctx)
 
@@ -188,6 +205,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 	}
 }
 
+// maki: lastLogIndex, commitIndex, lastApplied can be totally different from each other
 func (n *Node) handlerAppendEntriesAsNoLeader(ctx context.Context, req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
 	var response rpc.AppendEntriesResponse
 	reqTerm := uint32(req.Term)
@@ -202,7 +220,10 @@ func (n *Node) handlerAppendEntriesAsNoLeader(ctx context.Context, req *rpc.Appe
 
 	// the request is valid:
 	// 1. finally update the commit index
-	defer n.updateCommitIdx(req.LeaderCommit)
+	defer func() {
+		n.updateCommitIdx(req.LeaderCommit) // this is not the log's index, because the log hasn't reached consensus yet
+		n.applyToStateMachineSignalChan <- true
+	}()
 
 	// 2. update the term
 	if reqTerm > currentTerm {
@@ -236,7 +257,6 @@ func (n *Node) handlerAppendEntriesAsNoLeader(ctx context.Context, req *rpc.Appe
 			Term:    currentTerm,
 			Success: true,
 		}
-		// update the commit index
 		return &response
 	}
 }
@@ -269,4 +289,44 @@ func (node *Node) runOneElectionAsCandidate(ctx context.Context) chan *MajorityR
 		}
 	}()
 	return consensusChan
+}
+
+// leader shall reply yet others not
+// currently, apply to the state machine in serial
+func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, workerName string) {
+	for {
+		select {
+		case <-ctx.Done():
+			n.logger.Warn("worker-" + workerName + "-exiting leader's worker for applying commands")
+		default:
+			select {
+			// try to signal this channel this everytime with heartbeat
+			case <-n.applyToStateMachineSignalChan:
+				// this commitIdx is the min(leaderCommit, index of last new entry in the log)
+				// so it must be greater or equal to lastApplied
+				commitIdx, lastApplied := n.getCommitIdxAndLastApplied()
+				if commitIdx > lastApplied {
+					logs, err := n.raftLog.GetLogsFromIdxIncluded(lastApplied + 1)
+					if err != nil {
+						n.logger.Error("failed to get logs from index", zap.Error(err))
+						panic(err)
+					}
+					// apply the command
+					for _, log := range logs {
+						// the no-leader node doesn't need to respond to clients
+						_, err := n.statemachine.ApplyCommand(log.Commands)
+						if err != nil {
+							n.logger.Error("failed to apply command to state machine", zap.Error(err))
+							panic(err)
+						} else {
+							n.incrementLastApplied(1)
+						}
+					}
+				}
+			case <-ctx.Done():
+				n.logger.Warn("worker-" + workerName + "-exiting leader's worker for applying commands")
+				return
+			}
+		}
+	}
 }

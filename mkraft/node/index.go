@@ -33,6 +33,12 @@ func (n *Node) catchupAppliedIdxOnStartup() error {
 	return nil
 }
 
+func (n *Node) getCommitIdxAndLastApplied() (uint64, uint64) {
+	n.stateRWLock.RLock()
+	defer n.stateRWLock.RUnlock()
+	return n.commitIndex, n.lastApplied
+}
+
 func (n *Node) updateCommitIdx(commitIdx uint64) {
 	n.stateRWLock.Lock()
 	defer n.stateRWLock.Unlock()

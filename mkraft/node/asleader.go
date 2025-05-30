@@ -76,7 +76,7 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	// (3) common-task-1: handle voting requests from other candidates -> goroutine-worker-2
 	// (4) common-task-2: handle append entries requests from other candidates -> goroutine-worker-2
 
-	n.clientCommandChan = make(chan *utils.ClientCommandInternalReq, n.cfg.GetRaftNodeRequestBufferSize())
+	n.applyToStateMachineSignalChan = make(chan *utils.ClientCommandInternalReq, n.cfg.GetRaftNodeRequestBufferSize())
 	n.leaderDegradationChan = make(chan TermRank, n.cfg.GetRaftNodeRequestBufferSize())
 
 	// these channels cannot be closed because they are created in the main thread but used in the worker
@@ -87,7 +87,7 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	ctxForWorker, cancelWorker := context.WithCancel(ctx)
 	defer cancelWorker()
 
-	go n.leaderWorkerForCommon(ctxForWorker, "NO.1")
+	go n.leaderWorkerForCommonName(ctxForWorker, "NO.1")
 
 	heartbeatDuration := n.cfg.GetLeaderHeartbeatPeriod()
 	tickerForHeartbeat := time.NewTicker(heartbeatDuration)
@@ -130,48 +130,6 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 	}
 }
 
-func (n *Node) leaderWorkerToApplyCommand(ctx context.Context, workerName string) {
-	for {
-		select {
-		case <-ctx.Done():
-			n.logger.Warn("worker-" + workerName + "-exiting leader's worker for applying commands")
-			return
-		default:
-			select {
-			case clientCmd := <-n.clientCommandChan:
-				clientCommands := make([]*utils.ClientCommandInternalReq, 1, n.cfg.GetRaftNodeRequestBufferSize())
-				clientCommands[0] = clientCmd
-				clientCommands = append(clientCommands, utils.ReadMultipleFromChannel(n.clientCommandChan, n.cfg.GetRaftNodeRequestBufferSize()-1)...)
-
-				for _, cmd := range clientCommands {
-					applyResp, err := n.statemachine.ApplyCommand(cmd.Req.Command)
-					if err != nil {
-						// todo: shall handle the error properly, this is not the error inside the statemachine but the error of the log application
-						// shall retry indefinitely until success, or, panic
-						// todo: error handling of all the server, currently we only handle happy path, and use panic to handle the error on the critical path
-						n.logger.Error("error in applying command to state machine", zap.Error(err))
-						panic(err)
-					} else {
-						n.incrementLastApplied(1)
-						clientResp := &rpc.ClientCommandResponse{
-							Result: applyResp,
-						}
-						cmd.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
-							Resp: clientResp,
-							Err:  nil,
-						}
-
-					}
-				}
-			case <-ctx.Done():
-				n.logger.Warn("worker-" + workerName + "-exiting leader's worker for applying commands")
-				return
-
-			}
-		}
-	}
-}
-
 // todo: can be merged to main
 // separate goroutine for the this task
 // handling requests from clients in a serializable and batched way
@@ -187,12 +145,12 @@ func (n *Node) leaderWorkerForClient(ctx context.Context, heartbeatTicker *time.
 			case <-ctx.Done():
 				n.logger.Warn("worker-" + workerName + "-exiting leader's worker for handling commands Task")
 				return
-			case clientCmd := <-n.clientCommandChan:
+			case clientCmd := <-n.applyToStateMachineSignalChan:
 				// todo: has race with the heartbeat timer, but since it is idempotent, it is okay
 				heartbeatTicker.Stop()
 
 				batchingSize := n.cfg.GetRaftNodeRequestBufferSize() - 1
-				clientCommands := utils.ReadMultipleFromChannel(n.clientCommandChan, batchingSize)
+				clientCommands := utils.ReadMultipleFromChannel(n.applyToStateMachineSignalChan, batchingSize)
 				clientCommands = append(clientCommands, clientCmd)
 				error := n.handleClientCommand(ctx, clientCommands)
 				if error != nil {
@@ -211,7 +169,7 @@ func (n *Node) leaderWorkerForClient(ctx context.Context, heartbeatTicker *time.
 }
 
 // separate goroutine for the this task
-func (n *Node) leaderWorkerForCommon(ctx context.Context, workerName string) {
+func (n *Node) leaderWorkerForCommonName(ctx context.Context, workerName string) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -251,7 +209,8 @@ func (n *Node) leaderWorkerForCommon(ctx context.Context, workerName string) {
 	}
 }
 
-// maki: this is a very tricky part, shall discuss with the professor
+// maki: this is a very tricky part, cannot have the two parallel gorotuines to do append/apply at the same time
+// if there is a race condition, we stop the leader and degrade to follower first
 func (n *Node) handlerAppendEntriesAsLeader(ctx context.Context, req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
 
 	// 1) the req.Term is smaller -> shall ignore (simple)
@@ -448,9 +407,8 @@ func (n *Node) handleClientCommand(ctx context.Context, clientCommands []*utils.
 	n.updateCommitIdx(newCommitID)
 
 	// (5) send to the apply command channel
-	for _, clientCommand := range clientCommands {
-		n.applyCommandChan <- clientCommand
-	}
+	n.applyToStateMachineSignalChan <- true
+	// todo: store the
 	return nil
 }
 
@@ -519,8 +477,8 @@ func (n *Node) handleHeartbeat(ctx context.Context) error {
 }
 
 func (n *Node) closeClientCommandChan() {
-	close(n.clientCommandChan)
-	for request := range n.clientCommandChan {
+	close(n.applyToStateMachineSignalChan)
+	for request := range n.applyToStateMachineSignalChan {
 		if request != nil {
 			request.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
 				Resp: nil,
