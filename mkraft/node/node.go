@@ -73,13 +73,16 @@ func NewNode(
 		stateRWLock: &sync.RWMutex{},
 		sem:         semaphore.NewWeighted(1),
 
-		NodeId:            nodeId,
-		State:             StateFollower, // servers start up as followers
-		clientCommandChan: make(chan *utils.ClientCommandInternalReq, bufferSize),
-		// todo:  what should the length of the channel be?
-		leaderDegradationChan: make(chan TermRank, 1),
-		requestVoteChan:       make(chan *utils.RequestVoteInternalReq, bufferSize),
-		appendEntryChan:       make(chan *utils.AppendEntriesInternalReq, bufferSize),
+		NodeId: nodeId,
+		State:  StateFollower, // servers start up as followers
+
+		// leader only channels
+		receiveClientCommandChan: make(chan *utils.ClientCommandInternalReq, bufferSize),
+		applyClientCommandChan:   make(chan *utils.ClientCommandInternalReq, bufferSize),
+		noleaderApplySignalChan:  make(chan bool, 10),
+
+		requestVoteChan: make(chan *utils.RequestVoteInternalReq, bufferSize),
+		appendEntryChan: make(chan *utils.AppendEntriesInternalReq, bufferSize),
 
 		// persistent state on all servers
 		CurrentTerm: 0, // as the logical clock in Raft to allow detection of stale messages
@@ -92,7 +95,7 @@ func NewNode(
 	}
 
 	// initialize the raft log and statemachine
-	raftLogIface := plugs.NewRaftLogsImplAndLoad(cfg.GetRaftLogFilePath())
+	raftLogIface := plugs.NewRaftLogsImplAndLoad(cfg.GetRaftLogFilePath(), logger)
 	statemachine := plugs.NewStateMachineNoOpImpl()
 	node.raftLog = raftLogIface
 	node.statemachine = statemachine
@@ -113,8 +116,6 @@ func NewNode(
 }
 
 // the Raft Server Node
-// maki: go gymnastics for sync values
-// todo: add sync for these values?
 type Node struct {
 	raftLog      plugs.RaftLogsIface // required, persistent
 	membership   peers.MembershipMgrIface
@@ -133,16 +134,16 @@ type Node struct {
 	// leader only channels
 	// gracefully clean every time a leader degrades to a follower
 	// reset these 2 data structures everytime a new leader is elected
-	clientCommandChan     chan *utils.ClientCommandInternalReq
-	leaderDegradationChan chan TermRank
-
+	receiveClientCommandChan chan *utils.ClientCommandInternalReq
+	applyClientCommandChan   chan *utils.ClientCommandInternalReq
+	noleaderApplySignalChan  chan bool
 	// shared by all states
 	requestVoteChan chan *utils.RequestVoteInternalReq
 	appendEntryChan chan *utils.AppendEntriesInternalReq
 
 	// Persistent state on all servers
-	CurrentTerm uint32 // required, persistent (todo: haven't get persisted yet)
-	VotedFor    string // required, persistent (todo: haven't get persisted yet, why ?)
+	CurrentTerm uint32 // required, persistent
+	VotedFor    string // required, persistent
 	// LogEntries
 
 	// Paper page 4:
@@ -154,6 +155,29 @@ type Node struct {
 	matchIndex map[string]uint64 // map[peerID]matchIndex, index of highest log entry known to be replicated on that server
 }
 
+func (node *Node) GetNodeState() NodeState {
+	node.stateRWLock.RLock()
+	defer node.stateRWLock.RUnlock()
+
+	return node.State
+}
+
+func (node *Node) SetNodeState(state NodeState) {
+	node.stateRWLock.Lock()
+	defer node.stateRWLock.Unlock()
+
+	if node.State == state {
+		return // no change
+	}
+
+	node.logger.Info("Node state changed",
+		zap.String("nodeID", node.NodeId),
+		zap.String("oldState", node.State.String()),
+		zap.String("newState", state.String()))
+
+	node.State = state
+}
+
 func (node *Node) Start(ctx context.Context) {
 	go node.RunAsFollower(ctx)
 }
@@ -161,7 +185,7 @@ func (node *Node) Start(ctx context.Context) {
 // gracefully stop the node and cleanup
 func (node *Node) Stop(ctx context.Context) {
 	close(node.appendEntryChan)
-	close(node.clientCommandChan)
+	close(node.receiveClientCommandChan)
 }
 
 func (node *Node) VoteRequest(req *utils.RequestVoteInternalReq) {
@@ -172,15 +196,69 @@ func (node *Node) AppendEntryRequest(req *utils.AppendEntriesInternalReq) {
 	node.appendEntryChan <- req
 }
 
+// todo: shall add the feature of "redirection to the leader"
 func (n *Node) ClientCommand(req *utils.ClientCommandInternalReq) {
-	if n.State != StateLeader {
-		// todo: shall add the feature of "redirection to the leader"
+	if n.GetNodeState() != StateLeader {
 		n.logger.Warn("Client command received but node is not a leader, dropping request",
 			zap.String("nodeID", n.NodeId))
 		req.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
-			Err: utils.ErrNotLeader,
+			Err: common.ErrNotLeader,
 		}
 		return
 	}
-	n.clientCommandChan <- req
+	defer func() {
+		if r := recover(); r != nil {
+			n.logger.Error("panic in ClientCommand, shall have bugs", zap.Any("panic", r))
+			req.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
+				Err: common.ErrNotLeader,
+			}
+		}
+	}()
+	n.receiveClientCommandChan <- req
+}
+
+// shared by leader/follower/candidate
+// this method doesn't check the current state of the node
+func (node *Node) handleVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
+
+	var response rpc.RequestVoteResponse
+	currentTerm, voteFor := node.getCurrentTermAndVoteFor()
+
+	if req.Term > currentTerm {
+		err := node.storeCurrentTermAndVotedFor(req.Term, req.CandidateId) // did vote for the candidate
+		if err != nil {
+			node.logger.Error(
+				"error in storeCurrentTermAndVotedFor", zap.Error(err),
+				zap.String("nId", node.NodeId),
+				zap.Uint32("term", req.Term), zap.String("candidateId", req.CandidateId))
+			panic(err) // critical error, cannot continue
+		}
+		response = rpc.RequestVoteResponse{
+			Term:        req.Term,
+			VoteGranted: true,
+		}
+	} else if req.Term < currentTerm {
+		response = rpc.RequestVoteResponse{
+			Term:        currentTerm,
+			VoteGranted: false,
+		}
+	} else {
+		if voteFor == "" {
+			node.logger.Error("shouldn't happen, but voteFor is empty")
+			// temporary solution, should be fixed with a safer implementation later
+			panic("shouldn't happen, but voteFor is empty")
+		}
+		if voteFor == req.CandidateId {
+			response = rpc.RequestVoteResponse{
+				Term:        currentTerm,
+				VoteGranted: true,
+			}
+		} else {
+			response = rpc.RequestVoteResponse{
+				Term:        currentTerm,
+				VoteGranted: false,
+			}
+		}
+	}
+	return &response
 }
