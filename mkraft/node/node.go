@@ -211,7 +211,7 @@ func (n *Node) ClientCommand(req *utils.ClientCommandInternalReq) {
 		n.logger.Warn("Client command received but node is not a leader, dropping request",
 			zap.String("nodeID", n.NodeId))
 		req.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
-			Err: utils.ErrNotLeader,
+			Err: common.ErrNotLeader,
 		}
 		return
 	}

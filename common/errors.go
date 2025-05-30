@@ -8,3 +8,4 @@ func ContextDoneErr() error {
 
 // raft log errors
 var ErrPreLogNotMatch = errors.New("prelog not match")
+var ErrNotLeader = errors.New("not leader")
