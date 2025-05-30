@@ -79,6 +79,14 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 					}
 					req.RespChan <- &wrappedResp
 					electionTicker.Reset(n.cfg.GetElectionTimeout())
+				case clientCommand := <-n.receiveClientCommandChan:
+					// todo: add delegation to the leader
+					clientCommand.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
+						Resp: &rpc.ClientCommandResponse{
+							Result: nil,
+						},
+						Err: common.ErrNotLeader,
+					}
 				}
 			}
 		}
@@ -199,6 +207,14 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 						go n.RunAsFollower(ctx)
 						return
 					}
+				case clientCommand := <-n.receiveClientCommandChan:
+					// todo: add delegation to the leader
+					clientCommand.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
+						Resp: &rpc.ClientCommandResponse{
+							Result: nil,
+						},
+						Err: common.ErrNotLeader,
+					}
 				}
 			}
 		}
@@ -222,7 +238,7 @@ func (n *Node) handlerAppendEntriesAsNoLeader(ctx context.Context, req *rpc.Appe
 	// 1. finally update the commit index
 	defer func() {
 		n.updateCommitIdx(req.LeaderCommit) // this is not the log's index, because the log hasn't reached consensus yet
-		n.applyToStateMachineSignalChan <- true
+		n.noleaderApplySignalChan <- true
 	}()
 
 	// 2. update the term
@@ -296,7 +312,9 @@ func (node *Node) runOneElectionAsCandidate(ctx context.Context) chan *MajorityR
 func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, workerName string) {
 
 	// reset the channel, todo: the size of the channel should be re-considered
-	n.applyToStateMachineSignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
+	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
+	tickerTriggered := time.NewTicker(time.Duration(500 * time.Microsecond))
+	defer tickerTriggered.Stop()
 
 	for {
 		select {
@@ -305,31 +323,37 @@ func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, w
 		default:
 			select {
 			// try to signal this channel this everytime with heartbeat
-			case <-n.applyToStateMachineSignalChan:
+			case <-tickerTriggered.C:
+				n.noleaderApplyCommandToStateMachine()
+			case <-n.noleaderApplySignalChan:
 				// this commitIdx is the min(leaderCommit, index of last new entry in the log)
 				// so it must be greater or equal to lastApplied
-				commitIdx, lastApplied := n.getCommitIdxAndLastApplied()
-				if commitIdx > lastApplied {
-					logs, err := n.raftLog.GetLogsFromIdxIncluded(lastApplied + 1)
-					if err != nil {
-						n.logger.Error("failed to get logs from index", zap.Error(err))
-						panic(err)
-					}
-					// apply the command
-					for _, log := range logs {
-						// the no-leader node doesn't need to respond to clients
-						_, err := n.statemachine.ApplyCommand(log.Commands)
-						if err != nil {
-							n.logger.Error("failed to apply command to state machine", zap.Error(err))
-							panic(err)
-						} else {
-							n.incrementLastApplied(1)
-						}
-					}
-				}
+				n.noleaderApplyCommandToStateMachine()
 			case <-ctx.Done():
 				n.logger.Warn("worker-" + workerName + "-exiting leader's worker for applying commands")
 				return
+			}
+		}
+	}
+}
+
+func (n *Node) noleaderApplyCommandToStateMachine() {
+	commitIdx, lastApplied := n.getCommitIdxAndLastApplied()
+	if commitIdx > lastApplied {
+		logs, err := n.raftLog.GetLogsFromIdxIncluded(lastApplied + 1)
+		if err != nil {
+			n.logger.Error("failed to get logs from index", zap.Error(err))
+			panic(err)
+		}
+		// apply the command
+		for _, log := range logs {
+			// the no-leader node doesn't need to respond to clients
+			_, err := n.statemachine.ApplyCommand(log.Commands)
+			if err != nil {
+				n.logger.Error("failed to apply command to state machine", zap.Error(err))
+				panic(err)
+			} else {
+				n.incrementLastApplied(1)
 			}
 		}
 	}

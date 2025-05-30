@@ -45,6 +45,12 @@ func (n *Node) getLastApplied() uint64 {
 	return n.lastApplied
 }
 
+func (n *Node) getCommitIdx() uint64 {
+	n.stateRWLock.RLock()
+	defer n.stateRWLock.RUnlock()
+	return n.commitIndex
+}
+
 func (n *Node) updateCommitIdx(commitIdx uint64) {
 	n.stateRWLock.Lock()
 	defer n.stateRWLock.Unlock()

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/maki3cat/mkraft/common"
+	"github.com/maki3cat/mkraft/mkraft/plugs"
 	"github.com/maki3cat/mkraft/mkraft/utils"
 	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
@@ -20,97 +21,8 @@ type JobResult struct {
 	VotedFor string
 }
 
-// maki: take this simple version as the baseline, and add more gorouintes if this has performance issues
-// analysis of why this pattern can be used:
-// task2, task4 have data race if using different goroutine -> they both change raftlog/state machine in a serial order
-// so one way is to use the same goroutine for task2 and task4 to handle log replication
-// normally, the leader only has task4, and only in unstable conditions, it has to handle task2 and task4 at the same time
-// if task4 accepts the log replication, the leader shall degrade to follower with graceful shutdown
-
-// task3 also happens in unstable conditions, but it is less frequent than task2 so can also be in the same goroutine
-// task1 has lower priority than task3
-
-// the only worker thread needed is the log applicaiton thread
-func (n *Node) runAsLeaderImpl(ctx context.Context) {
-
-	if n.State != StateLeader {
-		panic("node is not in LEADER state")
-	}
-	n.logger.Info("acquiring the Semaphore as the LEADER state")
-	n.sem.Acquire(ctx, 1)
-	n.logger.Info("acquired the Semaphore as the LEADER state")
-	defer n.sem.Release(1)
-
-	// debugging
-	n.recordLeaderState()
-
-	// reset the states
-	go n.workerForLogApplication(ctx)
-
-	heartbeatDuration := n.cfg.GetLeaderHeartbeatPeriod()
-	tickerForHeartbeat := time.NewTicker(heartbeatDuration)
-	defer tickerForHeartbeat.Stop()
-	var singleJobResult JobResult
-	var err error
-
-	for {
-		if singleJobResult.ShallDegrade {
-			n.storeCurrentTermAndVotedFor(uint32(singleJobResult.Term), singleJobResult.VotedFor)
-			n.leaderGracefulDegradation(ctx)
-			return
-		}
-		select {
-		case <-ctx.Done(): // give ctx higher priority
-			n.logger.Warn("raft node main context done, exiting")
-			return
-		default:
-			select {
-
-			case <-ctx.Done():
-				n.logger.Warn("raft node main context done, exiting")
-				return
-
-			// task1: send the heartbeat -> as leader, may degrade to follower
-			case <-tickerForHeartbeat.C:
-				tickerForHeartbeat.Reset(heartbeatDuration)
-				singleJobResult, err = n.syncDoHeartbeatAsLeader(ctx)
-				if err != nil {
-					n.logger.Error("error in sending heartbeat, omit it and continue", zap.Error(err))
-				}
-
-			// task2: handle the client command, need to change raftlog/state machine -> as leader, may degrade to follower
-			case clientCmd := <-n.clientCommandChan:
-				tickerForHeartbeat.Reset(heartbeatDuration)
-				batchingSize := n.cfg.GetRaftNodeRequestBufferSize() - 1
-				clientCommands := utils.ReadMultipleFromChannel(n.clientCommandChan, batchingSize)
-				clientCommands = append(clientCommands, clientCmd)
-				singleJobResult, err = n.syncDoLogReplicationAsLeader(ctx, clientCommands)
-				if err != nil {
-					// todo: as is same with most other panics, temporary solution, shall handle the error properly
-					panic(err)
-				}
-
-			// task3: handle the requestVoteChan -> as a node, may degrade to follower
-			case internalReq := <-n.requestVoteChan:
-				singleJobResult, err = n.handleRequestVoteAsLeader(ctx, internalReq)
-				if err != nil {
-					n.logger.Error("error in handling request vote", zap.Error(err))
-					panic(err)
-				}
-			// task4: handle the appendEntryChan, need to change raftlog/state machine -> as a node, may degrade to follower
-			case internalReq := <-n.appendEntryChan:
-				singleJobResult, err = n.handlerAppendEntriesAsLeader(ctx, internalReq)
-				if err != nil {
-					n.logger.Error("error in handling append entries", zap.Error(err))
-					panic(err)
-				}
-			}
-		}
-	}
-}
-
 // @return: shall degrade to follower or not
-func (n *Node) syncDoHeartbeatAsLeader(ctx context.Context) (JobResult, error) {
+func (n *Node) syncDoHeartbeat(ctx context.Context) (JobResult, error) {
 	ctx, requestID := common.GetOrGenerateRequestID(ctx)
 	currentTerm := n.getCurrentTerm()
 	peerNodeIDs, err := n.membership.GetAllPeerNodeIDs()
@@ -165,11 +77,12 @@ func (n *Node) syncDoHeartbeatAsLeader(ctx context.Context) (JobResult, error) {
 // problem-2: the leader is alive but majority followers are dead
 // problem-3: the leader is stale
 // @return: shall degrade to follower or not, and the error
-func (n *Node) syncDoLogReplicationAsLeader(ctx context.Context, clientCommands []*utils.ClientCommandInternalReq) (JobResult, error) {
+func (n *Node) syncDoLogReplication(ctx context.Context, clientCommands []*utils.ClientCommandInternalReq) (JobResult, error) {
 
 	var subTasksToWait sync.WaitGroup
 	subTasksToWait.Add(2)
 	currentTerm := n.getCurrentTerm()
+	newCommitID := n.getCommitIdx() + uint64(len(clientCommands)) // only if the consensus is reached
 
 	// prep:
 	// get logs from the raft logs for each client
@@ -249,18 +162,20 @@ func (n *Node) syncDoLogReplicationAsLeader(ctx context.Context, clientCommands 
 			// todo: the unsafe panic is temporarily used for debugging
 			panic("failed append entries, but without not a higher term")
 		}
-	} else { // consensus
+	} else {
+
 		// (4) the leader applies the command, and responds to the client
-		newCommitID := n.raftLog.GetLastLogIdx()
 		n.updateCommitIdx(newCommitID)
 
 		// (5) send to the apply command channel
-		n.applyToStateMachineSignalChan <- true
+		for _, clientCommand := range clientCommands {
+			n.applyClientCommandChan <- clientCommand
+		}
 		return JobResult{ShallDegrade: false, Term: TermRank(currentTerm)}, nil
 	}
 }
 
-func (n *Node) handlerAppendEntriesAsLeader(ctx context.Context, internalReq *utils.AppendEntriesInternalReq) (JobResult, error) {
+func (n *Node) handlerAppendEntriesAsLeader(internalReq *utils.AppendEntriesInternalReq) (JobResult, error) {
 	req := internalReq.Req
 	reqTerm := uint32(req.Term)
 	currentTerm := n.getCurrentTerm()
@@ -293,7 +208,7 @@ func (n *Node) handlerAppendEntriesAsLeader(ctx context.Context, internalReq *ut
 	}
 }
 
-func (n *Node) handleRequestVoteAsLeader(ctx context.Context, internalReq *utils.RequestVoteInternalReq) (JobResult, error) {
+func (n *Node) handleRequestVoteAsLeader(internalReq *utils.RequestVoteInternalReq) (JobResult, error) {
 	resp := n.handleVoteRequest(internalReq.Req)
 	wrapper := utils.RPCRespWrapper[*rpc.RequestVoteResponse]{
 		Resp: resp,
@@ -333,16 +248,66 @@ func (n *Node) leaderGracefulDegradation(ctx context.Context) {
 	// delegate this kind of job to the folllower
 	// reject all not handled clientCommands
 
-	// apply all committed logs and send reply to clients
-
+	// when this clean up is in process, the leader shall not handle any new clientCommands
+	remainingCommands := utils.ReadMultipleFromChannel(n.applyClientCommandChan, n.cfg.GetRaftNodeRequestBufferSize())
+	for _, clientCommand := range remainingCommands {
+		result, err := n.statemachine.ApplyCommand(clientCommand.Req.Command)
+		if err != nil {
+			n.logger.Error("failed to apply command", zap.Error(err))
+			panic(err) // todo: shall not panic, shall handle the error properly
+		}
+		clientCommand.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
+			Resp: &rpc.ClientCommandResponse{
+				Result: result,
+			},
+			Err: nil,
+		}
+	}
 }
 
-// todo: to be implemented
 func (n *Node) workerForLogApplication(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case clientCommand := <-n.applyClientCommandChan:
+			result, err := n.statemachine.ApplyCommand(clientCommand.Req.Command)
+			if err != nil {
+				n.logger.Error("failed to apply command", zap.Error(err))
+				panic(err) // todo: shall not panic, shall handle the error properly
+			}
+			clientCommand.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
+				Resp: &rpc.ClientCommandResponse{
+					Result: result,
+				},
+				Err: nil,
+			}
 		}
 	}
+}
+
+// todo: what does this function do?
+func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]plugs.CatchupLogs, error) {
+	result := make(map[string]plugs.CatchupLogs)
+	for _, peerNodeID := range peerNodeIDs {
+		// todo: can be batch reading
+		nextID := n.getPeersNextIndex(peerNodeID)
+		logs, err := n.raftLog.GetLogsFromIdxIncluded(nextID)
+		if err != nil {
+			n.logger.Error("failed to get logs from index", zap.Error(err))
+			return nil, err
+		}
+		prevLogIndex := nextID - 1
+		prevTerm, error := n.raftLog.GetTermByIndex(prevLogIndex)
+		if error != nil {
+			n.logger.Error("failed to get term by index", zap.Error(error))
+			return nil, error
+		}
+		result[peerNodeID] = plugs.CatchupLogs{
+			LastLogIndex: prevLogIndex,
+			LastLogTerm:  prevTerm,
+			Entries:      logs,
+		}
+	}
+	return result, nil
 }

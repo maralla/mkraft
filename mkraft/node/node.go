@@ -73,12 +73,13 @@ func NewNode(
 		stateRWLock: &sync.RWMutex{},
 		sem:         semaphore.NewWeighted(1),
 
-		NodeId:            nodeId,
-		State:             StateFollower, // servers start up as followers
-		clientCommandChan: make(chan *utils.ClientCommandInternalReq, bufferSize),
+		NodeId: nodeId,
+		State:  StateFollower, // servers start up as followers
 
-		// todo: 10 is arbitrary, shall be re-consider
-		applyToStateMachineSignalChan: make(chan bool, 10),
+		// leader only channels
+		receiveClientCommandChan: make(chan *utils.ClientCommandInternalReq, bufferSize),
+		applyClientCommandChan:   make(chan *utils.ClientCommandInternalReq, bufferSize),
+		noleaderApplySignalChan:  make(chan bool, 10),
 
 		requestVoteChan: make(chan *utils.RequestVoteInternalReq, bufferSize),
 		appendEntryChan: make(chan *utils.AppendEntriesInternalReq, bufferSize),
@@ -133,9 +134,9 @@ type Node struct {
 	// leader only channels
 	// gracefully clean every time a leader degrades to a follower
 	// reset these 2 data structures everytime a new leader is elected
-	clientCommandChan             chan *utils.ClientCommandInternalReq
-	applyToStateMachineSignalChan chan bool
-
+	receiveClientCommandChan chan *utils.ClientCommandInternalReq
+	applyClientCommandChan   chan *utils.ClientCommandInternalReq
+	noleaderApplySignalChan  chan bool
 	// shared by all states
 	requestVoteChan chan *utils.RequestVoteInternalReq
 	appendEntryChan chan *utils.AppendEntriesInternalReq
@@ -184,7 +185,7 @@ func (node *Node) Start(ctx context.Context) {
 // gracefully stop the node and cleanup
 func (node *Node) Stop(ctx context.Context) {
 	close(node.appendEntryChan)
-	close(node.clientCommandChan)
+	close(node.receiveClientCommandChan)
 }
 
 func (node *Node) VoteRequest(req *utils.RequestVoteInternalReq) {
@@ -213,7 +214,7 @@ func (n *Node) ClientCommand(req *utils.ClientCommandInternalReq) {
 			}
 		}
 	}()
-	n.clientCommandChan <- req
+	n.receiveClientCommandChan <- req
 }
 
 // shared by leader/follower/candidate
