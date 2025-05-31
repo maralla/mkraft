@@ -15,3 +15,13 @@ func ReadMultipleFromChannel[T any](ch <-chan T, count int) []T {
 	}
 	return result
 }
+
+func DrainChannel[T any](ch <-chan T) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
+	}
+}

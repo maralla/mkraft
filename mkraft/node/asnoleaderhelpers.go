@@ -1,11 +1,13 @@
 package node
 
+// "ATOMIC" UNIT OF JOBS FOR THE FOLLOWER/CANDIDATE
 import (
 	"context"
 	"sync"
 	"time"
 
 	"github.com/maki3cat/mkraft/common"
+	"github.com/maki3cat/mkraft/mkraft/utils"
 	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
 )
@@ -52,8 +54,7 @@ func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, w
 			case <-tickerTriggered.C:
 				n.noleaderApplyCommandToStateMachine()
 			case <-n.noleaderApplySignalChan:
-				// this commitIdx is the min(leaderCommit, index of last new entry in the log)
-				// so it must be greater or equal to lastApplied
+				utils.DrainChannel(n.noleaderApplySignalChan)
 				n.noleaderApplyCommandToStateMachine()
 			case <-ctx.Done():
 				n.logger.Warn("apply-worker, exiting leader's worker for applying commands")

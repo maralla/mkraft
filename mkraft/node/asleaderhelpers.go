@@ -1,5 +1,6 @@
 package node
 
+// UNIT OF JOBS FOR THE LEADER
 import (
 	"context"
 	"os"

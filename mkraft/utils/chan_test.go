@@ -88,3 +88,17 @@ func TestReadMultipleFromChannel_SlowSender(t *testing.T) {
 		t.Fatalf("expected 0 items, got %d", len(result))
 	}
 }
+
+func TestDrainChannel(t *testing.T) {
+	ch := make(chan int, 3)
+	ch <- 1
+	ch <- 2
+	ch <- 3
+	close(ch)
+
+	DrainChannel(ch)
+
+	if len(ch) != 0 {
+		t.Fatalf("expected 0 items, got %d", len(ch))
+	}
+}
