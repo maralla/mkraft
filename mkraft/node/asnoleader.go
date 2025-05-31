@@ -21,26 +21,22 @@ If times out, the follower will convert to candidate state.
 */
 func (n *Node) RunAsFollower(ctx context.Context) {
 
-	if n.State != StateFollower {
+	if n.GetNodeState() != StateFollower {
 		panic("node is not in FOLLOWER state")
 	}
 	n.logger.Info("node acquires to run in FOLLOWER state")
 	n.sem.Acquire(ctx, 1)
 	n.logger.Info("acquired semaphore in FOLLOWER state")
 
-	workerCtx, cancel := context.WithCancel(ctx)
+	workerCtx, workerCancel := context.WithCancel(ctx)
 	workerWaitGroup := sync.WaitGroup{}
 	workerWaitGroup.Add(1)
 	electionTicker := time.NewTicker(n.cfg.GetElectionTimeout())
-
-	// here is actually a variate pipeline pattern:
-	// first step is log replication, second step is apply to the state machine
 	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
 	go n.noLeaderWorkerToApplyCommandToStateMachine(workerCtx, &workerWaitGroup)
-
 	defer func() { // gracefully exit for follower state is easy
 		electionTicker.Stop()
-		cancel()
+		workerCancel()
 		workerWaitGroup.Wait() // cancel only closes the Done channel, it doesn't wait for the worker to exit
 		n.logger.Info("follower worker exited successfully")
 		n.sem.Release(1)
@@ -59,7 +55,7 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 					n.membership.GracefulShutdown()
 					return
 				case <-electionTicker.C:
-					n.State = StateCandidate
+					n.SetNodeState(StateCandidate)
 					go n.RunAsCandidate(ctx)
 					return
 				case requestVoteInternal := <-n.requestVoteChan:
@@ -126,7 +122,8 @@ if AppendEntries RPC received from new leader: convert to follower
 if election timeout elapses: start new election
 */
 func (n *Node) RunAsCandidate(ctx context.Context) {
-	if n.State != StateCandidate {
+
+	if n.GetNodeState() != StateCandidate {
 		panic("node is not in CANDIDATE state")
 	}
 
@@ -135,7 +132,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 	n.logger.Info("node has acquired semaphore in CANDIDATE state")
 
 	// when the node changes the state, the worker shall exit
-	workerCtx, cancel := context.WithCancel(ctx)
+	workerCtx, workerCancel := context.WithCancel(ctx)
 	workerWaitGroup := sync.WaitGroup{}
 	workerWaitGroup.Add(1)
 
@@ -143,16 +140,14 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 	// first step is log replication, second step is apply to the state machine
 	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
 	go n.noLeaderWorkerToApplyCommandToStateMachine(workerCtx, &workerWaitGroup)
-
 	defer func() {
-		cancel()
+		workerCancel()
 		workerWaitGroup.Wait() // cancel only closes the Done channel, it doesn't wait for the worker to exit
 		n.logger.Info("candidate worker exited successfully")
 		n.sem.Release(1)
 	}()
 
 	consensusChan := n.runOneElectionAsCandidate(ctx)
-
 	ticker := time.NewTicker(n.cfg.GetElectionTimeout())
 	for {
 		currentTerm := n.getCurrentTerm()
@@ -171,7 +166,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 					// I don't think we need to reset the ticker here
 					// voteCancel() // cancel the rest
 					if response.VoteGranted {
-						n.State = StateLeader
+						n.SetNodeState(StateLeader)
 						go n.RunAsLeader(ctx)
 						return
 					} else {
@@ -185,7 +180,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 									zap.String("nId", n.NodeId))
 								panic(err) // critical error, cannot continue
 							}
-							n.State = StateFollower
+							n.SetNodeState(StateFollower)
 							go n.RunAsFollower(ctx)
 							return
 						} else {
@@ -212,7 +207,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 					resChan <- &wrappedResp
 					// this means other candiate has a higher term
 					if resp.VoteGranted {
-						n.State = StateFollower
+						n.SetNodeState(StateFollower)
 						go n.RunAsFollower(ctx)
 						return
 					}
@@ -224,7 +219,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 					}
 					req.RespChan <- &wrappedResp
 					if req.Req.Term >= currentTerm { // maki: here allows the equal term, because current node is not leader
-						n.State = StateFollower
+						n.SetNodeState(StateFollower)
 						go n.RunAsFollower(ctx)
 						return
 					}
@@ -336,7 +331,9 @@ func (node *Node) runOneElectionAsCandidate(ctx context.Context) chan *MajorityR
 	return consensusChan
 }
 
-// the 2nd step in the pipeline of log (1-replication, 2-apply)
+// here is actually a variate pipeline pattern:
+// first step is log replication, second step is apply to the state machine
+// and this is the 2nd step in the pipeline of log (1-replication, 2-apply)
 // shall NOT reset the chan inside this function because the main thread may write to it simultaneously
 func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, workerWaitGroup *sync.WaitGroup) {
 	defer workerWaitGroup.Done()

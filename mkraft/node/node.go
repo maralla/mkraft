@@ -74,7 +74,7 @@ func NewNode(
 		sem:         semaphore.NewWeighted(1),
 
 		NodeId: nodeId,
-		State:  StateFollower, // servers start up as followers
+		state:  StateFollower,
 
 		// leader only channels
 		receiveClientCommandChan: make(chan *utils.ClientCommandInternalReq, bufferSize),
@@ -129,7 +129,7 @@ type Node struct {
 	stateRWLock *sync.RWMutex
 
 	NodeId string // maki: nodeID uuid or number or something else?
-	State  NodeState
+	state  NodeState
 
 	// leader only channels
 	// gracefully clean every time a leader degrades to a follower
@@ -158,24 +158,21 @@ type Node struct {
 func (node *Node) GetNodeState() NodeState {
 	node.stateRWLock.RLock()
 	defer node.stateRWLock.RUnlock()
-
-	return node.State
+	return node.state
 }
 
 func (node *Node) SetNodeState(state NodeState) {
 	node.stateRWLock.Lock()
 	defer node.stateRWLock.Unlock()
-
-	if node.State == state {
+	if node.state == state {
 		return // no change
 	}
-
 	node.logger.Info("Node state changed",
 		zap.String("nodeID", node.NodeId),
-		zap.String("oldState", node.State.String()),
+		zap.String("oldState", node.state.String()),
 		zap.String("newState", state.String()))
 
-	node.State = state
+	node.state = state
 }
 
 func (node *Node) Start(ctx context.Context) {
