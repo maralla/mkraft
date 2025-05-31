@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/maki3cat/mkraft/common"
@@ -23,22 +24,27 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 	if n.State != StateFollower {
 		panic("node is not in FOLLOWER state")
 	}
-
 	n.logger.Info("node acquires to run in FOLLOWER state")
 	n.sem.Acquire(ctx, 1)
 	n.logger.Info("acquired semaphore in FOLLOWER state")
 
 	workerCtx, cancel := context.WithCancel(ctx)
-	go n.noLeaderWorkerToApplyCommandToStateMachine(workerCtx, "candidate")
-	defer func() {
+	workerWaitGroup := sync.WaitGroup{}
+	workerWaitGroup.Add(1)
+	electionTicker := time.NewTicker(n.cfg.GetElectionTimeout())
+
+	// here is actually a variate pipeline pattern:
+	// first step is log replication, second step is apply to the state machine
+	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
+	go n.noLeaderWorkerToApplyCommandToStateMachine(workerCtx, &workerWaitGroup)
+
+	defer func() { // gracefully exit for follower state is easy
+		electionTicker.Stop()
 		cancel()
-		n.logger.Info("candidate worker exited successfully")
-		// wait for the worker to exit first, then release the semaphore
+		workerWaitGroup.Wait() // cancel only closes the Done channel, it doesn't wait for the worker to exit
+		n.logger.Info("follower worker exited successfully")
 		n.sem.Release(1)
 	}()
-
-	electionTicker := time.NewTicker(n.cfg.GetElectionTimeout())
-	defer electionTicker.Stop()
 
 	for {
 		select {
@@ -57,31 +63,39 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 					go n.RunAsCandidate(ctx)
 					return
 				case requestVoteInternal := <-n.requestVoteChan:
+					electionTicker.Reset(n.cfg.GetElectionTimeout())
 					if requestVoteInternal.IsTimeout.Load() {
 						n.logger.Warn("request vote is timeout")
 						continue
 					}
-					electionTicker.Stop()
-					// for the follower, the node state has no reason to change because of the request
 					resp := n.handleVoteRequest(requestVoteInternal.Req)
 					wrappedResp := utils.RPCRespWrapper[*rpc.RequestVoteResponse]{
 						Resp: resp,
 						Err:  nil,
 					}
 					requestVoteInternal.RespChan <- &wrappedResp
-					electionTicker.Reset(n.cfg.GetElectionTimeout())
-				case req := <-n.appendEntryChan:
-					electionTicker.Stop()
-					resp := n.handlerAppendEntriesAsNoLeader(ctx, req.Req)
+				case appendEntryInternal := <-n.appendEntryChan:
+					if appendEntryInternal.Req.Term >= n.getCurrentTerm() {
+						electionTicker.Reset(n.cfg.GetElectionTimeout())
+					}
+					if appendEntryInternal.IsTimeout.Load() {
+						n.logger.Warn("append entry is timeout")
+						continue
+					}
+					resp := n.handlerAppendEntriesAsNoLeader(ctx, appendEntryInternal.Req)
 					wrappedResp := utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 						Resp: resp,
 						Err:  nil,
 					}
-					req.RespChan <- &wrappedResp
-					electionTicker.Reset(n.cfg.GetElectionTimeout())
-				case clientCommand := <-n.receiveClientCommandChan:
+					appendEntryInternal.RespChan <- &wrappedResp
+				case clientCommandInternal := <-n.receiveClientCommandChan:
 					// todo: add delegation to the leader
-					clientCommand.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
+					if clientCommandInternal.IsTimeout.Load() {
+						n.logger.Warn("client command is timeout")
+						continue
+					}
+					n.logger.Warn("follower node gets client command")
+					clientCommandInternal.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
 						Resp: &rpc.ClientCommandResponse{
 							Result: nil,
 						},
@@ -122,11 +136,18 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 
 	// when the node changes the state, the worker shall exit
 	workerCtx, cancel := context.WithCancel(ctx)
-	go n.noLeaderWorkerToApplyCommandToStateMachine(workerCtx, "candidate")
+	workerWaitGroup := sync.WaitGroup{}
+	workerWaitGroup.Add(1)
+
+	// here is actually a variate pipeline pattern:
+	// first step is log replication, second step is apply to the state machine
+	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
+	go n.noLeaderWorkerToApplyCommandToStateMachine(workerCtx, &workerWaitGroup)
+
 	defer func() {
 		cancel()
+		workerWaitGroup.Wait() // cancel only closes the Done channel, it doesn't wait for the worker to exit
 		n.logger.Info("candidate worker exited successfully")
-		// wait for the worker to exit first, then release the semaphore
 		n.sem.Release(1)
 	}()
 
@@ -209,6 +230,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 					}
 				case clientCommand := <-n.receiveClientCommandChan:
 					// todo: add delegation to the leader
+					n.logger.Warn("follower node gets client command")
 					clientCommand.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
 						Resp: &rpc.ClientCommandResponse{
 							Result: nil,
@@ -222,11 +244,18 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 }
 
 // maki: lastLogIndex, commitIndex, lastApplied can be totally different from each other
+// shall be called when the node is not a leader
+// the raft server is generally single-threaded, so there is no other thread to change the commitIdx
 func (n *Node) handlerAppendEntriesAsNoLeader(ctx context.Context, req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
+
 	var response rpc.AppendEntriesResponse
 	reqTerm := uint32(req.Term)
 	currentTerm := n.getCurrentTerm()
-	if reqTerm < currentTerm {
+
+	// return FALSE CASES:
+	// (1) fast track for the stale term
+	// (2) check the prevLogIndex and prevLogTerm
+	if reqTerm < currentTerm || !n.raftLog.CheckPreLog(req.PrevLogIndex, req.PrevLogTerm) {
 		response = rpc.AppendEntriesResponse{
 			Term:    currentTerm,
 			Success: false,
@@ -234,10 +263,13 @@ func (n *Node) handlerAppendEntriesAsNoLeader(ctx context.Context, req *rpc.Appe
 		return &response
 	}
 
-	// the request is valid:
-	// 1. finally update the commit index
+	// return TRUE CASES:
+
+	// 1. udpate commitIdx, and trigger the apply
 	defer func() {
-		n.updateCommitIdx(req.LeaderCommit) // this is not the log's index, because the log hasn't reached consensus yet
+		// the updateCommitIdx will find the min(leaderCommit, index of last new entry in the log), so the update
+		// doesn't require result of appendLogs
+		n.updateCommitIdx(req.LeaderCommit)
 		n.noleaderApplySignalChan <- true
 	}()
 
@@ -253,28 +285,24 @@ func (n *Node) handlerAppendEntriesAsNoLeader(ctx context.Context, req *rpc.Appe
 	}
 
 	// 3. append logs
-	logs := make([][]byte, len(req.Entries))
-	for idx, entry := range req.Entries {
-		logs[idx] = entry.Data
-	}
-	err := n.raftLog.UpdateLogsInBatch(ctx, req.PrevLogIndex, logs, req.Term)
-	if err != nil {
-		if err == common.ErrPreLogNotMatch {
-			response = rpc.AppendEntriesResponse{
-				Term:    currentTerm,
-				Success: false,
-			}
-			return &response
-		} else {
+	if len(req.Entries) > 0 {
+		logs := make([][]byte, len(req.Entries))
+		for idx, entry := range req.Entries {
+			logs[idx] = entry.Data
+		}
+		err := n.raftLog.UpdateLogsInBatch(ctx, req.PrevLogIndex, logs, req.Term)
+		if err != nil {
+			// this error cannot be not match,
+			// because the prevLogIndex and prevLogTerm has been checked
 			panic(err) // todo: critical error, cannot continue, not sure how to handle this
 		}
-	} else {
-		response = rpc.AppendEntriesResponse{
-			Term:    currentTerm,
-			Success: true,
-		}
-		return &response
 	}
+
+	response = rpc.AppendEntriesResponse{
+		Term:    currentTerm,
+		Success: true,
+	}
+	return &response
 }
 
 func (node *Node) runOneElectionAsCandidate(ctx context.Context) chan *MajorityRequestVoteResp {
@@ -292,6 +320,7 @@ func (node *Node) runOneElectionAsCandidate(ctx context.Context) chan *MajorityR
 		Term:        node.getCurrentTerm(),
 		CandidateId: node.NodeId,
 	}
+	// todo: must I call the cancel function?
 	ctxTimeout, _ := context.WithTimeout(
 		ctx, time.Duration(node.cfg.GetElectionTimeout()))
 	go func() {
@@ -307,19 +336,18 @@ func (node *Node) runOneElectionAsCandidate(ctx context.Context) chan *MajorityR
 	return consensusChan
 }
 
-// leader shall reply yet others not
-// currently, apply to the state machine in serial
-func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, workerName string) {
+// the 2nd step in the pipeline of log (1-replication, 2-apply)
+// shall NOT reset the chan inside this function because the main thread may write to it simultaneously
+func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, workerWaitGroup *sync.WaitGroup) {
+	defer workerWaitGroup.Done()
 
-	// reset the channel, todo: the size of the channel should be re-considered
-	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
 	tickerTriggered := time.NewTicker(time.Duration(500 * time.Microsecond))
 	defer tickerTriggered.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			n.logger.Warn("worker-" + workerName + "-exiting leader's worker for applying commands")
+			n.logger.Warn("apply-worker, exiting leader's worker for applying commands")
 		default:
 			select {
 			// try to signal this channel this everytime with heartbeat
@@ -330,7 +358,7 @@ func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, w
 				// so it must be greater or equal to lastApplied
 				n.noleaderApplyCommandToStateMachine()
 			case <-ctx.Done():
-				n.logger.Warn("worker-" + workerName + "-exiting leader's worker for applying commands")
+				n.logger.Warn("apply-worker, exiting leader's worker for applying commands")
 				return
 			}
 		}
