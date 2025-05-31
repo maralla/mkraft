@@ -32,7 +32,11 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 	workerWaitGroup := sync.WaitGroup{}
 	workerWaitGroup.Add(1)
 	electionTicker := time.NewTicker(n.cfg.GetElectionTimeout())
-	go n.noLeaderWorkerToApplyCommandToStateMachine(workerCtx, &workerWaitGroup, "follower")
+
+	// here is actually a variate pipeline pattern:
+	// first step is log replication, second step is apply to the state machine
+	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
+	go n.noLeaderWorkerToApplyCommandToStateMachine(workerCtx, &workerWaitGroup)
 
 	defer func() { // gracefully exit for follower state is easy
 		electionTicker.Stop()
@@ -134,7 +138,12 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 	workerCtx, cancel := context.WithCancel(ctx)
 	workerWaitGroup := sync.WaitGroup{}
 	workerWaitGroup.Add(1)
-	go n.noLeaderWorkerToApplyCommandToStateMachine(workerCtx, &workerWaitGroup, "candidate")
+
+	// here is actually a variate pipeline pattern:
+	// first step is log replication, second step is apply to the state machine
+	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
+	go n.noLeaderWorkerToApplyCommandToStateMachine(workerCtx, &workerWaitGroup)
+
 	defer func() {
 		cancel()
 		workerWaitGroup.Wait() // cancel only closes the Done channel, it doesn't wait for the worker to exit
@@ -311,6 +320,7 @@ func (node *Node) runOneElectionAsCandidate(ctx context.Context) chan *MajorityR
 		Term:        node.getCurrentTerm(),
 		CandidateId: node.NodeId,
 	}
+	// todo: must I call the cancel function?
 	ctxTimeout, _ := context.WithTimeout(
 		ctx, time.Duration(node.cfg.GetElectionTimeout()))
 	go func() {
@@ -328,7 +338,7 @@ func (node *Node) runOneElectionAsCandidate(ctx context.Context) chan *MajorityR
 
 // leader shall reply yet others not
 // currently, apply to the state machine in serial
-func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, workerWaitGroup *sync.WaitGroup, workerName string) {
+func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, workerWaitGroup *sync.WaitGroup) {
 	defer workerWaitGroup.Done()
 
 	// reset the channel, todo: the size of the channel should be re-considered
@@ -339,7 +349,7 @@ func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, w
 	for {
 		select {
 		case <-ctx.Done():
-			n.logger.Warn("worker-" + workerName + "-exiting leader's worker for applying commands")
+			n.logger.Warn("apply-worker, exiting leader's worker for applying commands")
 		default:
 			select {
 			// try to signal this channel this everytime with heartbeat
@@ -350,7 +360,7 @@ func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, w
 				// so it must be greater or equal to lastApplied
 				n.noleaderApplyCommandToStateMachine()
 			case <-ctx.Done():
-				n.logger.Warn("worker-" + workerName + "-exiting leader's worker for applying commands")
+				n.logger.Warn("apply-worker, exiting leader's worker for applying commands")
 				return
 			}
 		}

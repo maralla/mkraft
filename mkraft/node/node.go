@@ -79,7 +79,7 @@ func NewNode(
 		// leader only channels
 		receiveClientCommandChan: make(chan *utils.ClientCommandInternalReq, bufferSize),
 		applyClientCommandChan:   make(chan *utils.ClientCommandInternalReq, bufferSize),
-		noleaderApplySignalChan:  make(chan bool, 10),
+		noleaderApplySignalChan:  make(chan bool, bufferSize),
 
 		requestVoteChan: make(chan *utils.RequestVoteInternalReq, bufferSize),
 		appendEntryChan: make(chan *utils.AppendEntriesInternalReq, bufferSize),
