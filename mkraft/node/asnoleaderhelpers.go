@@ -132,6 +132,9 @@ func (n *Node) noleaderSyncDoApplyLogs() {
 // if votes received from majority of servers: become leader
 // if AppendEntries RPC received from new leader: convert to follower
 // if election timeout elapses: start new election
+
+// the implementation:
+// triggers peerCnt + 1 goroutines for fan-out rpc and fan-in the responses
 func (node *Node) candidateAsyncDoElection(ctx context.Context) chan *MajorityRequestVoteResp {
 
 	ctx, requestID := common.GetOrGenerateRequestID(ctx)

@@ -86,7 +86,7 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 					}
 					appendEntryInternal.RespChan <- &wrappedResp
 				case clientCommandInternal := <-n.receiveClientCommandChan:
-					// todo: add delegation to the leader
+					// feature: add delegation to the leader
 					if clientCommandInternal.IsTimeout.Load() {
 						n.logger.Warn("client command is timeout")
 						continue
@@ -213,7 +213,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 						return
 					}
 				case clientCommand := <-n.receiveClientCommandChan:
-					// todo: add delegation to the leader
+					// feature: add delegation to the leader
 					n.logger.Warn("follower node gets client command")
 					clientCommand.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
 						Resp: &rpc.ClientCommandResponse{
