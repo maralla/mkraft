@@ -125,6 +125,13 @@ func (n *Node) handlerAppendEntriesAsNoLeader(ctx context.Context, req *rpc.Appe
 	return &response
 }
 
+// Specifical Rule for Candidate Election:
+// (1) increment currentTerm
+// (2) vote for self
+// (3) send RequestVote RPCs to all other servers
+// if votes received from majority of servers: become leader
+// if AppendEntries RPC received from new leader: convert to follower
+// if election timeout elapses: start new election
 func (node *Node) runOneElectionAsCandidate(ctx context.Context) chan *MajorityRequestVoteResp {
 	ctx, requestID := common.GetOrGenerateRequestID(ctx)
 	consensusChan := make(chan *MajorityRequestVoteResp, 1)

@@ -46,13 +46,14 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			n.logger.Warn("raft node's main context done, exiting")
+			n.membership.GracefulShutdown() // this cannot be in defer
 			return
 		default:
 			{
 				select {
 				case <-ctx.Done():
-					n.logger.Warn("context done")
-					n.membership.GracefulShutdown()
+					n.logger.Warn("raft node's main context done, exiting")
+					n.membership.GracefulShutdown() // this cannot be in defer
 					return
 				case <-electionTicker.C:
 					n.SetNodeState(StateCandidate)
@@ -111,15 +112,6 @@ How the Shared Rule works for Candidates:
 (1) handle the response of RequestVoteRPC initiated by itself
 (2) handle request of AppendEntriesRPC initiated by another server
 (3) handle reuqest of RequestVoteRPC initiated by another server
-
-Specifical Rule for Candidates:
-On conversion to a candidate, start election:
-(1) increment currentTerm
-(2) vote for self
-(3) send RequestVote RPCs to all other servers
-if votes received from majority of servers: become leader
-if AppendEntries RPC received from new leader: convert to follower
-if election timeout elapses: start new election
 */
 func (n *Node) RunAsCandidate(ctx context.Context) {
 
@@ -131,13 +123,9 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 	n.sem.Acquire(ctx, 1)
 	n.logger.Info("node has acquired semaphore in CANDIDATE state")
 
-	// when the node changes the state, the worker shall exit
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	workerWaitGroup := sync.WaitGroup{}
 	workerWaitGroup.Add(1)
-
-	// here is actually a variate pipeline pattern:
-	// first step is log replication, second step is apply to the state machine
 	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
 	go n.noLeaderWorkerToApplyCommandToStateMachine(workerCtx, &workerWaitGroup)
 	defer func() {
@@ -154,13 +142,14 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			n.logger.Warn("raft node's main context done, exiting")
+			n.membership.GracefulShutdown() // this cannot be in defer
 			return
 		default:
 			{
 				select {
 				case <-ctx.Done():
-					n.logger.Warn("raft node main context done")
-					n.membership.GracefulShutdown()
+					n.logger.Warn("raft node's main context done, exiting")
+					n.membership.GracefulShutdown() // this cannot be in defer
 					return
 				case response := <-consensusChan: // some response from last election
 					// I don't think we need to reset the ticker here
