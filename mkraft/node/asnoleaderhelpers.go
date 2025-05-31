@@ -14,7 +14,7 @@ import (
 // be called when the node becomes a leader
 // todo: need to reconcile with the "safey" chapter
 func (n *Node) cleanupApplyLogsBeforeToLeader() {
-	utils.DrainChannel(n.noleaderApplySignalChan)
+	utils.DrainChannel(n.noleaderApplySignalCh)
 	n.noleaderSyncDoApplyLogs()
 }
 
@@ -34,7 +34,7 @@ func (n *Node) noleaderWorkerForClientCommand(ctx context.Context, workerWaitGro
 			case <-ctx.Done():
 				n.logger.Warn("client-command-worker, exiting leader's worker for client commands")
 				return
-			case cmd := <-n.applyClientCommandChan:
+			case cmd := <-n.leaderApplyCh:
 				n.logger.Warn("client-command-worker, received client command")
 				// easy trivial work, can be done in parallel with the main logic
 				// feature: add delegation to the leader
@@ -69,8 +69,8 @@ func (n *Node) noleaderWorkerToApplyLogs(ctx context.Context, workerWaitGroup *s
 			select {
 			case <-tickerTriggered.C:
 				n.noleaderSyncDoApplyLogs()
-			case <-n.noleaderApplySignalChan:
-				utils.DrainChannel(n.noleaderApplySignalChan)
+			case <-n.noleaderApplySignalCh:
+				utils.DrainChannel(n.noleaderApplySignalCh)
 				n.noleaderSyncDoApplyLogs()
 			case <-ctx.Done():
 				n.logger.Warn("apply-worker, exiting leader's worker for applying commands")
@@ -106,7 +106,7 @@ func (n *Node) noleaderHandleAppendEntries(ctx context.Context, req *rpc.AppendE
 		// the updateCommitIdx will find the min(leaderCommit, index of last new entry in the log), so the update
 		// doesn't require result of appendLogs
 		n.updateCommitIdx(req.LeaderCommit)
-		n.noleaderApplySignalChan <- true
+		n.noleaderApplySignalCh <- true
 	}()
 
 	// 2. update the term

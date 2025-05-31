@@ -31,7 +31,7 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 	workerWaitGroup := sync.WaitGroup{}
 	workerWaitGroup.Add(2)
 	electionTicker := time.NewTicker(n.cfg.GetElectionTimeout())
-	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
+	n.noleaderApplySignalCh = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
 	go n.noleaderWorkerToApplyLogs(workerCtx, &workerWaitGroup)
 	go n.noleaderWorkerForClientCommand(workerCtx, &workerWaitGroup)
 	defer func() { // gracefully exit for follower state is easy
@@ -57,7 +57,7 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 					n.SetNodeState(StateCandidate)
 					go n.RunAsCandidate(ctx)
 					return
-				case requestVoteInternal := <-n.requestVoteChan:
+				case requestVoteInternal := <-n.requestVoteCh:
 					electionTicker.Reset(n.cfg.GetElectionTimeout())
 					if requestVoteInternal.IsTimeout.Load() {
 						n.logger.Warn("request vote is timeout")
@@ -69,7 +69,7 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 						Err:  nil,
 					}
 					requestVoteInternal.RespChan <- &wrappedResp
-				case appendEntryInternal := <-n.appendEntryChan:
+				case appendEntryInternal := <-n.appendEntryCh:
 					if appendEntryInternal.Req.Term >= n.getCurrentTerm() {
 						electionTicker.Reset(n.cfg.GetElectionTimeout())
 					}
@@ -111,7 +111,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	workerWaitGroup := sync.WaitGroup{}
 	workerWaitGroup.Add(2)
-	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
+	n.noleaderApplySignalCh = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
 	go n.noleaderWorkerToApplyLogs(workerCtx, &workerWaitGroup)
 	go n.noleaderWorkerForClientCommand(workerCtx, &workerWaitGroup)
 	electionTicker := time.NewTicker(n.cfg.GetElectionTimeout())
@@ -167,7 +167,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 					// we re-elect
 					consensusChan = n.candidateAsyncDoElection(ctx)
 
-				case req := <-n.requestVoteChan: // commonRule: handling voteRequest from another candidate
+				case req := <-n.requestVoteCh: // commonRule: handling voteRequest from another candidate
 					if !req.IsTimeout.Load() {
 						n.logger.Warn("request vote is timeout")
 						continue
@@ -184,7 +184,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 						go n.RunAsFollower(ctx)
 						return
 					}
-				case req := <-n.appendEntryChan: // commonRule: handling appendEntry from a leader which can be stale or new
+				case req := <-n.appendEntryCh: // commonRule: handling appendEntry from a leader which can be stale or new
 					if req.IsTimeout.Load() {
 						n.logger.Warn("append entry is timeout")
 						continue

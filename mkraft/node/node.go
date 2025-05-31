@@ -39,6 +39,7 @@ type TermRank int
 var _ NodeIface = (*Node)(nil)
 
 type NodeIface interface {
+	// todo: can refer to hashicorp raft for ideas
 	// todo: lost requestID and other values in the context
 	VoteRequest(req *utils.RequestVoteInternalReq)
 	// todo: lost requestID and other values in the context
@@ -77,12 +78,12 @@ func NewNode(
 		state:  StateFollower,
 
 		// leader only channels
-		receiveClientCommandChan: make(chan *utils.ClientCommandInternalReq, bufferSize),
-		applyClientCommandChan:   make(chan *utils.ClientCommandInternalReq, bufferSize),
-		noleaderApplySignalChan:  make(chan bool, bufferSize),
+		clientCommandCh:       make(chan *utils.ClientCommandInternalReq, bufferSize),
+		leaderApplyCh:         make(chan *utils.ClientCommandInternalReq, bufferSize),
+		noleaderApplySignalCh: make(chan bool, bufferSize),
 
-		requestVoteChan: make(chan *utils.RequestVoteInternalReq, bufferSize),
-		appendEntryChan: make(chan *utils.AppendEntriesInternalReq, bufferSize),
+		requestVoteCh: make(chan *utils.RequestVoteInternalReq, bufferSize),
+		appendEntryCh: make(chan *utils.AppendEntriesInternalReq, bufferSize),
 
 		// persistent state on all servers
 		CurrentTerm: 0, // as the logical clock in Raft to allow detection of stale messages
@@ -135,12 +136,14 @@ type Node struct {
 	// leader only channels
 	// gracefully clean every time a leader degrades to a follower
 	// reset these 2 data structures everytime a new leader is elected
-	receiveClientCommandChan chan *utils.ClientCommandInternalReq
-	applyClientCommandChan   chan *utils.ClientCommandInternalReq
-	noleaderApplySignalChan  chan bool
+	clientCommandCh chan *utils.ClientCommandInternalReq
+
+	leaderApplyCh         chan *utils.ClientCommandInternalReq
+	noleaderApplySignalCh chan bool
+
 	// shared by all states
-	requestVoteChan chan *utils.RequestVoteInternalReq
-	appendEntryChan chan *utils.AppendEntriesInternalReq
+	requestVoteCh chan *utils.RequestVoteInternalReq
+	appendEntryCh chan *utils.AppendEntriesInternalReq
 
 	// Persistent state on all servers
 	CurrentTerm uint32 // required, persistent
@@ -191,11 +194,11 @@ func (node *Node) GracefulStop() {
 }
 
 func (node *Node) VoteRequest(req *utils.RequestVoteInternalReq) {
-	node.requestVoteChan <- req
+	node.requestVoteCh <- req
 }
 
 func (node *Node) AppendEntryRequest(req *utils.AppendEntriesInternalReq) {
-	node.appendEntryChan <- req
+	node.appendEntryCh <- req
 }
 
 // todo: shall add the feature of "redirection to the leader"
@@ -216,7 +219,7 @@ func (n *Node) ClientCommand(req *utils.ClientCommandInternalReq) {
 			}
 		}
 	}()
-	n.receiveClientCommandChan <- req
+	n.clientCommandCh <- req
 }
 
 // shared by leader/follower/candidate

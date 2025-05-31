@@ -169,7 +169,7 @@ func (n *Node) syncDoLogReplication(ctx context.Context, clientCommands []*utils
 
 		// (5) send to the apply command channel
 		for _, clientCommand := range clientCommands {
-			n.applyClientCommandChan <- clientCommand
+			n.leaderApplyCh <- clientCommand
 		}
 		return JobResult{ShallDegrade: false, Term: TermRank(currentTerm)}, nil
 	}
@@ -249,7 +249,7 @@ func (n *Node) leaderGracefulDegradation(ctx context.Context) {
 	// reject all not handled clientCommands
 
 	// when this clean up is in process, the leader shall not handle any new clientCommands
-	remainingCommands := utils.ReadMultipleFromChannel(n.applyClientCommandChan, n.cfg.GetRaftNodeRequestBufferSize())
+	remainingCommands := utils.ReadMultipleFromChannel(n.leaderApplyCh, n.cfg.GetRaftNodeRequestBufferSize())
 	for _, clientCommand := range remainingCommands {
 		result, err := n.statemachine.ApplyCommand(clientCommand.Req.Command)
 		if err != nil {
@@ -270,7 +270,7 @@ func (n *Node) workerForLogApplication(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case clientCommand := <-n.applyClientCommandChan:
+		case clientCommand := <-n.leaderApplyCh:
 			result, err := n.statemachine.ApplyCommand(clientCommand.Req.Command)
 			if err != nil {
 				n.logger.Error("failed to apply command", zap.Error(err))
