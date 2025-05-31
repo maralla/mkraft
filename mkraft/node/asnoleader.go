@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/mkraft/utils"
 	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
@@ -30,10 +29,11 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	workerWaitGroup := sync.WaitGroup{}
-	workerWaitGroup.Add(1)
+	workerWaitGroup.Add(2)
 	electionTicker := time.NewTicker(n.cfg.GetElectionTimeout())
 	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
 	go n.noleaderWorkerToApplyLogs(workerCtx, &workerWaitGroup)
+	go n.noleaderWorkerForClientCommand(workerCtx, &workerWaitGroup)
 	defer func() { // gracefully exit for follower state is easy
 		electionTicker.Stop()
 		workerCancel()
@@ -83,19 +83,6 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 						Err:  nil,
 					}
 					appendEntryInternal.RespChan <- &wrappedResp
-				case clientCommandInternal := <-n.receiveClientCommandChan:
-					// feature: add delegation to the leader
-					if clientCommandInternal.IsTimeout.Load() {
-						n.logger.Warn("client command is timeout")
-						continue
-					}
-					n.logger.Warn("follower node gets client command")
-					clientCommandInternal.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
-						Resp: &rpc.ClientCommandResponse{
-							Result: nil,
-						},
-						Err: common.ErrNotLeader,
-					}
 				}
 			}
 		}
@@ -123,9 +110,10 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	workerWaitGroup := sync.WaitGroup{}
-	workerWaitGroup.Add(1)
+	workerWaitGroup.Add(2)
 	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
 	go n.noleaderWorkerToApplyLogs(workerCtx, &workerWaitGroup)
+	go n.noleaderWorkerForClientCommand(workerCtx, &workerWaitGroup)
 	electionTicker := time.NewTicker(n.cfg.GetElectionTimeout())
 
 	defer func() {
@@ -211,16 +199,6 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 						n.SetNodeState(StateFollower)
 						go n.RunAsFollower(ctx)
 						return
-					}
-				case clientCommand := <-n.receiveClientCommandChan:
-					// easy trivial work, can be done in parallel with the main logic
-					// feature: add delegation to the leader
-					n.logger.Warn("follower node gets client command")
-					clientCommand.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
-						Resp: &rpc.ClientCommandResponse{
-							Result: nil,
-						},
-						Err: common.ErrNotLeader,
 					}
 				}
 			}

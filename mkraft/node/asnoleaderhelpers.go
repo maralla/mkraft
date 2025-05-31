@@ -12,12 +12,44 @@ import (
 )
 
 // be called when the node becomes a leader
-// feature: need to reconcile with the "safey" chapter
+// todo: need to reconcile with the "safey" chapter
 func (n *Node) cleanupApplyLogsBeforeToLeader() {
 	utils.DrainChannel(n.noleaderApplySignalChan)
 	n.noleaderSyncDoApplyLogs()
 }
 
+// WORKER:(2)
+// this worker is used to handle client commands
+// which can be run independently of the main logic
+// maki: the tricky part is that the client command needs NOT to be drained but the apply signal needs to be drained
+func (n *Node) noleaderWorkerForClientCommand(ctx context.Context, workerWaitGroup *sync.WaitGroup) {
+	defer workerWaitGroup.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			n.logger.Warn("client-command-worker, exiting leader's worker for client commands")
+			return
+		default:
+			select {
+			case <-ctx.Done():
+				n.logger.Warn("client-command-worker, exiting leader's worker for client commands")
+				return
+			case cmd := <-n.applyClientCommandChan:
+				n.logger.Warn("client-command-worker, received client command")
+				// easy trivial work, can be done in parallel with the main logic
+				// feature: add delegation to the leader
+				cmd.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
+					Resp: &rpc.ClientCommandResponse{
+						Result: nil,
+					},
+					Err: common.ErrNotLeader,
+				}
+			}
+		}
+	}
+}
+
+// WORKER:(1)
 // here is actually a variate pipeline pattern:
 // first step is log replication, second step is apply to the state machine
 // and this is the 2nd step in the pipeline of log (1-replication, 2-apply)

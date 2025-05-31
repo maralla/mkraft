@@ -113,7 +113,6 @@ func (n *Node) syncDoLogReplication(ctx context.Context, clientCommands []*utils
 	errorChanTask2 := make(chan error, 1)
 	go func(ctx context.Context) {
 		defer subTasksToWait.Done()
-		ctxTimeout, _ := context.WithTimeout(ctx, n.cfg.GetRPCRequestTimeout())
 		newCommands := make([]*rpc.LogEntry, len(clientCommands))
 		for i, clientCommand := range clientCommands {
 			newCommands[i] = &rpc.LogEntry{
@@ -136,7 +135,7 @@ func (n *Node) syncDoLogReplication(ctx context.Context, clientCommands []*utils
 				Entries:      append(catchupCommands, newCommands...),
 			}
 		}
-		resp, err := n.ConsensusAppendEntries(ctxTimeout, reqs, n.getCurrentTerm())
+		resp, err := n.ConsensusAppendEntries(ctx, reqs, n.getCurrentTerm())
 		respChan <- resp
 		errorChanTask2 <- err
 	}(ctx)
@@ -288,6 +287,7 @@ func (n *Node) workerForLogApplication(ctx context.Context) {
 }
 
 // todo: what does this function do?
+// todo: shall be refactored with "the safty feature"
 func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]plugs.CatchupLogs, error) {
 	result := make(map[string]plugs.CatchupLogs)
 	for _, peerNodeID := range peerNodeIDs {
