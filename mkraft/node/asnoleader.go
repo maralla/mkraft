@@ -46,14 +46,12 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			n.logger.Warn("raft node's main context done, exiting")
-			n.membership.GracefulShutdown() // this cannot be in defer
 			return
 		default:
 			{
 				select {
 				case <-ctx.Done():
 					n.logger.Warn("raft node's main context done, exiting")
-					n.membership.GracefulShutdown() // this cannot be in defer
 					return
 				case <-electionTicker.C:
 					n.SetNodeState(StateCandidate)
@@ -128,91 +126,94 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 	workerWaitGroup.Add(1)
 	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
 	go n.noleaderWorkerToApplyLogs(workerCtx, &workerWaitGroup)
+	electionTicker := time.NewTicker(n.cfg.GetElectionTimeout())
+
 	defer func() {
 		workerCancel()
 		workerWaitGroup.Wait() // cancel only closes the Done channel, it doesn't wait for the worker to exit
 		n.logger.Info("candidate worker exited successfully")
 		n.sem.Release(1)
+		defer electionTicker.Stop()
 	}()
 
 	consensusChan := n.candidateAsyncDoElection(ctx)
-	ticker := time.NewTicker(n.cfg.GetElectionTimeout())
 	for {
 		currentTerm := n.getCurrentTerm()
 		select {
 		case <-ctx.Done():
 			n.logger.Warn("raft node's main context done, exiting")
-			n.membership.GracefulShutdown() // this cannot be in defer
 			return
 		default:
 			{
 				select {
 				case <-ctx.Done():
 					n.logger.Warn("raft node's main context done, exiting")
-					n.membership.GracefulShutdown() // this cannot be in defer
 					return
 				case response := <-consensusChan: // some response from last election
-					// I don't think we need to reset the ticker here
-					// voteCancel() // cancel the rest
 					if response.VoteGranted {
 						n.SetNodeState(StateLeader)
+						n.cleanupApplyLogsBeforeToLeader()
 						go n.RunAsLeader(ctx)
 						return
 					} else {
 						if response.Term > currentTerm {
-							// some one has become a leader
-							// voteCancel()
-							err := n.storeCurrentTermAndVotedFor(response.Term, "") // did not vote for anyone
+							err := n.storeCurrentTermAndVotedFor(response.Term, "") // did not vote for anyone for this new term
 							if err != nil {
 								n.logger.Error(
 									"error in storeCurrentTermAndVotedFor", zap.Error(err),
 									zap.String("nId", n.NodeId))
-								panic(err) // critical error, cannot continue
+								panic(err) // todo: error handling
 							}
+
 							n.SetNodeState(StateFollower)
 							go n.RunAsFollower(ctx)
 							return
 						} else {
-							n.logger.Info(
+							n.logger.Warn(
 								"not enough votes, re-elect again",
 								zap.Int("term", int(currentTerm)), zap.String("nId", n.NodeId))
 						}
 					}
-				case <-ticker.C: // last election timeout withno response
-					// voteCancel()
+				case <-electionTicker.C:
+					// last election reaches no decisive result, either no response or not enough votes
+					// we re-elect
 					consensusChan = n.candidateAsyncDoElection(ctx)
-				case requestVoteInternal := <-n.requestVoteChan: // commonRule: handling voteRequest from another candidate
-					if requestVoteInternal.IsTimeout.Load() {
+
+				case req := <-n.requestVoteChan: // commonRule: handling voteRequest from another candidate
+					if !req.IsTimeout.Load() {
 						n.logger.Warn("request vote is timeout")
 						continue
 					}
-					req := requestVoteInternal.Req
-					resChan := requestVoteInternal.RespChan
-					resp := n.handleVoteRequest(req)
-					wrappedResp := utils.RPCRespWrapper[*rpc.RequestVoteResponse]{
-						Resp: resp,
+					req.RespChan <- &utils.RPCRespWrapper[*rpc.RequestVoteResponse]{
+						Resp: n.handleVoteRequest(req.Req),
 						Err:  nil,
 					}
-					resChan <- &wrappedResp
-					// this means other candiate has a higher term
-					if resp.VoteGranted {
+
+					// for voteRequest, only when the term is higher,
+					// the node will convert to follower
+					if req.Req.Term > currentTerm {
 						n.SetNodeState(StateFollower)
 						go n.RunAsFollower(ctx)
 						return
 					}
 				case req := <-n.appendEntryChan: // commonRule: handling appendEntry from a leader which can be stale or new
-					resp := n.noleaderHandleAppendEntries(ctx, req.Req)
-					wrappedResp := utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
-						Resp: resp,
+					if req.IsTimeout.Load() {
+						n.logger.Warn("append entry is timeout")
+						continue
+					}
+					req.RespChan <- &utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
+						Resp: n.noleaderHandleAppendEntries(ctx, req.Req),
 						Err:  nil,
 					}
-					req.RespChan <- &wrappedResp
-					if req.Req.Term >= currentTerm { // maki: here allows the equal term, because current node is not leader
+					// maki: here is a bit tricky compared with voteRequest
+					// but for appendEntry, only the term can be equal or higher
+					if req.Req.Term >= currentTerm {
 						n.SetNodeState(StateFollower)
 						go n.RunAsFollower(ctx)
 						return
 					}
 				case clientCommand := <-n.receiveClientCommandChan:
+					// easy trivial work, can be done in parallel with the main logic
 					// feature: add delegation to the leader
 					n.logger.Warn("follower node gets client command")
 					clientCommand.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{

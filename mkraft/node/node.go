@@ -47,7 +47,7 @@ type NodeIface interface {
 	ClientCommand(req *utils.ClientCommandInternalReq)
 
 	Start(ctx context.Context)
-	Stop(ctx context.Context)
+	GracefulStop()
 }
 
 // not only new a class but also catch up statemachine, so it may cost time
@@ -117,8 +117,9 @@ func NewNode(
 
 // the Raft Server Node
 type Node struct {
+	membership peers.MembershipMgrIface // managed by the outside overarching server
+
 	raftLog      plugs.RaftLogsIface // required, persistent
-	membership   peers.MembershipMgrIface
 	cfg          common.ConfigIface
 	logger       *zap.Logger
 	statemachine plugs.StateMachineIface
@@ -180,9 +181,13 @@ func (node *Node) Start(ctx context.Context) {
 }
 
 // gracefully stop the node and cleanup
-func (node *Node) Stop(ctx context.Context) {
-	close(node.appendEntryChan)
-	close(node.receiveClientCommandChan)
+func (node *Node) GracefulStop() {
+	// feature: need to check the graceful stop the node itself,
+	// membership graceful stop is handled by the outside overarching server
+	node.logger.Info("graceful stop of node")
+	// (1) internal dependencies: raftLog, statemachine,
+	// (2) shall the memebrship be internalized in the node ? decide after checking the dynamic membership protocol
+	// (3) others defer functions are suitable and enough for the graceful stop as different states?
 }
 
 func (node *Node) VoteRequest(req *utils.RequestVoteInternalReq) {

@@ -83,6 +83,8 @@ func (s *Server) Stop() {
 	})
 	defer timer.Stop()
 	s.grpcServer.GracefulStop()
+	s.membership.GracefulStop()
+	s.node.GracefulStop()
 }
 
 // no blocking start

@@ -11,6 +11,13 @@ import (
 	"go.uber.org/zap"
 )
 
+// be called when the node becomes a leader
+// feature: need to reconcile with the "safey" chapter
+func (n *Node) cleanupApplyLogsBeforeToLeader() {
+	utils.DrainChannel(n.noleaderApplySignalChan)
+	n.noleaderSyncDoApplyLogs()
+}
+
 // here is actually a variate pipeline pattern:
 // first step is log replication, second step is apply to the state machine
 // and this is the 2nd step in the pipeline of log (1-replication, 2-apply)
