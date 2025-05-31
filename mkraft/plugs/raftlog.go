@@ -28,6 +28,7 @@ type RaftLogsIface interface {
 	AppendLogsInBatch(ctx context.Context, commandList [][]byte, term uint32) error
 	// the follower/candidate may overwrite the previous log
 	UpdateLogsInBatch(ctx context.Context, preLogIndex uint64, commandList [][]byte, term uint32) error
+	// @return: true if the preLogIndex and term match
 	CheckPreLog(preLogIndex uint64, term uint32) bool
 }
 type CatchupLogs struct {
