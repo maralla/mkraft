@@ -336,13 +336,11 @@ func (node *Node) runOneElectionAsCandidate(ctx context.Context) chan *MajorityR
 	return consensusChan
 }
 
-// leader shall reply yet others not
-// currently, apply to the state machine in serial
+// the 2nd step in the pipeline of log (1-replication, 2-apply)
+// shall NOT reset the chan inside this function because the main thread may write to it simultaneously
 func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, workerWaitGroup *sync.WaitGroup) {
 	defer workerWaitGroup.Done()
 
-	// reset the channel, todo: the size of the channel should be re-considered
-	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
 	tickerTriggered := time.NewTicker(time.Duration(500 * time.Microsecond))
 	defer tickerTriggered.Stop()
 
