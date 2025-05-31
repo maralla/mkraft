@@ -33,7 +33,7 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 	workerWaitGroup.Add(1)
 	electionTicker := time.NewTicker(n.cfg.GetElectionTimeout())
 	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
-	go n.noLeaderWorkerToApplyCommandToStateMachine(workerCtx, &workerWaitGroup)
+	go n.noleaderWorkerToApplyLogs(workerCtx, &workerWaitGroup)
 	defer func() { // gracefully exit for follower state is easy
 		electionTicker.Stop()
 		workerCancel()
@@ -79,7 +79,7 @@ func (n *Node) RunAsFollower(ctx context.Context) {
 						n.logger.Warn("append entry is timeout")
 						continue
 					}
-					resp := n.handlerAppendEntriesAsNoLeader(ctx, appendEntryInternal.Req)
+					resp := n.noleaderHandleAppendEntries(ctx, appendEntryInternal.Req)
 					wrappedResp := utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 						Resp: resp,
 						Err:  nil,
@@ -127,7 +127,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 	workerWaitGroup := sync.WaitGroup{}
 	workerWaitGroup.Add(1)
 	n.noleaderApplySignalChan = make(chan bool, n.cfg.GetRaftNodeRequestBufferSize())
-	go n.noLeaderWorkerToApplyCommandToStateMachine(workerCtx, &workerWaitGroup)
+	go n.noleaderWorkerToApplyLogs(workerCtx, &workerWaitGroup)
 	defer func() {
 		workerCancel()
 		workerWaitGroup.Wait() // cancel only closes the Done channel, it doesn't wait for the worker to exit
@@ -135,7 +135,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 		n.sem.Release(1)
 	}()
 
-	consensusChan := n.runOneElectionAsCandidate(ctx)
+	consensusChan := n.candidateAsyncDoElection(ctx)
 	ticker := time.NewTicker(n.cfg.GetElectionTimeout())
 	for {
 		currentTerm := n.getCurrentTerm()
@@ -180,7 +180,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 					}
 				case <-ticker.C: // last election timeout withno response
 					// voteCancel()
-					consensusChan = n.runOneElectionAsCandidate(ctx)
+					consensusChan = n.candidateAsyncDoElection(ctx)
 				case requestVoteInternal := <-n.requestVoteChan: // commonRule: handling voteRequest from another candidate
 					if requestVoteInternal.IsTimeout.Load() {
 						n.logger.Warn("request vote is timeout")
@@ -201,7 +201,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 						return
 					}
 				case req := <-n.appendEntryChan: // commonRule: handling appendEntry from a leader which can be stale or new
-					resp := n.handlerAppendEntriesAsNoLeader(ctx, req.Req)
+					resp := n.noleaderHandleAppendEntries(ctx, req.Req)
 					wrappedResp := utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
 						Resp: resp,
 						Err:  nil,

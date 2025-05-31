@@ -24,16 +24,7 @@ type MajorityRequestVoteResp struct {
 func (c *Node) ConsensusRequestVote(ctx context.Context, request *rpc.RequestVoteRequest) (*MajorityRequestVoteResp, error) {
 
 	requestID := common.GetRequestID(ctx)
-	c.logger.Debug("Starting RequestVoteSendForConsensus",
-		zap.Uint32("term", request.Term),
-		zap.String("candidateId", request.CandidateId),
-		zap.String("requestID", requestID))
-
 	total := c.membership.GetMemberCount()
-	c.logger.Debug("Got member count",
-		zap.Int("total", total),
-		zap.String("requestID", requestID))
-
 	peerClients, err := c.membership.GetAllPeerClients()
 	if err != nil {
 		c.logger.Error("error in getting all peer clients",
@@ -41,10 +32,6 @@ func (c *Node) ConsensusRequestVote(ctx context.Context, request *rpc.RequestVot
 			zap.String("requestID", requestID))
 		return nil, err
 	}
-	c.logger.Debug("Got peer clients",
-		zap.Int("peerCount", len(peerClients)),
-		zap.String("requestID", requestID))
-
 	if !calculateIfMajorityMet(total, len(peerClients)) {
 		c.logger.Error("Not enough peers for majority",
 			zap.Int("total", total),
@@ -98,14 +85,7 @@ func (c *Node) ConsensusRequestVote(ctx context.Context, request *rpc.RequestVot
 					if resp.VoteGranted {
 						// won the election
 						peerVoteAccumulated++
-						c.logger.Debug("Vote granted",
-							zap.Int("votesAccumulated", peerVoteAccumulated),
-							zap.String("requestID", requestID))
 						if calculateIfMajorityMet(total, peerVoteAccumulated) {
-							c.logger.Info("Majority achieved",
-								zap.Int("votesNeeded", total/2+1),
-								zap.Int("votesReceived", peerVoteAccumulated),
-								zap.String("requestID", requestID))
 							return &MajorityRequestVoteResp{
 								Term:        request.Term,
 								VoteGranted: true,
@@ -113,15 +93,7 @@ func (c *Node) ConsensusRequestVote(ctx context.Context, request *rpc.RequestVot
 						}
 					} else {
 						voteFailed++
-						c.logger.Debug("Vote denied",
-							zap.Int("votesFailed", voteFailed),
-							zap.String("requestID", requestID))
 						if calculateIfAlreadyFail(total, peersCount, peerVoteAccumulated, voteFailed) {
-							c.logger.Info("Failed to get majority",
-								zap.Int("votesNeeded", total/2+1),
-								zap.Int("votesReceived", peerVoteAccumulated),
-								zap.Int("votesFailed", voteFailed),
-								zap.String("requestID", requestID))
 							return nil, errors.New("majority of nodes failed to respond")
 						}
 					}
@@ -134,11 +106,7 @@ func (c *Node) ConsensusRequestVote(ctx context.Context, request *rpc.RequestVot
 			return nil, errors.New("context done")
 		}
 	}
-	c.logger.Error("Unexpected exit from vote collection loop",
-		zap.Int("votesAccumulated", peerVoteAccumulated),
-		zap.Int("votesFailed", voteFailed),
-		zap.String("requestID", requestID))
-	return nil, errors.New("this should not happen, the consensus algorithm is not implmented correctly")
+	panic("this should not happen, the consensus algorithm is not implmented correctly")
 }
 
 // also update the peer index in this method

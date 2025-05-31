@@ -1,6 +1,5 @@
 package node
 
-// "ATOMIC" UNIT OF JOBS FOR THE FOLLOWER/CANDIDATE
 import (
 	"context"
 	"sync"
@@ -12,50 +11,28 @@ import (
 	"go.uber.org/zap"
 )
 
-func (n *Node) noleaderApplyCommandToStateMachine() {
-	commitIdx, lastApplied := n.getCommitIdxAndLastApplied()
-	if commitIdx > lastApplied {
-		logs, err := n.raftLog.GetLogsFromIdxIncluded(lastApplied + 1)
-		if err != nil {
-			n.logger.Error("failed to get logs from index", zap.Error(err))
-			panic(err)
-		}
-		// apply the command
-		for _, log := range logs {
-			// the no-leader node doesn't need to respond to clients
-			_, err := n.statemachine.ApplyCommand(log.Commands)
-			if err != nil {
-				n.logger.Error("failed to apply command to state machine", zap.Error(err))
-				panic(err)
-			} else {
-				n.incrementLastApplied(1)
-			}
-		}
-	}
-}
-
 // here is actually a variate pipeline pattern:
 // first step is log replication, second step is apply to the state machine
 // and this is the 2nd step in the pipeline of log (1-replication, 2-apply)
 // shall NOT reset the chan inside this function because the main thread may write to it simultaneously
-func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, workerWaitGroup *sync.WaitGroup) {
+func (n *Node) noleaderWorkerToApplyLogs(ctx context.Context, workerWaitGroup *sync.WaitGroup) {
 	defer workerWaitGroup.Done()
 
-	tickerTriggered := time.NewTicker(time.Duration(500 * time.Microsecond))
+	tickerTriggered := time.NewTicker(time.Duration(100 * time.Microsecond)) // empirical number
 	defer tickerTriggered.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			n.logger.Warn("apply-worker, exiting leader's worker for applying commands")
+			return
 		default:
 			select {
-			// try to signal this channel this everytime with heartbeat
 			case <-tickerTriggered.C:
-				n.noleaderApplyCommandToStateMachine()
+				n.noleaderSyncDoApplyLogs()
 			case <-n.noleaderApplySignalChan:
 				utils.DrainChannel(n.noleaderApplySignalChan)
-				n.noleaderApplyCommandToStateMachine()
+				n.noleaderSyncDoApplyLogs()
 			case <-ctx.Done():
 				n.logger.Warn("apply-worker, exiting leader's worker for applying commands")
 				return
@@ -67,7 +44,7 @@ func (n *Node) noLeaderWorkerToApplyCommandToStateMachine(ctx context.Context, w
 // maki: lastLogIndex, commitIndex, lastApplied can be totally different from each other
 // shall be called when the node is not a leader
 // the raft server is generally single-threaded, so there is no other thread to change the commitIdx
-func (n *Node) handlerAppendEntriesAsNoLeader(ctx context.Context, req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
+func (n *Node) noleaderHandleAppendEntries(ctx context.Context, req *rpc.AppendEntriesRequest) *rpc.AppendEntriesResponse {
 
 	var response rpc.AppendEntriesResponse
 	reqTerm := uint32(req.Term)
@@ -85,7 +62,6 @@ func (n *Node) handlerAppendEntriesAsNoLeader(ctx context.Context, req *rpc.Appe
 	}
 
 	// return TRUE CASES:
-
 	// 1. udpate commitIdx, and trigger the apply
 	defer func() {
 		// the updateCommitIdx will find the min(leaderCommit, index of last new entry in the log), so the update
@@ -126,6 +102,29 @@ func (n *Node) handlerAppendEntriesAsNoLeader(ctx context.Context, req *rpc.Appe
 	return &response
 }
 
+// apply the committed yet not applied logs to the state machine
+func (n *Node) noleaderSyncDoApplyLogs() {
+	commitIdx, lastApplied := n.getCommitIdxAndLastApplied()
+	if commitIdx > lastApplied {
+		logs, err := n.raftLog.GetLogsFromIdxIncluded(lastApplied + 1)
+		if err != nil {
+			n.logger.Error("failed to get logs from index", zap.Error(err))
+			panic(err)
+		}
+		// apply the command
+		for _, log := range logs {
+			// the no-leader node doesn't need to respond to clients
+			_, err := n.statemachine.ApplyCommand(log.Commands)
+			if err != nil {
+				n.logger.Error("failed to apply command to state machine", zap.Error(err))
+				panic(err)
+			} else {
+				n.incrementLastApplied(1)
+			}
+		}
+	}
+}
+
 // Specifical Rule for Candidate Election:
 // (1) increment currentTerm
 // (2) vote for self
@@ -133,26 +132,26 @@ func (n *Node) handlerAppendEntriesAsNoLeader(ctx context.Context, req *rpc.Appe
 // if votes received from majority of servers: become leader
 // if AppendEntries RPC received from new leader: convert to follower
 // if election timeout elapses: start new election
-func (node *Node) runOneElectionAsCandidate(ctx context.Context) chan *MajorityRequestVoteResp {
+func (node *Node) candidateAsyncDoElection(ctx context.Context) chan *MajorityRequestVoteResp {
+
 	ctx, requestID := common.GetOrGenerateRequestID(ctx)
 	consensusChan := make(chan *MajorityRequestVoteResp, 1)
 
 	err := node.updateCurrentTermAndVotedForAsCandidate()
 	if err != nil {
+		// todo: probably we shall recover in the man runAs??
 		node.logger.Error(
-			"error in updateCurrentTermAndVotedForAsCandidate", zap.String("requestID", requestID), zap.Error(err))
+			"this shouldn't happen, bugs in updateCurrentTermAndVotedForAsCandidate",
+			zap.String("requestID", requestID), zap.Error(err))
 		panic(err) // critical error, cannot continue
 	}
 
-	req := &rpc.RequestVoteRequest{
-		Term:        node.getCurrentTerm(),
-		CandidateId: node.NodeId,
-	}
-	// todo: must I call the cancel function?
-	ctxTimeout, _ := context.WithTimeout(
-		ctx, time.Duration(node.cfg.GetElectionTimeout()))
 	go func() {
-		resp, err := node.ConsensusRequestVote(ctxTimeout, req)
+		req := &rpc.RequestVoteRequest{
+			Term:        node.getCurrentTerm(),
+			CandidateId: node.NodeId,
+		}
+		resp, err := node.ConsensusRequestVote(ctx, req)
 		if err != nil {
 			node.logger.Error(
 				"error in RequestVoteSendForConsensus", zap.String("requestID", requestID), zap.Error(err))
