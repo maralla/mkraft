@@ -65,6 +65,18 @@ func (mr *MockNodeIfaceMockRecorder) ClientCommand(req any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClientCommand", reflect.TypeOf((*MockNodeIface)(nil).ClientCommand), req)
 }
 
+// GracefulStop mocks base method.
+func (m *MockNodeIface) GracefulStop() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "GracefulStop")
+}
+
+// GracefulStop indicates an expected call of GracefulStop.
+func (mr *MockNodeIfaceMockRecorder) GracefulStop() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GracefulStop", reflect.TypeOf((*MockNodeIface)(nil).GracefulStop))
+}
+
 // Start mocks base method.
 func (m *MockNodeIface) Start(ctx context.Context) {
 	m.ctrl.T.Helper()
@@ -75,18 +87,6 @@ func (m *MockNodeIface) Start(ctx context.Context) {
 func (mr *MockNodeIfaceMockRecorder) Start(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Start", reflect.TypeOf((*MockNodeIface)(nil).Start), ctx)
-}
-
-// Stop mocks base method.
-func (m *MockNodeIface) Stop(ctx context.Context) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "Stop", ctx)
-}
-
-// Stop indicates an expected call of Stop.
-func (mr *MockNodeIfaceMockRecorder) Stop(ctx any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Stop", reflect.TypeOf((*MockNodeIface)(nil).Stop), ctx)
 }
 
 // VoteRequest mocks base method.

@@ -98,14 +98,14 @@ func (mr *MockMembershipMgrIfaceMockRecorder) GetMemberCount() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMemberCount", reflect.TypeOf((*MockMembershipMgrIface)(nil).GetMemberCount))
 }
 
-// GracefulShutdown mocks base method.
-func (m *MockMembershipMgrIface) GracefulShutdown() {
+// GracefulStop mocks base method.
+func (m *MockMembershipMgrIface) GracefulStop() {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "GracefulShutdown")
+	m.ctrl.Call(m, "GracefulStop")
 }
 
-// GracefulShutdown indicates an expected call of GracefulShutdown.
-func (mr *MockMembershipMgrIfaceMockRecorder) GracefulShutdown() *gomock.Call {
+// GracefulStop indicates an expected call of GracefulStop.
+func (mr *MockMembershipMgrIfaceMockRecorder) GracefulStop() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GracefulShutdown", reflect.TypeOf((*MockMembershipMgrIface)(nil).GracefulShutdown))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GracefulStop", reflect.TypeOf((*MockMembershipMgrIface)(nil).GracefulStop))
 }

@@ -47,7 +47,7 @@ type NodeIface interface {
 	ClientCommand(req *utils.ClientCommandInternalReq)
 
 	Start(ctx context.Context)
-	Stop(ctx context.Context)
+	GracefulStop()
 }
 
 // not only new a class but also catch up statemachine, so it may cost time
@@ -74,7 +74,7 @@ func NewNode(
 		sem:         semaphore.NewWeighted(1),
 
 		NodeId: nodeId,
-		State:  StateFollower, // servers start up as followers
+		state:  StateFollower,
 
 		// leader only channels
 		receiveClientCommandChan: make(chan *utils.ClientCommandInternalReq, bufferSize),
@@ -117,8 +117,9 @@ func NewNode(
 
 // the Raft Server Node
 type Node struct {
+	membership peers.MembershipMgrIface // managed by the outside overarching server
+
 	raftLog      plugs.RaftLogsIface // required, persistent
-	membership   peers.MembershipMgrIface
 	cfg          common.ConfigIface
 	logger       *zap.Logger
 	statemachine plugs.StateMachineIface
@@ -129,7 +130,7 @@ type Node struct {
 	stateRWLock *sync.RWMutex
 
 	NodeId string // maki: nodeID uuid or number or something else?
-	State  NodeState
+	state  NodeState
 
 	// leader only channels
 	// gracefully clean every time a leader degrades to a follower
@@ -158,24 +159,21 @@ type Node struct {
 func (node *Node) GetNodeState() NodeState {
 	node.stateRWLock.RLock()
 	defer node.stateRWLock.RUnlock()
-
-	return node.State
+	return node.state
 }
 
 func (node *Node) SetNodeState(state NodeState) {
 	node.stateRWLock.Lock()
 	defer node.stateRWLock.Unlock()
-
-	if node.State == state {
+	if node.state == state {
 		return // no change
 	}
-
 	node.logger.Info("Node state changed",
 		zap.String("nodeID", node.NodeId),
-		zap.String("oldState", node.State.String()),
+		zap.String("oldState", node.state.String()),
 		zap.String("newState", state.String()))
 
-	node.State = state
+	node.state = state
 }
 
 func (node *Node) Start(ctx context.Context) {
@@ -183,9 +181,13 @@ func (node *Node) Start(ctx context.Context) {
 }
 
 // gracefully stop the node and cleanup
-func (node *Node) Stop(ctx context.Context) {
-	close(node.appendEntryChan)
-	close(node.receiveClientCommandChan)
+func (node *Node) GracefulStop() {
+	// feature: need to check the graceful stop the node itself,
+	// membership graceful stop is handled by the outside overarching server
+	node.logger.Info("graceful stop of node")
+	// (1) internal dependencies: raftLog, statemachine,
+	// (2) shall the memebrship be internalized in the node ? decide after checking the dynamic membership protocol
+	// (3) others defer functions are suitable and enough for the graceful stop as different states?
 }
 
 func (node *Node) VoteRequest(req *utils.RequestVoteInternalReq) {

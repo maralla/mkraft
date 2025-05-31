@@ -51,7 +51,7 @@ type MembershipMgrIface interface {
 	GetAllPeerClients() ([]InternalClientIface, error)
 	GetAllPeerClientsV2() (map[string]InternalClientIface, error)
 	GetAllPeerNodeIDs() ([]string, error)
-	GracefulShutdown()
+	GracefulStop()
 }
 
 type StaticMembershipMgr struct {
@@ -63,9 +63,9 @@ type StaticMembershipMgr struct {
 	cfg    common.ConfigIface
 }
 
-func (mgr *StaticMembershipMgr) GracefulShutdown() {
-	mgr.logger.Info("graceful shutdown of membership manager")
-	mgr.clients.Range(func(key, value interface{}) bool {
+func (mgr *StaticMembershipMgr) GracefulStop() {
+	mgr.logger.Info("graceful stop of membership manager")
+	mgr.clients.Range(func(key, value any) bool {
 		value.(InternalClientIface).Close()
 		return true
 	})

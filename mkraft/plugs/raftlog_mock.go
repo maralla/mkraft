@@ -41,7 +41,7 @@ func (m *MockRaftLogsIface) EXPECT() *MockRaftLogsIfaceMockRecorder {
 }
 
 // AppendLogsInBatch mocks base method.
-func (m *MockRaftLogsIface) AppendLogsInBatch(ctx context.Context, commandList [][]byte, term int) error {
+func (m *MockRaftLogsIface) AppendLogsInBatch(ctx context.Context, commandList [][]byte, term uint32) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "AppendLogsInBatch", ctx, commandList, term)
 	ret0, _ := ret[0].(error)
@@ -52,6 +52,20 @@ func (m *MockRaftLogsIface) AppendLogsInBatch(ctx context.Context, commandList [
 func (mr *MockRaftLogsIfaceMockRecorder) AppendLogsInBatch(ctx, commandList, term any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendLogsInBatch", reflect.TypeOf((*MockRaftLogsIface)(nil).AppendLogsInBatch), ctx, commandList, term)
+}
+
+// CheckPreLog mocks base method.
+func (m *MockRaftLogsIface) CheckPreLog(preLogIndex uint64, term uint32) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CheckPreLog", preLogIndex, term)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// CheckPreLog indicates an expected call of CheckPreLog.
+func (mr *MockRaftLogsIfaceMockRecorder) CheckPreLog(preLogIndex, term any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckPreLog", reflect.TypeOf((*MockRaftLogsIface)(nil).CheckPreLog), preLogIndex, term)
 }
 
 // GetLastLogIdx mocks base method.
@@ -111,4 +125,18 @@ func (m *MockRaftLogsIface) GetTermByIndex(index uint64) (uint32, error) {
 func (mr *MockRaftLogsIfaceMockRecorder) GetTermByIndex(index any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTermByIndex", reflect.TypeOf((*MockRaftLogsIface)(nil).GetTermByIndex), index)
+}
+
+// UpdateLogsInBatch mocks base method.
+func (m *MockRaftLogsIface) UpdateLogsInBatch(ctx context.Context, preLogIndex uint64, commandList [][]byte, term uint32) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateLogsInBatch", ctx, preLogIndex, commandList, term)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateLogsInBatch indicates an expected call of UpdateLogsInBatch.
+func (mr *MockRaftLogsIfaceMockRecorder) UpdateLogsInBatch(ctx, preLogIndex, commandList, term any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateLogsInBatch", reflect.TypeOf((*MockRaftLogsIface)(nil).UpdateLogsInBatch), ctx, preLogIndex, commandList, term)
 }

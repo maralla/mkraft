@@ -40,18 +40,18 @@ func (m *MockStateMachineIface) EXPECT() *MockStateMachineIfaceMockRecorder {
 }
 
 // ApplyCommand mocks base method.
-func (m *MockStateMachineIface) ApplyCommand(command []byte, index uint64) ([]byte, error) {
+func (m *MockStateMachineIface) ApplyCommand(command []byte) ([]byte, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ApplyCommand", command, index)
+	ret := m.ctrl.Call(m, "ApplyCommand", command)
 	ret0, _ := ret[0].([]byte)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ApplyCommand indicates an expected call of ApplyCommand.
-func (mr *MockStateMachineIfaceMockRecorder) ApplyCommand(command, index any) *gomock.Call {
+func (mr *MockStateMachineIfaceMockRecorder) ApplyCommand(command any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ApplyCommand", reflect.TypeOf((*MockStateMachineIface)(nil).ApplyCommand), command, index)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ApplyCommand", reflect.TypeOf((*MockStateMachineIface)(nil).ApplyCommand), command)
 }
 
 // BatchApplyCommand mocks base method.

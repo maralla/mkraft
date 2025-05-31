@@ -1,5 +1,7 @@
 package utils
 
+
+// todo: check use cases of all channels in this project, especially to check 
 func ReadMultipleFromChannel[T any](ch <-chan T, count int) []T {
 	result := make([]T, 0, count)
 	for range count {
@@ -14,4 +16,17 @@ func ReadMultipleFromChannel[T any](ch <-chan T, count int) []T {
 		}
 	}
 	return result
+}
+
+func DrainChannel[T any](ch <-chan T) {
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+		default:
+			return
+		}
+	}
 }

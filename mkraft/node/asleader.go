@@ -54,7 +54,7 @@ func (n *Node) RunAsLeader(ctx context.Context) {
 // the only worker thread needed is the log applicaiton thread
 func (n *Node) runAsLeaderImpl(ctx context.Context) {
 
-	if n.State != StateLeader {
+	if n.GetNodeState() != StateLeader {
 		panic("node is not in LEADER state")
 	}
 	n.logger.Info("acquiring the Semaphore as the LEADER state")
