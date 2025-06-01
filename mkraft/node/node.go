@@ -108,8 +108,6 @@ func NewNode(
 		panic(err)
 	}
 	// load logs
-	node.catchupAppliedIdxOnStartup()
-
 	node.sem.Acquire(context.Background(), 1)
 	defer node.sem.Release(1)
 

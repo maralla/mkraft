@@ -5,34 +5,6 @@ import (
 )
 
 // section1: for indices of commidID and lastApplied which are owned by all the nodes
-// it is called when the node starts, so it will apply all logs from lastApplied to commitIndex
-// these applied logs don't need to be sent to clients
-// todo: pattern: decoupling the 2 layers
-// todo: huge reconstruction, that decouple log replication and statemachine apply
-func (n *Node) catchupAppliedIdxOnStartup() error {
-	n.stateRWLock.Lock()
-	defer n.stateRWLock.Unlock()
-
-	if n.lastApplied < n.commitIndex {
-		logs, err := n.raftLog.GetLogsFromIdxIncluded(n.lastApplied + 1)
-		if err != nil {
-			n.logger.Error("failed to get logs from index", zap.Error(err))
-			return err
-		}
-		for _, log := range logs {
-			// todo: apply command needs reconstruction
-			_, err := n.statemachine.ApplyCommand(log.Commands)
-			if err != nil {
-				n.logger.Error("failed to apply command", zap.Error(err))
-				return err
-			}
-			n.lastApplied = n.lastApplied + 1
-		}
-		return nil
-	}
-	return nil
-}
-
 func (n *Node) getCommitIdxAndLastApplied() (uint64, uint64) {
 	n.stateRWLock.RLock()
 	defer n.stateRWLock.RUnlock()
