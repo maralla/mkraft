@@ -108,9 +108,11 @@ func NewNode(
 		panic(err)
 	}
 	// load logs
-	node.sem.Acquire(context.Background(), 1)
-	defer node.sem.Release(1)
-
+	err = node.unsafeLoadIdx()
+	if err != nil {
+		node.logger.Error("error loading index", zap.Error(err))
+		panic(err)
+	}
 	return node
 }
 
