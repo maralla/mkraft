@@ -63,9 +63,11 @@ func (n *Node) loadCurrentTermAndVotedFor() error {
 }
 
 // store to file system, shall be called when the term or votedFor changes
-func (n *Node) storeCurrentTermAndVotedFor(term uint32, voteFor string) error {
-	n.stateRWLock.Lock()
-	defer n.stateRWLock.Unlock()
+func (n *Node) storeCurrentTermAndVotedFor(term uint32, voteFor string, reEntrant bool) error {
+	if !reEntrant {
+		n.stateRWLock.Lock()
+		defer n.stateRWLock.Unlock()
+	}
 	shouldReturn, err := n.unsafeUpdateNodeTermAndVoteFor(term, voteFor)
 	if shouldReturn {
 		return err
@@ -74,9 +76,11 @@ func (n *Node) storeCurrentTermAndVotedFor(term uint32, voteFor string) error {
 	return nil
 }
 
-func (n *Node) updateCurrentTermAndVotedForAsCandidate() error {
-	n.stateRWLock.Lock()
-	defer n.stateRWLock.Unlock()
+func (n *Node) updateCurrentTermAndVotedForAsCandidate(reEntrant bool) error {
+	if !reEntrant {
+		n.stateRWLock.Lock()
+		defer n.stateRWLock.Unlock()
+	}
 	term := n.CurrentTerm + 1
 	voteFor := n.NodeId
 	shouldReturn, err := n.unsafeUpdateNodeTermAndVoteFor(term, voteFor)

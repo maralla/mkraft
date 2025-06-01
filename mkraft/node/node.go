@@ -222,51 +222,40 @@ func (n *Node) ClientCommand(req *utils.ClientCommandInternalReq) {
 	n.clientCommandCh <- req
 }
 
-// Paper $5.4.1:
+// paper: $5.4.1, property & mechanism
 // This method is shared by leader/follower/candidate
 // Related Property: Leader Completeness, in any leader-based consensus protocol, the leader should eventually store all COMMITTED log entries.
 // Restriction: Raft implements this by the election mechanism, i.e., the leader selected shall have all the committed log entries of previous leaders;
 // Impementation: a node cannot vote for a candidate that has 1) lower term of last log entry, or 2) same term of last log entry but lower index of last log entry.
-func (node *Node) handleVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
+// return: (voteGranted, shouldUpdateCurrentTermAndVoteFor)
+func (node *Node) grantVote(candidateLastLogIdx uint64, candidateLastLogTerm, newTerm uint32, candidateId string) bool {
+	node.stateRWLock.RLock()
+	defer node.stateRWLock.RUnlock()
 
-	var response rpc.RequestVoteResponse
-	currentTerm, voteFor := node.getCurrentTermAndVoteFor()
-
-	if req.Term > currentTerm {
-		err := node.storeCurrentTermAndVotedFor(req.Term, req.CandidateId) // did vote for the candidate
-		if err != nil {
-			node.logger.Error(
-				"error in storeCurrentTermAndVotedFor", zap.Error(err),
-				zap.String("nId", node.NodeId),
-				zap.Uint32("term", req.Term), zap.String("candidateId", req.CandidateId))
-			panic(err) // critical error, cannot continue
-		}
-		response = rpc.RequestVoteResponse{
-			Term:        req.Term,
-			VoteGranted: true,
-		}
-	} else if req.Term < currentTerm {
-		response = rpc.RequestVoteResponse{
-			Term:        currentTerm,
-			VoteGranted: false,
-		}
-	} else {
-		if voteFor == "" {
-			node.logger.Error("shouldn't happen, but voteFor is empty")
-			// temporary solution, should be fixed with a safer implementation later
-			panic("shouldn't happen, but voteFor is empty")
-		}
-		if voteFor == req.CandidateId {
-			response = rpc.RequestVoteResponse{
-				Term:        currentTerm,
-				VoteGranted: true,
+	currentTerm, voteFor := node.CurrentTerm, node.VotedFor
+	if currentTerm < newTerm {
+		lastLogIdx, lastLogTerm := node.raftLog.GetLastLogIdxAndTerm()
+		if candidateLastLogTerm >= lastLogTerm && candidateLastLogIdx >= lastLogIdx {
+			err := node.storeCurrentTermAndVotedFor(newTerm, candidateId, true)
+			if err != nil {
+				node.logger.Error("error in storeCurrentTermAndVotedFor", zap.Error(err))
+				panic(err)
 			}
-		} else {
-			response = rpc.RequestVoteResponse{
-				Term:        currentTerm,
-				VoteGranted: false,
-			}
+			return true
 		}
 	}
-	return &response
+	if currentTerm == newTerm && (voteFor == "" || voteFor == candidateId) {
+		return true
+	}
+	return false
+}
+
+func (node *Node) handleVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
+	voteGranted := node.grantVote(req.LastLogIndex, req.LastLogTerm, req.Term, req.CandidateId)
+	// implementation gap: I think there is no need to differentiate the updated currentTerm or the previous currentTerm
+	currentTerm := node.getCurrentTerm()
+	return &rpc.RequestVoteResponse{
+		Term:        currentTerm,
+		VoteGranted: voteGranted,
+	}
 }

@@ -145,7 +145,7 @@ func (n *Node) RunAsCandidate(ctx context.Context) {
 						return
 					} else {
 						if response.Term > currentTerm {
-							err := n.storeCurrentTermAndVotedFor(response.Term, "") // did not vote for anyone for this new term
+							err := n.storeCurrentTermAndVotedFor(response.Term, "", false) // did not vote for anyone for this new term
 							if err != nil {
 								n.logger.Error(
 									"error in storeCurrentTermAndVotedFor", zap.Error(err),

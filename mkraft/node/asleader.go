@@ -82,7 +82,7 @@ func (n *Node) runAsLeaderImpl(ctx context.Context) {
 	for {
 		if singleJobResult.ShallDegrade {
 			subWorkerCancel()
-			n.storeCurrentTermAndVotedFor(uint32(singleJobResult.Term), singleJobResult.VotedFor)
+			n.storeCurrentTermAndVotedFor(uint32(singleJobResult.Term), singleJobResult.VotedFor, false)
 			n.leaderGracefulDegradation(ctx)
 			return
 		}

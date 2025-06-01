@@ -111,7 +111,7 @@ func (n *Node) noleaderHandleAppendEntries(ctx context.Context, req *rpc.AppendE
 
 	// 2. update the term
 	if reqTerm > currentTerm {
-		err := n.storeCurrentTermAndVotedFor(reqTerm, "") // did not vote for anyone
+		err := n.storeCurrentTermAndVotedFor(reqTerm, "", false) // did not vote for anyone
 		if err != nil {
 			n.logger.Error(
 				"error in storeCurrentTermAndVotedFor", zap.Error(err),
@@ -179,7 +179,7 @@ func (node *Node) candidateAsyncDoElection(ctx context.Context) chan *MajorityRe
 	ctx, requestID := common.GetOrGenerateRequestID(ctx)
 	consensusChan := make(chan *MajorityRequestVoteResp, 1)
 
-	err := node.updateCurrentTermAndVotedForAsCandidate()
+	err := node.updateCurrentTermAndVotedForAsCandidate(false)
 	if err != nil {
 		// todo: probably we shall recover in the man runAs??
 		node.logger.Error(
