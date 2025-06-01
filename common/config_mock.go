@@ -110,18 +110,18 @@ func (mr *MockConfigIfaceMockRecorder) GetMembership() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMembership", reflect.TypeOf((*MockConfigIface)(nil).GetMembership))
 }
 
-// GetMinRemainingTimeForRPC mocks base method.
-func (m *MockConfigIface) GetMinRemainingTimeForRPC() time.Duration {
+// GetRPCDeadlineMargin mocks base method.
+func (m *MockConfigIface) GetRPCDeadlineMargin() time.Duration {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetMinRemainingTimeForRPC")
+	ret := m.ctrl.Call(m, "GetRPCDeadlineMargin")
 	ret0, _ := ret[0].(time.Duration)
 	return ret0
 }
 
-// GetMinRemainingTimeForRPC indicates an expected call of GetMinRemainingTimeForRPC.
-func (mr *MockConfigIfaceMockRecorder) GetMinRemainingTimeForRPC() *gomock.Call {
+// GetRPCDeadlineMargin indicates an expected call of GetRPCDeadlineMargin.
+func (mr *MockConfigIfaceMockRecorder) GetRPCDeadlineMargin() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMinRemainingTimeForRPC", reflect.TypeOf((*MockConfigIface)(nil).GetMinRemainingTimeForRPC))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRPCDeadlineMargin", reflect.TypeOf((*MockConfigIface)(nil).GetRPCDeadlineMargin))
 }
 
 // GetRPCRequestTimeout mocks base method.

@@ -94,7 +94,6 @@ grpc:
 	assert.Equal(t, ELECTION_TIMEOUT_MIN_IN_MS, cfg.BasicConfig.ElectionTimeoutMinInMs)
 	assert.Equal(t, ELECTION_TIMEOUT_MAX_IN_MS, cfg.BasicConfig.ElectionTimeoutMaxInMs)
 	assert.Equal(t, LEADER_HEARTBEAT_PERIOD_IN_MS, cfg.BasicConfig.LeaderHeartbeatPeriodInMs)
-	assert.Equal(t, MIN_REMAINING_TIME_FOR_RPC_IN_MS, cfg.BasicConfig.MinRemainingTimeForRPCInMs)
 	assert.Equal(t, GRACEFUL_SHUTDOWN_IN_SEC, cfg.BasicConfig.GracefulShutdownTimeoutInSec)
 	assert.Equal(t, "node1", cfg.Membership.CurrentNodeID)
 	assert.Equal(t, 3, len(cfg.Membership.AllMembers))
