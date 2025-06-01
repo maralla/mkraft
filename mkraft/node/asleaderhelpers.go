@@ -182,6 +182,7 @@ func (n *Node) handlerAppendEntriesAsLeader(internalReq *utils.AppendEntriesInte
 
 	if reqTerm > currentTerm {
 		result := JobResult{ShallDegrade: true, Term: TermRank(reqTerm)}
+		// implementation gap:
 		// maki: this may be a very tricky design in implementation,
 		// but this simplifies the logic here
 		// 3rd reply the response, we directly reject this reject, and fix the log after
@@ -241,52 +242,6 @@ func (n *Node) recordLeaderState() {
 	}
 }
 
-// todo: to be implemented
-func (n *Node) leaderGracefulDegradation(ctx context.Context) {
-	// todo:
-	// no need to reject clientCommands now, we can
-	// delegate this kind of job to the folllower
-	// reject all not handled clientCommands
-
-	// when this clean up is in process, the leader shall not handle any new clientCommands
-	remainingCommands := utils.ReadMultipleFromChannel(n.leaderApplyCh, n.cfg.GetRaftNodeRequestBufferSize())
-	for _, clientCommand := range remainingCommands {
-		result, err := n.statemachine.ApplyCommand(clientCommand.Req.Command)
-		if err != nil {
-			n.logger.Error("failed to apply command", zap.Error(err))
-			panic(err) // todo: shall not panic, shall handle the error properly
-		}
-		clientCommand.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
-			Resp: &rpc.ClientCommandResponse{
-				Result: result,
-			},
-			Err: nil,
-		}
-	}
-}
-
-func (n *Node) workerForLogApplication(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case clientCommand := <-n.leaderApplyCh:
-			result, err := n.statemachine.ApplyCommand(clientCommand.Req.Command)
-			if err != nil {
-				n.logger.Error("failed to apply command", zap.Error(err))
-				panic(err) // todo: shall not panic, shall handle the error properly
-			}
-			clientCommand.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
-				Resp: &rpc.ClientCommandResponse{
-					Result: result,
-				},
-				Err: nil,
-			}
-		}
-	}
-}
-
-// todo: what does this function do?
 // todo: shall be refactored with "the safty feature"
 func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]plugs.CatchupLogs, error) {
 	result := make(map[string]plugs.CatchupLogs)

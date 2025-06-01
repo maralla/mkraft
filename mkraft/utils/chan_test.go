@@ -96,7 +96,7 @@ func TestDrainChannelWithClosedChannel(t *testing.T) {
 	ch <- 3
 	close(ch)
 
-	DrainChannel(ch)
+	DrainChannel(ch, 3)
 
 	if len(ch) != 0 {
 		t.Fatalf("expected 0 items, got %d", len(ch))
@@ -104,12 +104,12 @@ func TestDrainChannelWithClosedChannel(t *testing.T) {
 }
 
 func TestDrainChannelWithNoClosedChannel(t *testing.T) {
-	ch := make(chan int, 3)
+	ch := make(chan int, 10) // deliberately set a large buffer
 	ch <- 1
 	ch <- 2
 	ch <- 3
 
-	DrainChannel(ch)
+	DrainChannel(ch, 30)
 
 	if len(ch) != 0 {
 		t.Fatalf("expected 0 items, got %d", len(ch))

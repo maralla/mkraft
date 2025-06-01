@@ -11,12 +11,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// be called when the node becomes a leader
-// todo: need to reconcile with the "safey" chapter
-func (n *Node) cleanupApplyLogsBeforeToLeader() {
-	utils.DrainChannel(n.noleaderApplySignalCh)
-	n.noleaderSyncDoApplyLogs()
-}
 
 // WORKER:(2)
 // this worker is used to handle client commands
@@ -68,10 +62,16 @@ func (n *Node) noleaderWorkerToApplyLogs(ctx context.Context, workerWaitGroup *s
 		default:
 			select {
 			case <-tickerTriggered.C:
-				n.noleaderSyncDoApplyLogs()
+				err := n.applyAllLaggedCommitedLogs(ctx)
+				if err != nil {
+					n.logger.Error("failed to apply all lagged commited logs", zap.Error(err))
+				}
 			case <-n.noleaderApplySignalCh:
-				utils.DrainChannel(n.noleaderApplySignalCh)
-				n.noleaderSyncDoApplyLogs()
+				utils.DrainChannel(n.noleaderApplySignalCh, n.cfg.GetRaftNodeRequestBufferSize())
+				err := n.applyAllLaggedCommitedLogs(ctx)
+				if err != nil {
+					n.logger.Error("failed to apply all lagged commited logs", zap.Error(err))
+				}
 			case <-ctx.Done():
 				n.logger.Warn("apply-worker, exiting leader's worker for applying commands")
 				return
@@ -139,29 +139,6 @@ func (n *Node) noleaderHandleAppendEntries(ctx context.Context, req *rpc.AppendE
 		Success: true,
 	}
 	return &response
-}
-
-// apply the committed yet not applied logs to the state machine
-func (n *Node) noleaderSyncDoApplyLogs() {
-	commitIdx, lastApplied := n.getCommitIdxAndLastApplied()
-	if commitIdx > lastApplied {
-		logs, err := n.raftLog.GetLogsFromIdxIncluded(lastApplied + 1)
-		if err != nil {
-			n.logger.Error("failed to get logs from index", zap.Error(err))
-			panic(err)
-		}
-		// apply the command
-		for _, log := range logs {
-			// the no-leader node doesn't need to respond to clients
-			_, err := n.statemachine.ApplyCommand(log.Commands)
-			if err != nil {
-				n.logger.Error("failed to apply command to state machine", zap.Error(err))
-				panic(err)
-			} else {
-				n.incrementLastApplied(1)
-			}
-		}
-	}
 }
 
 // Specifical Rule for Candidate Election:

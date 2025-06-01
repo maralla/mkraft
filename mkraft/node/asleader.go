@@ -71,7 +71,7 @@ func (n *Node) runAsLeaderImpl(ctx context.Context) {
 
 	subWorkerCtx, subWorkerCancel := context.WithCancel(ctx)
 	defer subWorkerCancel()
-	go n.workerForLogApplication(subWorkerCtx)
+	go n.leaderWorkerForLogApplication(subWorkerCtx)
 
 	heartbeatDuration := n.cfg.GetLeaderHeartbeatPeriod()
 	tickerForHeartbeat := time.NewTicker(heartbeatDuration)
@@ -83,7 +83,7 @@ func (n *Node) runAsLeaderImpl(ctx context.Context) {
 		if singleJobResult.ShallDegrade {
 			subWorkerCancel()
 			n.storeCurrentTermAndVotedFor(uint32(singleJobResult.Term), singleJobResult.VotedFor, false)
-			n.leaderGracefulDegradation(ctx)
+			n.cleanupApplyLogsBeforeToFollower()
 			return
 		}
 		select {
