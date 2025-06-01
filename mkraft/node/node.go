@@ -39,6 +39,7 @@ type TermRank int
 var _ NodeIface = (*Node)(nil)
 
 type NodeIface interface {
+	// todo: can refer to hashicorp raft for ideas
 	// todo: lost requestID and other values in the context
 	VoteRequest(req *utils.RequestVoteInternalReq)
 	// todo: lost requestID and other values in the context
@@ -77,12 +78,12 @@ func NewNode(
 		state:  StateFollower,
 
 		// leader only channels
-		receiveClientCommandChan: make(chan *utils.ClientCommandInternalReq, bufferSize),
-		applyClientCommandChan:   make(chan *utils.ClientCommandInternalReq, bufferSize),
-		noleaderApplySignalChan:  make(chan bool, bufferSize),
+		clientCommandCh:       make(chan *utils.ClientCommandInternalReq, bufferSize),
+		leaderApplyCh:         make(chan *utils.ClientCommandInternalReq, bufferSize),
+		noleaderApplySignalCh: make(chan bool, bufferSize),
 
-		requestVoteChan: make(chan *utils.RequestVoteInternalReq, bufferSize),
-		appendEntryChan: make(chan *utils.AppendEntriesInternalReq, bufferSize),
+		requestVoteCh: make(chan *utils.RequestVoteInternalReq, bufferSize),
+		appendEntryCh: make(chan *utils.AppendEntriesInternalReq, bufferSize),
 
 		// persistent state on all servers
 		CurrentTerm: 0, // as the logical clock in Raft to allow detection of stale messages
@@ -135,12 +136,14 @@ type Node struct {
 	// leader only channels
 	// gracefully clean every time a leader degrades to a follower
 	// reset these 2 data structures everytime a new leader is elected
-	receiveClientCommandChan chan *utils.ClientCommandInternalReq
-	applyClientCommandChan   chan *utils.ClientCommandInternalReq
-	noleaderApplySignalChan  chan bool
+	clientCommandCh chan *utils.ClientCommandInternalReq
+
+	leaderApplyCh         chan *utils.ClientCommandInternalReq
+	noleaderApplySignalCh chan bool
+
 	// shared by all states
-	requestVoteChan chan *utils.RequestVoteInternalReq
-	appendEntryChan chan *utils.AppendEntriesInternalReq
+	requestVoteCh chan *utils.RequestVoteInternalReq
+	appendEntryCh chan *utils.AppendEntriesInternalReq
 
 	// Persistent state on all servers
 	CurrentTerm uint32 // required, persistent
@@ -191,11 +194,11 @@ func (node *Node) GracefulStop() {
 }
 
 func (node *Node) VoteRequest(req *utils.RequestVoteInternalReq) {
-	node.requestVoteChan <- req
+	node.requestVoteCh <- req
 }
 
 func (node *Node) AppendEntryRequest(req *utils.AppendEntriesInternalReq) {
-	node.appendEntryChan <- req
+	node.appendEntryCh <- req
 }
 
 // todo: shall add the feature of "redirection to the leader"
@@ -216,51 +219,43 @@ func (n *Node) ClientCommand(req *utils.ClientCommandInternalReq) {
 			}
 		}
 	}()
-	n.receiveClientCommandChan <- req
+	n.clientCommandCh <- req
 }
 
-// shared by leader/follower/candidate
-// this method doesn't check the current state of the node
-func (node *Node) handleVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
+// paper: $5.4.1, property & mechanism
+// This method is shared by leader/follower/candidate
+// Related Property: Leader Completeness, in any leader-based consensus protocol, the leader should eventually store all COMMITTED log entries.
+// Restriction: Raft implements this by the election mechanism, i.e., the leader selected shall have all the committed log entries of previous leaders;
+// Impementation: a node cannot vote for a candidate that has 1) lower term of last log entry, or 2) same term of last log entry but lower index of last log entry.
+// return: (voteGranted, shouldUpdateCurrentTermAndVoteFor)
+func (node *Node) grantVote(candidateLastLogIdx uint64, candidateLastLogTerm, newTerm uint32, candidateId string) bool {
+	node.stateRWLock.RLock()
+	defer node.stateRWLock.RUnlock()
 
-	var response rpc.RequestVoteResponse
-	currentTerm, voteFor := node.getCurrentTermAndVoteFor()
-
-	if req.Term > currentTerm {
-		err := node.storeCurrentTermAndVotedFor(req.Term, req.CandidateId) // did vote for the candidate
-		if err != nil {
-			node.logger.Error(
-				"error in storeCurrentTermAndVotedFor", zap.Error(err),
-				zap.String("nId", node.NodeId),
-				zap.Uint32("term", req.Term), zap.String("candidateId", req.CandidateId))
-			panic(err) // critical error, cannot continue
-		}
-		response = rpc.RequestVoteResponse{
-			Term:        req.Term,
-			VoteGranted: true,
-		}
-	} else if req.Term < currentTerm {
-		response = rpc.RequestVoteResponse{
-			Term:        currentTerm,
-			VoteGranted: false,
-		}
-	} else {
-		if voteFor == "" {
-			node.logger.Error("shouldn't happen, but voteFor is empty")
-			// temporary solution, should be fixed with a safer implementation later
-			panic("shouldn't happen, but voteFor is empty")
-		}
-		if voteFor == req.CandidateId {
-			response = rpc.RequestVoteResponse{
-				Term:        currentTerm,
-				VoteGranted: true,
+	currentTerm, voteFor := node.CurrentTerm, node.VotedFor
+	if currentTerm < newTerm {
+		lastLogIdx, lastLogTerm := node.raftLog.GetLastLogIdxAndTerm()
+		if candidateLastLogTerm >= lastLogTerm && candidateLastLogIdx >= lastLogIdx {
+			err := node.storeCurrentTermAndVotedFor(newTerm, candidateId, true)
+			if err != nil {
+				node.logger.Error("error in storeCurrentTermAndVotedFor", zap.Error(err))
+				panic(err)
 			}
-		} else {
-			response = rpc.RequestVoteResponse{
-				Term:        currentTerm,
-				VoteGranted: false,
-			}
+			return true
 		}
 	}
-	return &response
+	if currentTerm == newTerm && (voteFor == "" || voteFor == candidateId) {
+		return true
+	}
+	return false
+}
+
+func (node *Node) handleVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
+	voteGranted := node.grantVote(req.LastLogIndex, req.LastLogTerm, req.Term, req.CandidateId)
+	// implementation gap: I think there is no need to differentiate the updated currentTerm or the previous currentTerm
+	currentTerm := node.getCurrentTerm()
+	return &rpc.RequestVoteResponse{
+		Term:        currentTerm,
+		VoteGranted: voteGranted,
+	}
 }

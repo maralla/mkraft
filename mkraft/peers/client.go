@@ -117,7 +117,7 @@ func (rc *InternalClientImpl) SendRequestVoteWithRetries(ctx context.Context, re
 			case resp := <-singleResChan:
 				if resp.Err != nil {
 					deadline, ok := ctx.Deadline()
-					if ok && time.Until(deadline) < rc.cfg.GetMinRemainingTimeForRPC() {
+					if ok && time.Until(deadline) < rc.cfg.GetRPCDeadlineMargin() {
 						out <- utils.RPCRespWrapper[*rpc.RequestVoteResponse]{
 							Err: fmt.Errorf("%s", "election timeout to receive any non-error response")}
 						return

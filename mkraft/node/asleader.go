@@ -67,7 +67,7 @@ func (n *Node) runAsLeaderImpl(ctx context.Context) {
 
 	// maki: this is a tricky design (the whole design of the log/client command application is tricky)
 	// todo: catch up the log application to make sure lastApplied == commitIndex for the leader
-	n.applyClientCommandChan = make(chan *utils.ClientCommandInternalReq, n.cfg.GetRaftNodeRequestBufferSize())
+	n.leaderApplyCh = make(chan *utils.ClientCommandInternalReq, n.cfg.GetRaftNodeRequestBufferSize())
 
 	subWorkerCtx, subWorkerCancel := context.WithCancel(ctx)
 	defer subWorkerCancel()
@@ -82,7 +82,7 @@ func (n *Node) runAsLeaderImpl(ctx context.Context) {
 	for {
 		if singleJobResult.ShallDegrade {
 			subWorkerCancel()
-			n.storeCurrentTermAndVotedFor(uint32(singleJobResult.Term), singleJobResult.VotedFor)
+			n.storeCurrentTermAndVotedFor(uint32(singleJobResult.Term), singleJobResult.VotedFor, false)
 			n.leaderGracefulDegradation(ctx)
 			return
 		}
@@ -106,10 +106,10 @@ func (n *Node) runAsLeaderImpl(ctx context.Context) {
 				}
 
 			// task2: handle the client command, need to change raftlog/state machine -> as leader, may degrade to follower
-			case clientCmd := <-n.receiveClientCommandChan:
+			case clientCmd := <-n.clientCommandCh:
 				tickerForHeartbeat.Reset(heartbeatDuration)
 				batchingSize := n.cfg.GetRaftNodeRequestBufferSize() - 1
-				clientCommands := utils.ReadMultipleFromChannel(n.receiveClientCommandChan, batchingSize)
+				clientCommands := utils.ReadMultipleFromChannel(n.clientCommandCh, batchingSize)
 				clientCommands = append(clientCommands, clientCmd)
 				singleJobResult, err = n.syncDoLogReplication(ctx, clientCommands)
 				if err != nil {
@@ -118,14 +118,14 @@ func (n *Node) runAsLeaderImpl(ctx context.Context) {
 				}
 
 			// task3: handle the requestVoteChan -> as a node, may degrade to follower
-			case internalReq := <-n.requestVoteChan:
+			case internalReq := <-n.requestVoteCh:
 				singleJobResult, err = n.handleRequestVoteAsLeader(internalReq)
 				if err != nil {
 					n.logger.Error("error in handling request vote", zap.Error(err))
 					panic(err)
 				}
 			// task4: handle the appendEntryChan, need to change raftlog/state machine -> as a node, may degrade to follower
-			case internalReq := <-n.appendEntryChan:
+			case internalReq := <-n.appendEntryCh:
 				singleJobResult, err = n.handlerAppendEntriesAsLeader(internalReq)
 				if err != nil {
 					n.logger.Error("error in handling append entries", zap.Error(err))

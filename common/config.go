@@ -17,6 +17,7 @@ var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 type ConfigIface interface {
 	GetRPCRequestTimeout() time.Duration
+	GetRPCDeadlineMargin() time.Duration
 	GetElectionTimeout() time.Duration
 	GetLeaderHeartbeatPeriod() time.Duration
 
@@ -24,7 +25,6 @@ type ConfigIface interface {
 	GetRaftLogFilePath() string
 
 	String() string
-	GetMinRemainingTimeForRPC() time.Duration
 	GetgRPCServiceConf() string
 	GetGracefulShutdownTimeout() time.Duration
 
@@ -67,8 +67,8 @@ var (
 		ElectionTimeoutMinInMs:       ELECTION_TIMEOUT_MIN_IN_MS,
 		ElectionTimeoutMaxInMs:       ELECTION_TIMEOUT_MAX_IN_MS,
 		LeaderHeartbeatPeriodInMs:    LEADER_HEARTBEAT_PERIOD_IN_MS,
-		MinRemainingTimeForRPCInMs:   MIN_REMAINING_TIME_FOR_RPC_IN_MS,
 		GracefulShutdownTimeoutInSec: GRACEFUL_SHUTDOWN_IN_SEC,
+		RPCDeadlineMarginInMicroSec:  RPC_DEADLINE_MARGIN_IN_MICRO_SEC,
 	}
 )
 
@@ -78,10 +78,12 @@ const (
 	LEADER_BUFFER_SIZE            = 1000
 	LEADER_HEARTBEAT_PERIOD_IN_MS = 100
 
-	RPC_REUQEST_TIMEOUT_IN_MS = 200
-
-	ELECTION_TIMEOUT_MIN_IN_MS = 350
-	ELECTION_TIMEOUT_MAX_IN_MS = 550
+	// paper: $5.6, the broadcast time should be an order of magnitude less thant the election timeout
+	RPC_REUQEST_TIMEOUT_IN_MS = 20
+	// reference: the Jeff-Dean's number everyone shall know
+	RPC_DEADLINE_MARGIN_IN_MICRO_SEC = 500
+	ELECTION_TIMEOUT_MIN_IN_MS       = 200
+	ELECTION_TIMEOUT_MAX_IN_MS       = 400
 
 	MIN_REMAINING_TIME_FOR_RPC_IN_MS = 50
 
@@ -115,6 +117,7 @@ type (
 		// RPC timeout
 		RPCRequestTimeoutInMs        int `yaml:"rpc_request_timeout_in_ms" json:"rpc_request_timeout_in_ms" validate:"min=1"`
 		GracefulShutdownTimeoutInSec int `yaml:"graceful_shutdown_timeout_in_sec" json:"graceful_shutdown_timeout_in_sec" validate:"min=1"`
+		RPCDeadlineMarginInMicroSec  int `yaml:"rpc_deadline_margin_in_micro_sec" json:"rpc_deadline_margin_in_micro_sec" validate:"min=250"`
 
 		// Election timeout
 		ElectionTimeoutMinInMs int `yaml:"election_timeout_min_in_ms" json:"election_timeout_min_in_ms" validate:"min=1"`
@@ -122,9 +125,6 @@ type (
 
 		// Leader
 		LeaderHeartbeatPeriodInMs int `yaml:"leader_heartbeat_period_in_ms" json:"leader_heartbeat_period_in_ms" validate:"min=1"`
-
-		// internal
-		MinRemainingTimeForRPCInMs int `yaml:"min_remaining_time_for_rpc_in_ms" json:"min_remaining_time_for_rpc_in_ms" validate:"min=1"`
 	}
 )
 
@@ -167,10 +167,6 @@ func (c *Config) GetgRPCServiceConf() string {
 	return string(grpcJSON)
 }
 
-func (c *Config) GetMinRemainingTimeForRPC() time.Duration {
-	return time.Duration(c.BasicConfig.MinRemainingTimeForRPCInMs) * time.Millisecond
-}
-
 func (c *Config) GetRPCRequestTimeout() time.Duration {
 	return time.Duration(c.BasicConfig.RPCRequestTimeoutInMs) * time.Millisecond
 }
@@ -195,4 +191,8 @@ func (c *Config) GetLeaderHeartbeatPeriod() time.Duration {
 func (c *Config) String() string {
 	jsonStr, _ := json.Marshal(c)
 	return string(jsonStr)
+}
+
+func (c *Config) GetRPCDeadlineMargin() time.Duration {
+	return time.Duration(c.BasicConfig.RPCDeadlineMarginInMicroSec) * time.Microsecond
 }
