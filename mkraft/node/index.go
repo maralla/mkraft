@@ -1,8 +1,48 @@
 package node
 
 import (
+	"fmt"
+	"os"
+	"time"
+
 	"go.uber.org/zap"
 )
+
+func (n *Node) getIdxFileName() string {
+	return "index.rft"
+}
+
+// implementation gap: the commitIdx and lastApplied shall be persisted in implementation
+// if not, if all nodes shutdown, the commitIdx and lastApplied will be lost
+// maki: this is a tricky part, discuss with the prof
+func (n *Node) unsafeSaveIdx() error {
+	// use create and rename to avoid data corruption
+	// create index_timestamp.rft
+	idxFileName := fmt.Sprintf("index_%s.rft", time.Now().Format("20060102150405"))
+	err := os.WriteFile(idxFileName, []byte(fmt.Sprintf("%d,%d\n", n.commitIndex, n.lastApplied)), 0644)
+	if err != nil {
+		return err
+	}
+	// rename the file to index.rft
+	return os.Rename(idxFileName, n.getIdxFileName())
+}
+
+func (n *Node) unsafeLoadIdx() error {
+	file, err := os.Open(n.getIdxFileName())
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	var commitIdx, lastApplied uint64
+	_, err = fmt.Fscanf(file, "%d,%d\n", &commitIdx, &lastApplied)
+	// if the last line is not formatted correctly, load the last but one line
+	if err != nil {
+		return err
+	}
+	n.commitIndex = commitIdx
+	n.lastApplied = lastApplied
+	return nil
+}
 
 // section1: for indices of commidID and lastApplied which are owned by all the nodes
 func (n *Node) getCommitIdxAndLastApplied() (uint64, uint64) {
@@ -23,24 +63,18 @@ func (n *Node) getCommitIdx() uint64 {
 	return n.commitIndex
 }
 
-func (n *Node) updateCommitIdx(commitIdx uint64) {
+func (n *Node) incrementCommitIdx(numberOfCommand uint64) {
 	n.stateRWLock.Lock()
 	defer n.stateRWLock.Unlock()
-	if commitIdx > n.commitIndex {
-		// update the commitIndex = min(leaderCommit, index of last new entry in the log)
-		newIndex := min(n.raftLog.GetLastLogIdx(), commitIdx)
-		n.commitIndex = newIndex
-	} else {
-		n.logger.Warn("commit index is not updated, it is smaller than current commit index",
-			zap.Uint64("commitIdx", commitIdx),
-			zap.Uint64("currentCommitIndex", n.commitIndex))
-	}
+	n.commitIndex = n.commitIndex + numberOfCommand
+	n.unsafeSaveIdx()
 }
 
 func (n *Node) incrementLastApplied(numberOfCommand uint64) {
 	n.stateRWLock.Lock()
 	defer n.stateRWLock.Unlock()
 	n.lastApplied = n.lastApplied + numberOfCommand
+	n.unsafeSaveIdx()
 }
 
 // section2: for indices of leaders, nextIndex/matchIndex

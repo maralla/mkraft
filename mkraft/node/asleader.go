@@ -176,6 +176,7 @@ func (n *Node) syncDoHeartbeat(ctx context.Context) (JobResult, error) {
 			PrevLogIndex: catchup.LastLogIndex,
 			PrevLogTerm:  catchup.LastLogTerm,
 			Entries:      catchupCommands,
+			LeaderCommit: n.getCommitIdx(),
 		}
 	}
 
@@ -211,7 +212,6 @@ func (n *Node) syncDoLogReplication(ctx context.Context, clientCommands []*utils
 	var subTasksToWait sync.WaitGroup
 	subTasksToWait.Add(2)
 	currentTerm := n.getCurrentTerm()
-	newCommitID := n.getCommitIdx() + uint64(len(clientCommands)) // only if the consensus is reached
 
 	// prep:
 	// get logs from the raft logs for each client
@@ -293,7 +293,7 @@ func (n *Node) syncDoLogReplication(ctx context.Context, clientCommands []*utils
 	} else {
 
 		// (4) the leader applies the command, and responds to the client
-		n.updateCommitIdx(newCommitID)
+		n.incrementCommitIdx(uint64(len(clientCommands)))
 
 		// (5) send to the apply command channel
 		for _, clientCommand := range clientCommands {

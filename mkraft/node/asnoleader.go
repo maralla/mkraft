@@ -264,7 +264,7 @@ func (n *Node) noleaderHandleAppendEntries(ctx context.Context, req *rpc.AppendE
 	defer func() {
 		// the updateCommitIdx will find the min(leaderCommit, index of last new entry in the log), so the update
 		// doesn't require result of appendLogs
-		n.updateCommitIdx(req.LeaderCommit)
+		n.incrementCommitIdx(uint64(len(req.Entries)))
 		n.noleaderApplySignalCh <- true
 	}()
 

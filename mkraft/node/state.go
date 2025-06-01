@@ -11,7 +11,7 @@ import (
 // the Persistent state on all servers: currentTerm, votedFor
 // the logs are managed by RaftLogImpl, which is a separate file
 func (n *Node) getStateFileName() string {
-	return "raftstate"
+	return "state.rft"
 }
 
 // load from file system, shall be called at the beginning of the node
