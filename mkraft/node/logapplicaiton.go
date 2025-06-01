@@ -2,6 +2,8 @@ package node
 
 import (
 	"context"
+	"sync"
+	"time"
 
 	"github.com/maki3cat/mkraft/mkraft/utils"
 	"github.com/maki3cat/mkraft/rpc"
@@ -11,6 +13,7 @@ import (
 // Implementation gap: Raft log application behavior across different node roles and transitions
 // Implementation gap: is complicated and not well documented by the paper; thus, I dedicate a file to this.
 
+// ---------------------------------------As a Leader: -----------------------------------------------------
 // Case-1: AS A Leader, newly elected
 // When a follower becomes the leader,
 // it needs to apply previous committed logs (which doesn't require replies to the clients)
@@ -20,6 +23,11 @@ import (
 // When a leader stays as the leader,
 // it needs to apply new committed logs to the state machine
 // and reply to the clients
+
+// For this worker, it is actually a variate pipeline pattern:
+// first step is log replication, second step is apply to the state machine
+// and this is the 2nd step in the pipeline of log (1-replication, 2-apply)
+// shall NOT reset the chan inside this function because the main thread may write to it simultaneously
 func (n *Node) leaderWorkerForLogApplication(ctx context.Context) {
 	// Case-1: apply lagged commited logs
 	err := n.applyAllLaggedCommitedLogs(ctx)
@@ -48,25 +56,57 @@ func (n *Node) leaderWorkerForLogApplication(ctx context.Context) {
 	}
 }
 
-// AS A Leader, but stale
-// Case(3) When a leader finds itself stale
+// Case-3: AS A Leader, but stale
 // implementation gap:
 // it can give up serving clients, just drain/return no leader leaderApplyCh, and leave the work to follower
 func (n *Node) cleanupApplyLogsBeforeToFollower() {
 	utils.DrainChannel(n.leaderApplyCh, n.cfg.GetRaftNodeRequestBufferSize())
 }
 
-// AS A Follower/Candidate
-// Case(4) When a follower/candidate commits a new log
+// ---------------------------------------As a Follower/Candidate: -------------------------------------
+// Case-4: AS A Follower/Candidate
+// When a follower/candidate commits a new log
+// no-leader-WORKER-1
+func (n *Node) noleaderWorkerToApplyLogs(ctx context.Context, workerWaitGroup *sync.WaitGroup) {
+	defer workerWaitGroup.Done()
+
+	tickerTriggered := time.NewTicker(time.Duration(100 * time.Microsecond)) // empirical number
+	defer tickerTriggered.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			n.logger.Warn("apply-worker, exiting leader's worker for applying commands")
+			return
+		default:
+			select {
+			case <-tickerTriggered.C:
+				err := n.applyAllLaggedCommitedLogs(ctx)
+				if err != nil {
+					n.logger.Error("failed to apply all lagged commited logs", zap.Error(err))
+				}
+			case <-n.noleaderApplySignalCh:
+				utils.DrainChannel(n.noleaderApplySignalCh, n.cfg.GetRaftNodeRequestBufferSize())
+				err := n.applyAllLaggedCommitedLogs(ctx)
+				if err != nil {
+					n.logger.Error("failed to apply all lagged commited logs", zap.Error(err))
+				}
+			case <-ctx.Done():
+				n.logger.Warn("apply-worker, exiting leader's worker for applying commands")
+				return
+			}
+		}
+	}
+}
+
+// Case-5: As a candidate, and then it becomes a leader
 // it doesn't needs to apply the logs to the state machine which may be slow and the new leader need to start heartbeat soon
 // so it just drains the noleaderApplySignalCh
 func (n *Node) cleanupApplyLogsBeforeToLeader() {
 	utils.DrainChannel(n.noleaderApplySignalCh, n.cfg.GetRaftNodeRequestBufferSize())
 }
 
-// ??⚠️ Case (5): Log entry committed but not yet applied, node crashes and restarts
-
-// BASIC OPERATIONS:
+// ------------------- BASIC OPERATIONS --------------------------------
 // apply the committed yet not applied logs to the state machine
 func (n *Node) applyAllLaggedCommitedLogs(ctx context.Context) error {
 
