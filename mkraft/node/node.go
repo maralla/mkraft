@@ -222,8 +222,11 @@ func (n *Node) ClientCommand(req *utils.ClientCommandInternalReq) {
 	n.clientCommandCh <- req
 }
 
-// shared by leader/follower/candidate
-// this method doesn't check the current state of the node
+// Paper $5.4.1:
+// This method is shared by leader/follower/candidate
+// Related Property: Leader Completeness, in any leader-based consensus protocol, the leader should eventually store all COMMITTED log entries.
+// Restriction: Raft implements this by the election mechanism, i.e., the leader selected shall have all the committed log entries of previous leaders;
+// Impementation: a node cannot vote for a candidate that has 1) lower term of last log entry, or 2) same term of last log entry but lower index of last log entry.
 func (node *Node) handleVoteRequest(req *rpc.RequestVoteRequest) *rpc.RequestVoteResponse {
 
 	var response rpc.RequestVoteResponse
