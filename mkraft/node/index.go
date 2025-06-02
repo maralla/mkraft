@@ -19,7 +19,9 @@ func (n *Node) unsafeSaveIdx() error {
 	// use create and rename to avoid data corruption
 	// create index_timestamp.rft
 	idxFileName := fmt.Sprintf("index_%s.rft", time.Now().Format("20060102150405"))
-	err := os.WriteFile(idxFileName, []byte(fmt.Sprintf("%d,%d\n", n.commitIndex, n.lastApplied)), 0644)
+	buf := make([]byte, 0, 32)
+	buf = fmt.Appendf(buf, "%d,%d\n", n.commitIndex, n.lastApplied)
+	err := os.WriteFile(idxFileName, buf, 0644)
 	if err != nil {
 		return err
 	}
@@ -51,12 +53,6 @@ func (n *Node) getCommitIdxAndLastApplied() (uint64, uint64) {
 	return n.commitIndex, n.lastApplied
 }
 
-func (n *Node) getLastApplied() uint64 {
-	n.stateRWLock.RLock()
-	defer n.stateRWLock.RUnlock()
-	return n.lastApplied
-}
-
 func (n *Node) getCommitIdx() uint64 {
 	n.stateRWLock.RLock()
 	defer n.stateRWLock.RUnlock()
@@ -78,7 +74,7 @@ func (n *Node) incrementLastApplied(numberOfCommand uint64) {
 }
 
 // section2: for indices of leaders, nextIndex/matchIndex
-// maki: Updating a follower’s match/next index is independent of whether consensus is reached.
+// maki: Updating a follower's match/next index is independent of whether consensus is reached.
 // Updating matchIndex/nextIndex is a per-follower operation.
 // Reaching consensus (a majority of nodes having the same entry) is a cluster-wide operation.
 func (n *Node) incrementPeersNextIndexOnSuccess(nodeID string, logCnt uint64) {

@@ -193,12 +193,28 @@ func (node *Node) GracefulStop() {
 	// (3) others defer functions are suitable and enough for the graceful stop as different states?
 }
 
+// todo: reconstruction of the requets-receiving apis,
+// 1) wrap context in; 2) add the return default to reject using the leakage bucket
 func (node *Node) VoteRequest(req *utils.RequestVoteInternalReq) {
-	node.requestVoteCh <- req
+	select {
+	case node.requestVoteCh <- req:
+	default:
+		node.logger.Warn("request vote channel is full, dropping request", zap.String("nodeID", node.NodeId))
+		req.RespChan <- &utils.RPCRespWrapper[*rpc.RequestVoteResponse]{
+			Err: common.ErrServerBusy,
+		}
+	}
 }
 
 func (node *Node) AppendEntryRequest(req *utils.AppendEntriesInternalReq) {
-	node.appendEntryCh <- req
+	select {
+	case node.appendEntryCh <- req:
+	default:
+		node.logger.Warn("append entry channel is full, dropping request", zap.String("nodeID", node.NodeId))
+		req.RespChan <- &utils.RPCRespWrapper[*rpc.AppendEntriesResponse]{
+			Err: common.ErrServerBusy,
+		}
+	}
 }
 
 // todo: shall add the feature of "redirection to the leader"
@@ -219,7 +235,14 @@ func (n *Node) ClientCommand(req *utils.ClientCommandInternalReq) {
 			}
 		}
 	}()
-	n.clientCommandCh <- req
+	select {
+	case n.clientCommandCh <- req:
+	default:
+		n.logger.Warn("client command channel is full, dropping request", zap.String("nodeID", n.NodeId))
+		req.RespChan <- &utils.RPCRespWrapper[*rpc.ClientCommandResponse]{
+			Err: common.ErrServerBusy,
+		}
+	}
 }
 
 // paper: $5.4.1, property & mechanism
