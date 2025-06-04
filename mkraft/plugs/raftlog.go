@@ -41,7 +41,10 @@ type CatchupLogs struct {
 	Entries      []*RaftLogEntry
 }
 
-func NewRaftLogsImplAndLoad(filePath string, logger *zap.Logger) RaftLogsIface {
+func NewRaftLogsImplAndLoad(filePath string, logger *zap.Logger, serde RaftSerdeIface) RaftLogsIface {
+	if serde == nil {
+		serde = NewRaftSerdeImpl()
+	}
 	initLogsLength := 5000
 	var file *os.File
 	var err error
@@ -81,9 +84,8 @@ type WALInspiredRaftLogsImpl struct {
 	file   *os.File
 	mutex  *sync.Mutex
 	logger *zap.Logger
+	serde  RaftSerdeIface
 }
-
-const LogMarker byte = '#'
 
 // if the index < 1, the term is 0
 func (rl *WALInspiredRaftLogsImpl) GetTermByIndex(index uint64) (uint32, error) {
@@ -149,8 +151,8 @@ func (rl *WALInspiredRaftLogsImpl) unsafeAppendLogsInBatch(commandList [][]byte,
 		}
 		entries[idx] = entry
 		// serialize: len#term, index, commands#
-		var buf bytes.Buffer = rl.serialize(entry)
-		buffers.Write(buf.Bytes())
+		var buf []byte = rl.serde.Serialize(entry)
+		buffers.Write(buf)
 	}
 
 	if _, err := rl.file.Write(buffers.Bytes()); err != nil {
@@ -186,8 +188,8 @@ func (rl *WALInspiredRaftLogsImpl) UpdateLogsInBatch(ctx context.Context, preLog
 	// offset of the file
 	offset := 0
 	for _, log := range rl.logs {
-		buf := rl.serialize(log)
-		offset += buf.Len()
+		buf := rl.serde.Serialize(log)
+		offset += len(buf)
 	}
 	// todo: maintain the file size inztead of calculating it every time with logOffsets []int64
 	err := rl.file.Truncate(int64(offset)) // truncate the file to the new size
@@ -248,67 +250,11 @@ func (rl *WALInspiredRaftLogsImpl) load() error {
 			return fmt.Errorf("failed to read entry: %w", err)
 		}
 
-		entry, err := rl.deserialize(dataBuf)
+		entry, err := rl.serde.Deserialize(dataBuf)
 		if err != nil {
 			return fmt.Errorf("failed to deserialize entry: %w", err)
 		}
 		rl.logs = append(rl.logs, entry)
 	}
 	return nil
-}
-
-// [4 bytes: length][1 byte: marker][8 bytes: term][--8 bytes: index--][N bytes: command][1 byte: marker]
-// todo: add version to this
-func (rl *WALInspiredRaftLogsImpl) serialize(entry *RaftLogEntry) bytes.Buffer {
-	var inner bytes.Buffer
-	var full bytes.Buffer
-
-	inner.WriteByte(LogMarker)
-	binary.Write(&inner, binary.BigEndian, entry.Term)
-	inner.Write(entry.Commands)
-	inner.WriteByte(LogMarker)
-
-	length := uint32(inner.Len())
-	binary.Write(&full, binary.BigEndian, length)
-	full.Write(inner.Bytes())
-	return full
-}
-
-func (rl *WALInspiredRaftLogsImpl) deserialize(buf []byte) (*RaftLogEntry, error) {
-	const (
-		termSize   = 4
-		indexSize  = 8
-		headerSize = 1 + termSize + indexSize
-		footerSize = 1
-	)
-
-	if len(buf) < headerSize+footerSize {
-		return nil, fmt.Errorf("buffer too short to contain a log entry")
-	}
-
-	if buf[0] != LogMarker || buf[len(buf)-1] != LogMarker {
-		return nil, fmt.Errorf("invalid log markers: start=%x end=%x", buf[0], buf[len(buf)-1])
-	}
-
-	reader := bytes.NewReader(buf[1 : len(buf)-1]) // skip markers
-
-	var term uint32
-	if err := binary.Read(reader, binary.BigEndian, &term); err != nil {
-		return nil, fmt.Errorf("failed to read term: %w", err)
-	}
-
-	// var index uint64
-	// if err := binary.Read(reader, binary.BigEndian, &index); err != nil {
-	// 	return nil, fmt.Errorf("failed to read index: %w", err)
-	// }
-
-	commands, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read commands: %w", err)
-	}
-
-	return &RaftLogEntry{
-		Term:     term,
-		Commands: commands,
-	}, nil
 }

@@ -26,6 +26,7 @@ mockgen: clean-mocks
 	mockgen -source=mkraft/peers/membership.go -destination=./mkraft/peers/membership_mock.go -package peers
 
 	mockgen -source=mkraft/plugs/raftlog.go -destination=./mkraft/plugs/raftlog_mock.go -package plugs
+	mockgen -source=mkraft/plugs/raftserde.go -destination=./mkraft/plugs/raftserde_mock.go -package plugs
 	mockgen -source=mkraft/plugs/statemachine.go -destination=./mkraft/plugs/statemachine_mock.go -package plugs
 
 clean-mocks:
