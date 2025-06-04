@@ -31,7 +31,7 @@ func NewServer(cfg common.ConfigIface, logger *zap.Logger) (*Server, error) {
 
 	raftLogIface := plugs.NewRaftLogsImplAndLoad(cfg.GetRaftLogFilePath(), logger)
 	statemachine := plugs.NewStateMachineNoOpImpl()
-	node := node.NewNode(nodeID, cfg, logger, membershipMgr, statemachine, raftLogIface)
+	node := node.NewNodeIface(nodeID, cfg, logger, membershipMgr, statemachine, raftLogIface)
 	handlers := mkraft.NewHandlers(logger, node)
 
 	server := &Server{

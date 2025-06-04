@@ -10,6 +10,7 @@
 package plugs
 
 import (
+	context "context"
 	reflect "reflect"
 
 	gomock "go.uber.org/mock/gomock"
@@ -40,33 +41,33 @@ func (m *MockStateMachineIface) EXPECT() *MockStateMachineIfaceMockRecorder {
 }
 
 // ApplyCommand mocks base method.
-func (m *MockStateMachineIface) ApplyCommand(command []byte) ([]byte, error) {
+func (m *MockStateMachineIface) ApplyCommand(ctx context.Context, command []byte) ([]byte, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ApplyCommand", command)
+	ret := m.ctrl.Call(m, "ApplyCommand", ctx, command)
 	ret0, _ := ret[0].([]byte)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ApplyCommand indicates an expected call of ApplyCommand.
-func (mr *MockStateMachineIfaceMockRecorder) ApplyCommand(command any) *gomock.Call {
+func (mr *MockStateMachineIfaceMockRecorder) ApplyCommand(ctx, command any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ApplyCommand", reflect.TypeOf((*MockStateMachineIface)(nil).ApplyCommand), command)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ApplyCommand", reflect.TypeOf((*MockStateMachineIface)(nil).ApplyCommand), ctx, command)
 }
 
 // BatchApplyCommand mocks base method.
-func (m *MockStateMachineIface) BatchApplyCommand(commandList [][]byte, index uint64) ([][]byte, error) {
+func (m *MockStateMachineIface) BatchApplyCommand(ctx context.Context, commandList [][]byte) ([][]byte, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "BatchApplyCommand", commandList, index)
+	ret := m.ctrl.Call(m, "BatchApplyCommand", ctx, commandList)
 	ret0, _ := ret[0].([][]byte)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // BatchApplyCommand indicates an expected call of BatchApplyCommand.
-func (mr *MockStateMachineIfaceMockRecorder) BatchApplyCommand(commandList, index any) *gomock.Call {
+func (mr *MockStateMachineIfaceMockRecorder) BatchApplyCommand(ctx, commandList any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BatchApplyCommand", reflect.TypeOf((*MockStateMachineIface)(nil).BatchApplyCommand), commandList, index)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BatchApplyCommand", reflect.TypeOf((*MockStateMachineIface)(nil).BatchApplyCommand), ctx, commandList)
 }
 
 // GetLatestAppliedIndex mocks base method.

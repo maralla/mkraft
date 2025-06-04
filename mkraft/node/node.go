@@ -52,7 +52,7 @@ type NodeIface interface {
 }
 
 // not only new a class but also catch up statemachine, so it may cost time
-func NewNode(
+func NewNodeIface(
 	nodeId string,
 	cfg common.ConfigIface,
 	logger *zap.Logger,
@@ -60,6 +60,17 @@ func NewNode(
 	statemachine plugs.StateMachineIface,
 	raftLog plugs.RaftLogsIface,
 ) NodeIface {
+	return NewNode(nodeId, cfg, logger, membership, statemachine, raftLog)
+}
+
+func NewNode(
+	nodeId string,
+	cfg common.ConfigIface,
+	logger *zap.Logger,
+	membership peers.MembershipMgrIface,
+	statemachine plugs.StateMachineIface,
+	raftLog plugs.RaftLogsIface,
+) *Node {
 	bufferSize := cfg.GetRaftNodeRequestBufferSize()
 
 	// todo: can be a problem of these two intializations

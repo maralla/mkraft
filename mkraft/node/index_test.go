@@ -42,28 +42,23 @@ func TestUnsafeSaveAndLoadIdx(t *testing.T) {
 	assert.Equal(t, uint64(3), newNode.lastApplied)
 }
 
-func NewNodeForMock() *Node {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
+func NewNodeForMock(ctrl *gomock.Controller) *Node {
 
 	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
 	membership := peers.NewMockMembershipMgrIface(ctrl)
 	config := common.NewMockConfigIface(ctrl)
+	statemachine := plugs.NewMockStateMachineIface(ctrl)
 
 	mockRaftLog.EXPECT().GetLastLogIdx().Return(uint64(0))
-	node := NewNode("1", config, zap.NewNop(), membership)
+	return NewNode("1", config, zap.NewNop(), membership, statemachine, mockRaftLog)
 
-	return &Node{
-		raftLog:    mockRaftLog,
-		membership: membership,
-	}
 }
 
 func TestGetCommitIdxAndLastApplied(t *testing.T) {
-	node := &Node{
-		commitIndex: 10,
-		lastApplied: 8,
-	}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	node := NewNodeForMock(ctrl)
 
 	commitIdx, lastApplied := node.getCommitIdxAndLastApplied()
 	assert.Equal(t, uint64(10), commitIdx)
