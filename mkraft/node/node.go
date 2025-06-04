@@ -52,12 +52,25 @@ type NodeIface interface {
 }
 
 // not only new a class but also catch up statemachine, so it may cost time
+func NewNodeIface(
+	nodeId string,
+	cfg common.ConfigIface,
+	logger *zap.Logger,
+	membership peers.MembershipMgrIface,
+	statemachine plugs.StateMachineIface,
+	raftLog plugs.RaftLogsIface,
+) NodeIface {
+	return NewNode(nodeId, cfg, logger, membership, statemachine, raftLog)
+}
+
 func NewNode(
 	nodeId string,
 	cfg common.ConfigIface,
 	logger *zap.Logger,
 	membership peers.MembershipMgrIface,
-) NodeIface {
+	statemachine plugs.StateMachineIface,
+	raftLog plugs.RaftLogsIface,
+) *Node {
 	bufferSize := cfg.GetRaftNodeRequestBufferSize()
 
 	// todo: can be a problem of these two intializations
@@ -67,9 +80,11 @@ func NewNode(
 	// lastCommitIdx, _ := raftlog.GetLastLogIdxAndTerm()
 
 	node := &Node{
-		membership: membership,
-		cfg:        cfg,
-		logger:     logger,
+		membership:   membership,
+		raftLog:      raftLog,
+		statemachine: statemachine,
+		cfg:          cfg,
+		logger:       logger,
 
 		stateRWLock: &sync.RWMutex{},
 		sem:         semaphore.NewWeighted(1),
@@ -94,12 +109,6 @@ func NewNode(
 		nextIndex:   make(map[string]uint64, 6),
 		matchIndex:  make(map[string]uint64, 6),
 	}
-
-	// initialize the raft log and statemachine
-	raftLogIface := plugs.NewRaftLogsImplAndLoad(cfg.GetRaftLogFilePath(), logger)
-	statemachine := plugs.NewStateMachineNoOpImpl()
-	node.raftLog = raftLogIface
-	node.statemachine = statemachine
 
 	// load persistent state
 	err := node.loadCurrentTermAndVotedFor()

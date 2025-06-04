@@ -8,13 +8,14 @@ import (
 	"go.uber.org/zap"
 )
 
+// maki: this gap is a tricky part, discuss with the prof
+// implementation gap: the commitIdx and lastApplied shall be persisted in implementation
+// if not, if all nodes shutdown, the commitIdx and lastApplied will be lost
 func (n *Node) getIdxFileName() string {
 	return "index.rft"
 }
 
-// implementation gap: the commitIdx and lastApplied shall be persisted in implementation
-// if not, if all nodes shutdown, the commitIdx and lastApplied will be lost
-// maki: this is a tricky part, discuss with the prof
+// using rename to ensure atomicity of file writing
 func (n *Node) unsafeSaveIdx() error {
 	// use create and rename to avoid data corruption
 	// create index_timestamp.rft
@@ -30,6 +31,13 @@ func (n *Node) unsafeSaveIdx() error {
 }
 
 func (n *Node) unsafeLoadIdx() error {
+	if _, err := os.Stat(n.getIdxFileName()); os.IsNotExist(err) {
+		// default values
+		n.commitIndex = 0
+		n.lastApplied = 0
+		return nil
+	}
+
 	file, err := os.Open(n.getIdxFileName())
 	if err != nil {
 		return err
