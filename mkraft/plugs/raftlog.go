@@ -13,6 +13,13 @@ import (
 	"go.uber.org/zap"
 )
 
+// IMPLEMENTATION GAP:
+// Since the paper doesn't specify the details of raftlog, my implementation is heavily inspired by postgres:
+// https://www.postgresql.org/docs/current/wal-reliability.html
+// https://www.postgresql.org/docs/current/wal-internals.html
+// Each individual record in a WAL file is protected by a CRC-32C (32-bit) check that allows us to tell if record contents are correct.
+// The CRC value is set when we write each WAL record and checked during crash recovery, archive recovery and replication.
+
 var _ RaftLogsIface = (*SimpleRaftLogsImpl)(nil)
 
 // todo: shall change all uint/uint64 to types that really make sense in golang system, consider len(logs) cannot be uint64
