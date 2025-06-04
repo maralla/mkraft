@@ -49,9 +49,9 @@ func TestGetCommitIdxAndLastApplied(t *testing.T) {
 	membership := peers.NewMockMembershipMgrIface(ctrl)
 	config := common.NewMockConfigIface(ctrl)
 	statemachine := plugs.NewMockStateMachineIface(ctrl)
+	config.EXPECT().GetRaftNodeRequestBufferSize().Return(10)
 
 	// Set up expected call to GetRaftNodeRequestBufferSize
-	config.EXPECT().GetRaftNodeRequestBufferSize().Return(10)
 
 	node := NewNode("1", config, zap.NewNop(), membership, statemachine, mockRaftLog)
 
@@ -65,18 +65,32 @@ func TestGetCommitIdxAndLastApplied(t *testing.T) {
 }
 
 func TestGetCommitIdx(t *testing.T) {
-	node := &Node{
-		commitIndex: 15,
-	}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	membership := peers.NewMockMembershipMgrIface(ctrl)
+	config := common.NewMockConfigIface(ctrl)
+	statemachine := plugs.NewMockStateMachineIface(ctrl)
+	config.EXPECT().GetRaftNodeRequestBufferSize().Return(10)
+
+	node := NewNode("1", config, zap.NewNop(), membership, statemachine, mockRaftLog)
+	node.commitIndex = 15
 
 	commitIdx := node.getCommitIdx()
 	assert.Equal(t, uint64(15), commitIdx)
 }
 
 func TestIncrementCommitIdx(t *testing.T) {
-	node := &Node{
-		commitIndex: 5,
-	}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	membership := peers.NewMockMembershipMgrIface(ctrl)
+	config := common.NewMockConfigIface(ctrl)
+	statemachine := plugs.NewMockStateMachineIface(ctrl)
+	config.EXPECT().GetRaftNodeRequestBufferSize().Return(10)
+
+	node := NewNode("1", config, zap.NewNop(), membership, statemachine, mockRaftLog)
+	node.commitIndex = 5
 
 	node.incrementCommitIdx(3)
 	assert.Equal(t, uint64(8), node.commitIndex)
@@ -86,9 +100,16 @@ func TestIncrementCommitIdx(t *testing.T) {
 }
 
 func TestIncrementLastApplied(t *testing.T) {
-	node := &Node{
-		lastApplied: 5,
-	}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	membership := peers.NewMockMembershipMgrIface(ctrl)
+	config := common.NewMockConfigIface(ctrl)
+	statemachine := plugs.NewMockStateMachineIface(ctrl)
+	config.EXPECT().GetRaftNodeRequestBufferSize().Return(10)
+
+	node := NewNode("1", config, zap.NewNop(), membership, statemachine, mockRaftLog)
+	node.lastApplied = 5
 
 	node.incrementLastApplied(2)
 	assert.Equal(t, uint64(7), node.lastApplied)
@@ -98,10 +119,15 @@ func TestIncrementLastApplied(t *testing.T) {
 }
 
 func TestIncrementPeersNextIndexOnSuccess(t *testing.T) {
-	node := &Node{
-		nextIndex:  make(map[string]uint64),
-		matchIndex: make(map[string]uint64),
-	}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	membership := peers.NewMockMembershipMgrIface(ctrl)
+	config := common.NewMockConfigIface(ctrl)
+	statemachine := plugs.NewMockStateMachineIface(ctrl)
+	config.EXPECT().GetRaftNodeRequestBufferSize().Return(10)
+
+	node := NewNode("1", config, zap.NewNop(), membership, statemachine, mockRaftLog)
 
 	// Test first time increment
 	node.incrementPeersNextIndexOnSuccess("peer1", 3)
@@ -115,11 +141,16 @@ func TestIncrementPeersNextIndexOnSuccess(t *testing.T) {
 }
 
 func TestDecrementPeersNextIndexOnFailure(t *testing.T) {
-	node := &Node{
-		nextIndex: map[string]uint64{
-			"peer1": 5,
-		},
-	}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	membership := peers.NewMockMembershipMgrIface(ctrl)
+	config := common.NewMockConfigIface(ctrl)
+	statemachine := plugs.NewMockStateMachineIface(ctrl)
+	config.EXPECT().GetRaftNodeRequestBufferSize().Return(10)
+
+	node := NewNode("1", config, zap.NewNop(), membership, statemachine, mockRaftLog)
+	node.nextIndex["peer1"] = 5
 
 	node.decrementPeersNextIndexOnFailure("peer1")
 	assert.Equal(t, uint64(4), node.nextIndex["peer1"])
@@ -136,13 +167,13 @@ func TestGetPeersNextIndex(t *testing.T) {
 
 	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
 	mockRaftLog.EXPECT().GetLastLogIdx().Return(uint64(0))
+	membership := peers.NewMockMembershipMgrIface(ctrl)
+	config := common.NewMockConfigIface(ctrl)
+	statemachine := plugs.NewMockStateMachineIface(ctrl)
+	config.EXPECT().GetRaftNodeRequestBufferSize().Return(10)
 
-	node := &Node{
-		nextIndex: map[string]uint64{
-			"peer1": 10,
-		},
-		raftLog: mockRaftLog,
-	}
+	node := NewNode("1", config, zap.NewNop(), membership, statemachine, mockRaftLog)
+	node.nextIndex["peer1"] = 10
 
 	// Test existing peer
 	index := node.getPeersNextIndex("peer1")
@@ -159,10 +190,12 @@ func TestGetInitDefaultValuesForPeer(t *testing.T) {
 
 	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
 	mockRaftLog.EXPECT().GetLastLogIdx().Return(uint64(0))
+	membership := peers.NewMockMembershipMgrIface(ctrl)
+	config := common.NewMockConfigIface(ctrl)
+	statemachine := plugs.NewMockStateMachineIface(ctrl)
+	config.EXPECT().GetRaftNodeRequestBufferSize().Return(10)
 
-	node := &Node{
-		raftLog: mockRaftLog,
-	}
+	node := NewNode("1", config, zap.NewNop(), membership, statemachine, mockRaftLog)
 
 	nextIndex, matchIndex := node.getInitDefaultValuesForPeer()
 	assert.Equal(t, uint64(1), nextIndex) // Assuming GetLastLogIdx returns 0 for empty log

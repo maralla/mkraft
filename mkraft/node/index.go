@@ -31,6 +31,13 @@ func (n *Node) unsafeSaveIdx() error {
 }
 
 func (n *Node) unsafeLoadIdx() error {
+	if _, err := os.Stat(n.getIdxFileName()); os.IsNotExist(err) {
+		// default values
+		n.commitIndex = 0
+		n.lastApplied = 0
+		return nil
+	}
+
 	file, err := os.Open(n.getIdxFileName())
 	if err != nil {
 		return err
