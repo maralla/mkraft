@@ -97,21 +97,6 @@ func (mr *MockRaftLogsIfaceMockRecorder) GetLastLogIdxAndTerm() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLastLogIdxAndTerm", reflect.TypeOf((*MockRaftLogsIface)(nil).GetLastLogIdxAndTerm))
 }
 
-// GetLogsFromIdxIncluded mocks base method.
-func (m *MockRaftLogsIface) GetLogsFromIdxIncluded(index uint64) ([]*RaftLogEntry, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetLogsFromIdxIncluded", index)
-	ret0, _ := ret[0].([]*RaftLogEntry)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetLogsFromIdxIncluded indicates an expected call of GetLogsFromIdxIncluded.
-func (mr *MockRaftLogsIfaceMockRecorder) GetLogsFromIdxIncluded(index any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetLogsFromIdxIncluded", reflect.TypeOf((*MockRaftLogsIface)(nil).GetLogsFromIdxIncluded), index)
-}
-
 // GetTermByIndex mocks base method.
 func (m *MockRaftLogsIface) GetTermByIndex(index uint64) (uint32, error) {
 	m.ctrl.T.Helper()
@@ -125,6 +110,21 @@ func (m *MockRaftLogsIface) GetTermByIndex(index uint64) (uint32, error) {
 func (mr *MockRaftLogsIfaceMockRecorder) GetTermByIndex(index any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTermByIndex", reflect.TypeOf((*MockRaftLogsIface)(nil).GetTermByIndex), index)
+}
+
+// ReadLogsInBatchFromIdx mocks base method.
+func (m *MockRaftLogsIface) ReadLogsInBatchFromIdx(index uint64) ([]*RaftLogEntry, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReadLogsInBatchFromIdx", index)
+	ret0, _ := ret[0].([]*RaftLogEntry)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ReadLogsInBatchFromIdx indicates an expected call of ReadLogsInBatchFromIdx.
+func (mr *MockRaftLogsIfaceMockRecorder) ReadLogsInBatchFromIdx(index any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReadLogsInBatchFromIdx", reflect.TypeOf((*MockRaftLogsIface)(nil).ReadLogsInBatchFromIdx), index)
 }
 
 // UpdateLogsInBatch mocks base method.

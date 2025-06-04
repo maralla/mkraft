@@ -376,7 +376,7 @@ func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]plugs.
 	for _, peerNodeID := range peerNodeIDs {
 		// todo: can be batch reading
 		nextID := n.getPeersNextIndex(peerNodeID)
-		logs, err := n.raftLog.GetLogsFromIdxIncluded(nextID)
+		logs, err := n.raftLog.ReadLogsInBatchFromIdx(nextID)
 		if err != nil {
 			n.logger.Error("failed to get logs from index", zap.Error(err))
 			return nil, err

@@ -14,30 +14,27 @@ import (
 )
 
 // IMPLEMENTATION GAP:
-// Since the paper doesn't specify the details of raftlog, my implementation is heavily inspired by postgres:
-// https://www.postgresql.org/docs/current/wal-reliability.html
-// https://www.postgresql.org/docs/current/wal-internals.html
-// Each individual record in a WAL file is protected by a CRC-32C (32-bit) check that allows us to tell if record contents are correct.
-// The CRC value is set when we write each WAL record and checked during crash recovery, archive recovery and replication.
+// Since the paper doesn't specify the details of raftlog, my implementation refers to postgres's WAL in some ways.
+// Since I need to do log compaction, while postgres's WAL doesn't, I need to make some new designs for the raftlog.
+var _ RaftLogsIface = (*WALInspiredRaftLogsImpl)(nil)
 
-var _ RaftLogsIface = (*SimpleRaftLogsImpl)(nil)
-
-// todo: shall change all uint/uint64 to types that really make sense in golang system, consider len(logs) cannot be uint64
 type RaftLogsIface interface {
+	// todo: shall change all uint/uint64 to types that really make sense in golang system, consider len(logs) cannot be uint64
+
+	// the raft log iface is designed to be handled in batching from the first place
+	// need to handle partial writes failure
+	AppendLogsInBatch(ctx context.Context, commandList [][]byte, term uint32) error
+	UpdateLogsInBatch(ctx context.Context, preLogIndex uint64, commandList [][]byte, term uint32) error
+	ReadLogsInBatchFromIdx(index uint64) ([]*RaftLogEntry, error) // the index is included
+
 	// logIndex starts from 1, so the first log is at index 1
 	GetLastLogIdxAndTerm() (uint64, uint32)
 	GetLastLogIdx() uint64
 	GetTermByIndex(index uint64) (uint32, error)
-
-	// index is included
-	GetLogsFromIdxIncluded(index uint64) ([]*RaftLogEntry, error)
-	// the leader is append only
-	AppendLogsInBatch(ctx context.Context, commandList [][]byte, term uint32) error
-	// the follower/candidate may overwrite the previous log
-	UpdateLogsInBatch(ctx context.Context, preLogIndex uint64, commandList [][]byte, term uint32) error
 	// @return: true if the preLogIndex and term match
 	CheckPreLog(preLogIndex uint64, term uint32) bool
 }
+
 type CatchupLogs struct {
 	LastLogIndex uint64
 	LastLogTerm  uint32
@@ -60,7 +57,7 @@ func NewRaftLogsImplAndLoad(filePath string, logger *zap.Logger) RaftLogsIface {
 		}
 	}
 
-	raftLogs := &SimpleRaftLogsImpl{
+	raftLogs := &WALInspiredRaftLogsImpl{
 		logs:  make([]*RaftLogEntry, 0, initLogsLength),
 		file:  file,
 		mutex: &sync.Mutex{},
@@ -77,7 +74,9 @@ type RaftLogEntry struct {
 	Commands []byte
 }
 
-type SimpleRaftLogsImpl struct {
+// Each individual record in a WAL file is protected by a CRC-32C (32-bit) check that allows us to tell if record contents are correct.
+// The CRC value is set when we write each WAL record and checked during crash recovery, archive recovery and replication.
+type WALInspiredRaftLogsImpl struct {
 	logs   []*RaftLogEntry
 	file   *os.File
 	mutex  *sync.Mutex
@@ -87,7 +86,7 @@ type SimpleRaftLogsImpl struct {
 const LogMarker byte = '#'
 
 // if the index < 1, the term is 0
-func (rl *SimpleRaftLogsImpl) GetTermByIndex(index uint64) (uint32, error) {
+func (rl *WALInspiredRaftLogsImpl) GetTermByIndex(index uint64) (uint32, error) {
 	if index == 0 {
 		return 0, nil
 	}
@@ -100,7 +99,7 @@ func (rl *SimpleRaftLogsImpl) GetTermByIndex(index uint64) (uint32, error) {
 	return rl.logs[sliceIndex].Term, nil
 }
 
-func (rl *SimpleRaftLogsImpl) GetLastLogIdx() uint64 {
+func (rl *WALInspiredRaftLogsImpl) GetLastLogIdx() uint64 {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 	// todo: since it uses slice, the uint64 is not necessary
@@ -108,7 +107,7 @@ func (rl *SimpleRaftLogsImpl) GetLastLogIdx() uint64 {
 }
 
 // index is included
-func (rl *SimpleRaftLogsImpl) GetLogsFromIdxIncluded(index uint64) ([]*RaftLogEntry, error) {
+func (rl *WALInspiredRaftLogsImpl) ReadLogsInBatchFromIdx(index uint64) ([]*RaftLogEntry, error) {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 	sliceIndex := int(index) - 1
@@ -121,7 +120,7 @@ func (rl *SimpleRaftLogsImpl) GetLogsFromIdxIncluded(index uint64) ([]*RaftLogEn
 }
 
 // index starts from 1
-func (rl *SimpleRaftLogsImpl) GetLastLogIdxAndTerm() (uint64, uint32) {
+func (rl *WALInspiredRaftLogsImpl) GetLastLogIdxAndTerm() (uint64, uint32) {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 	if len(rl.logs) == 0 {
@@ -133,13 +132,13 @@ func (rl *SimpleRaftLogsImpl) GetLastLogIdxAndTerm() (uint64, uint32) {
 	return uint64(index), lastLog.Term
 }
 
-func (rl *SimpleRaftLogsImpl) AppendLogsInBatch(ctx context.Context, commandList [][]byte, term uint32) error {
+func (rl *WALInspiredRaftLogsImpl) AppendLogsInBatch(ctx context.Context, commandList [][]byte, term uint32) error {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 	return rl.unsafeAppendLogsInBatch(commandList, term)
 }
 
-func (rl *SimpleRaftLogsImpl) unsafeAppendLogsInBatch(commandList [][]byte, term uint32) error {
+func (rl *WALInspiredRaftLogsImpl) unsafeAppendLogsInBatch(commandList [][]byte, term uint32) error {
 	var buffers bytes.Buffer
 	entries := make([]*RaftLogEntry, len(commandList))
 
@@ -162,7 +161,7 @@ func (rl *SimpleRaftLogsImpl) unsafeAppendLogsInBatch(commandList [][]byte, term
 	return nil
 }
 
-func (rl *SimpleRaftLogsImpl) UpdateLogsInBatch(ctx context.Context, preLogIndex uint64, commandList [][]byte, term uint32) error {
+func (rl *WALInspiredRaftLogsImpl) UpdateLogsInBatch(ctx context.Context, preLogIndex uint64, commandList [][]byte, term uint32) error {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 	if len(rl.logs) < int(preLogIndex) || rl.logs[preLogIndex-1].Term != term {
@@ -202,13 +201,13 @@ func (rl *SimpleRaftLogsImpl) UpdateLogsInBatch(ctx context.Context, preLogIndex
 	return rl.unsafeAppendLogsInBatch(commandList, term)
 }
 
-func (rl *SimpleRaftLogsImpl) CheckPreLog(preLogIndex uint64, term uint32) bool {
+func (rl *WALInspiredRaftLogsImpl) CheckPreLog(preLogIndex uint64, term uint32) bool {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 	return preLogIndex == uint64(len(rl.logs)) && rl.logs[preLogIndex-1].Term == uint32(term)
 }
 
-func (rl *SimpleRaftLogsImpl) load() error {
+func (rl *WALInspiredRaftLogsImpl) load() error {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 
@@ -260,7 +259,7 @@ func (rl *SimpleRaftLogsImpl) load() error {
 
 // [4 bytes: length][1 byte: marker][8 bytes: term][--8 bytes: index--][N bytes: command][1 byte: marker]
 // todo: add version to this
-func (rl *SimpleRaftLogsImpl) serialize(entry *RaftLogEntry) bytes.Buffer {
+func (rl *WALInspiredRaftLogsImpl) serialize(entry *RaftLogEntry) bytes.Buffer {
 	var inner bytes.Buffer
 	var full bytes.Buffer
 
@@ -275,7 +274,7 @@ func (rl *SimpleRaftLogsImpl) serialize(entry *RaftLogEntry) bytes.Buffer {
 	return full
 }
 
-func (rl *SimpleRaftLogsImpl) deserialize(buf []byte) (*RaftLogEntry, error) {
+func (rl *WALInspiredRaftLogsImpl) deserialize(buf []byte) (*RaftLogEntry, error) {
 	const (
 		termSize   = 4
 		indexSize  = 8
