@@ -136,9 +136,3 @@ func (n *Node) getCurrentTerm() uint32 {
 	defer n.stateRWLock.RUnlock()
 	return n.CurrentTerm
 }
-
-func (n *Node) getCurrentTermAndVoteFor() (uint32, string) {
-	n.stateRWLock.RLock()
-	defer n.stateRWLock.RUnlock()
-	return n.CurrentTerm, n.VotedFor
-}
