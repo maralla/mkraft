@@ -9,10 +9,10 @@ import (
 )
 
 type RaftSerdeIface interface {
-	LogSerialize(entry *RaftLogEntry) []byte
+	LogSerialize(entry *RaftLogEntry) ([]byte, error)
 	LogDeserialize(data []byte) (*RaftLogEntry, error)
 
-	BatchSerialize(entries []*RaftLogEntry) []byte
+	BatchSerialize(entries []*RaftLogEntry) ([]byte, error)
 	BatchDeserialize(data []byte) ([]*RaftLogEntry, error)
 }
 
@@ -33,25 +33,28 @@ type RaftSerdeImpl struct {
 }
 
 // crc[data]
-func (rl *RaftSerdeImpl) BatchSerialize(entries []*RaftLogEntry) []byte {
-	var dataBuffer bytes.Buffer
+func (rl *RaftSerdeImpl) BatchSerialize(entries []*RaftLogEntry) ([]byte, error) {
+
+	data := make([]byte, 0, 4*1024)
 	for _, entry := range entries {
-		dataBuffer.Write(rl.LogSerialize(entry))
-		dataBuffer.WriteByte(rl.LogSeparator)
+		serialized, err := rl.LogSerialize(entry)
+		// maki: I don't like this error handling style of Golang which interleave the error handling and the logic
+		// so I've changed bytes.Buffer to []byte and removed the error handling
+		if err != nil {
+			return nil, fmt.Errorf("failed to serialize log entry: %w", err)
+		}
+		data = append(data, serialized...)
+		data = append(data, rl.LogSeparator)
 	}
-	data := dataBuffer.Bytes()
+	data = data[:len(data)-1] // remove the last separator
 
-	var crcBuffer bytes.Buffer
-	binary.Write(&crcBuffer, binary.BigEndian, crc32.ChecksumIEEE(data))
-	crcBuffer.WriteByte(rl.BatchSeparator)
-	crcBuffer.Write(data)
-	crc := crcBuffer.Bytes()
+	crc := make([]byte, 4+1+len(data))
+	binary.BigEndian.PutUint32(crc[:4], crc32.ChecksumIEEE(data))
 
-	// [BatchSeparator]crc[data][BatchSeparator]
-	var total bytes.Buffer
-	total.Write(crc)
-	total.Write(data)
-	return total.Bytes()
+	total := make([]byte, 0, 4+len(data))
+	total = append(total, crc...)
+	total = append(total, data...)
+	return total, nil
 }
 
 // deserialize: crc[data]
@@ -89,20 +92,29 @@ func (rl *RaftSerdeImpl) BatchDeserialize(payload []byte) ([]*RaftLogEntry, erro
 }
 
 // [4 bytes: term][4 bytes: command length][N bytes: command]
-func (rl *RaftSerdeImpl) LogSerialize(entry *RaftLogEntry) []byte {
+func (rl *RaftSerdeImpl) LogSerialize(entry *RaftLogEntry) ([]byte, error) {
 	var buf bytes.Buffer
 
 	// Write term (4 bytes)
-	binary.Write(&buf, binary.BigEndian, entry.Term)
+	err := binary.Write(&buf, binary.BigEndian, entry.Term)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write term: %w", err)
+	}
 
 	// Write command length (4 bytes)
 	cmdLen := uint32(len(entry.Commands))
-	binary.Write(&buf, binary.BigEndian, cmdLen)
+	err = binary.Write(&buf, binary.BigEndian, cmdLen)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write command length: %w", err)
+	}
 
 	// Write commands bytes
-	buf.Write(entry.Commands)
+	_, err = buf.Write(entry.Commands)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write commands: %w", err)
+	}
 
-	return buf.Bytes()
+	return buf.Bytes(), nil
 }
 
 func (rl *RaftSerdeImpl) LogDeserialize(buf []byte) (*RaftLogEntry, error) {
