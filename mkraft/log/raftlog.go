@@ -283,6 +283,10 @@ func (rl *WALInspiredRaftLogsImpl) unsafeLoadLogs() error {
 	return nil
 }
 
+// the problem here is what about partial writes?
+// for example we want to append 12345, then after 123 it crashes, and we retry, and end up with 12312345 which totally mess up the log
+// so we need to serialize and crc the write as a whole, instead of a unit of it which is a log
+// #crclog1log2log3log4#crclog1log2log3log4log5#
 func (rl *WALInspiredRaftLogsImpl) unsafeAppendLogsInBatch(commandList [][]byte, term uint32) error {
 	var buffers bytes.Buffer
 	entries := make([]*RaftLogEntry, len(commandList))
