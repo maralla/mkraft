@@ -141,6 +141,9 @@ func (rl *WALInspiredRaftLogsImpl) GetLastLogIdxAndTerm() (uint64, uint32) {
 }
 
 func (rl *WALInspiredRaftLogsImpl) AppendLogsInBatch(ctx context.Context, commandList [][]byte, term uint32) error {
+	if len(commandList) == 0 {
+		return nil
+	}
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 	return rl.unsafeAppendLogsInBatch(commandList, term)
