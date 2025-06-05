@@ -34,9 +34,6 @@ type RaftLogsIface interface {
 
 	// @return: true if the preLogIndex and term match
 	CheckPreLog(preLogIndex uint64, term uint32) bool
-
-	// Close the raft log
-	Close(ctx context.Context) error
 }
 
 type CatchupLogs struct {
@@ -94,12 +91,6 @@ type WALInspiredRaftLogsImpl struct {
 	serde          RaftSerdeIface
 	batchSeparater byte
 	batchSize      int
-}
-
-func (rl *WALInspiredRaftLogsImpl) Close(ctx context.Context) error {
-	rl.mutex.Lock()
-	defer rl.mutex.Unlock()
-	return rl.file.Close()
 }
 
 // if the index < 1, the term is 0
@@ -321,7 +312,12 @@ func (rl *WALInspiredRaftLogsImpl) unsafeAppendLogsInBatch(commandList [][]byte,
 	if _, err := rl.file.Write(allBytes); err != nil {
 		return fmt.Errorf("failed to write to file: %w", err)
 	}
-	rl.file.Sync() // forced to sync the file to disk
+	err = rl.file.Sync() // forced to sync the file to disk
+	if err != nil {
+		return fmt.Errorf("failed to sync file: %w", err)
+	}
+
+	// a variate of write-thru: update the cache after the file is written
 	rl.logs = append(rl.logs, entries...)
 	return nil
 }
