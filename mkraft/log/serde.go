@@ -34,12 +34,9 @@ type RaftSerdeImpl struct {
 
 // crc[data]
 func (rl *RaftSerdeImpl) BatchSerialize(entries []*RaftLogEntry) ([]byte, error) {
-
 	data := make([]byte, 0, 4*1024)
 	for _, entry := range entries {
 		serialized, err := rl.LogSerialize(entry)
-		// maki: I don't like this error handling style of Golang which interleave the error handling and the logic
-		// so I've changed bytes.Buffer to []byte and removed the error handling
 		if err != nil {
 			return nil, fmt.Errorf("failed to serialize log entry: %w", err)
 		}
@@ -48,12 +45,18 @@ func (rl *RaftSerdeImpl) BatchSerialize(entries []*RaftLogEntry) ([]byte, error)
 	}
 	data = data[:len(data)-1] // remove the last separator
 
-	crc := make([]byte, 4+1+len(data))
-	binary.BigEndian.PutUint32(crc[:4], crc32.ChecksumIEEE(data))
-
-	total := make([]byte, 0, 4+len(data))
-	total = append(total, crc...)
-	total = append(total, data...)
+	// Create final buffer with space for CRC
+	total := make([]byte, 4+len(data))
+	
+	// Calculate CRC of just the data portion
+	crc := crc32.ChecksumIEEE(data)
+	
+	// Write CRC to first 4 bytes
+	binary.BigEndian.PutUint32(total[:4], crc)
+	
+	// Copy data after CRC
+	copy(total[4:], data)
+	
 	return total, nil
 }
 
@@ -63,7 +66,8 @@ func (rl *RaftSerdeImpl) BatchDeserialize(payload []byte) ([]*RaftLogEntry, erro
 		return nil, fmt.Errorf("payload too short")
 	}
 
-	sep := rl.BatchSeparator
+	// Use LogSeparator instead of BatchSeparator for consistency with serialize
+	sep := rl.LogSeparator
 
 	crcBytes := payload[:4]
 	data := payload[4:]
