@@ -5,3 +5,4 @@ vscode/*
 *.pid
 state.tmp
 .idea
+coverage.out
