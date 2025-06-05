@@ -9,8 +9,8 @@ import (
 )
 
 type RaftSerdeIface interface {
-	Serialize(entry *RaftLogEntry) []byte
-	Deserialize(data []byte) (*RaftLogEntry, error)
+	LogSerialize(entry *RaftLogEntry) []byte
+	LogDeserialize(data []byte) (*RaftLogEntry, error)
 
 	BatchSerialize(entries []*RaftLogEntry) []byte
 	BatchDeserialize(data []byte) ([]*RaftLogEntry, error)
@@ -18,8 +18,7 @@ type RaftSerdeIface interface {
 
 func NewRaftSerdeImpl() RaftSerdeIface {
 	return &RaftSerdeImpl{
-		LogSeparator:   '#',
-		BatchSeparator: '\x1D',
+		LogSeparator: '#',
 	}
 }
 
@@ -37,7 +36,7 @@ type RaftSerdeImpl struct {
 func (rl *RaftSerdeImpl) BatchSerialize(entries []*RaftLogEntry) []byte {
 	var dataBuffer bytes.Buffer
 	for _, entry := range entries {
-		dataBuffer.Write(rl.Serialize(entry))
+		dataBuffer.Write(rl.LogSerialize(entry))
 		dataBuffer.WriteByte(rl.LogSeparator)
 	}
 	data := dataBuffer.Bytes()
@@ -79,7 +78,7 @@ func (rl *RaftSerdeImpl) BatchDeserialize(payload []byte) ([]*RaftLogEntry, erro
 		if len(part) == 0 {
 			continue
 		}
-		entry, err := rl.Deserialize(part)
+		entry, err := rl.LogDeserialize(part)
 		if err != nil {
 			return nil, fmt.Errorf("failed to deserialize entry: %w", err)
 		}
@@ -90,7 +89,7 @@ func (rl *RaftSerdeImpl) BatchDeserialize(payload []byte) ([]*RaftLogEntry, erro
 }
 
 // [4 bytes: term][4 bytes: command length][N bytes: command]
-func (rl *RaftSerdeImpl) Serialize(entry *RaftLogEntry) []byte {
+func (rl *RaftSerdeImpl) LogSerialize(entry *RaftLogEntry) []byte {
 	var buf bytes.Buffer
 
 	// Write term (4 bytes)
@@ -106,7 +105,7 @@ func (rl *RaftSerdeImpl) Serialize(entry *RaftLogEntry) []byte {
 	return buf.Bytes()
 }
 
-func (rl *RaftSerdeImpl) Deserialize(buf []byte) (*RaftLogEntry, error) {
+func (rl *RaftSerdeImpl) LogDeserialize(buf []byte) (*RaftLogEntry, error) {
 	headerLen := 8
 	if len(buf) <= headerLen { // minimum length > 4 + 4
 		return nil, fmt.Errorf("buffer too short to contain a log entry")

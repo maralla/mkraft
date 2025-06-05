@@ -31,6 +31,7 @@ type RaftLogsIface interface {
 	GetLastLogIdxAndTerm() (uint64, uint32)
 	GetLastLogIdx() uint64
 	GetTermByIndex(index uint64) (uint32, error)
+
 	// @return: true if the preLogIndex and term match
 	CheckPreLog(preLogIndex uint64, term uint32) bool
 }
@@ -59,10 +60,11 @@ func NewRaftLogsImplAndLoad(filePath string, logger *zap.Logger, serde RaftSerde
 		}
 	}
 
+	batchSeparator := byte('\x1D') // group separator
 	raftLogs := &WALInspiredRaftLogsImpl{
 		file:      file,
 		mutex:     &sync.Mutex{},
-		delimiter: []byte("#"),
+		delimiter: []byte{batchSeparator},
 		batchSize: 1024 * 8, // 8KB
 	}
 	err = raftLogs.initFromLogFile()
@@ -167,7 +169,7 @@ func (rl *WALInspiredRaftLogsImpl) UpdateLogsInBatch(ctx context.Context, preLog
 	// offset of the file
 	offset := 0
 	for _, log := range rl.logs {
-		buf := rl.serde.Serialize(log)
+		buf := rl.serde.LogSerialize(log)
 		offset += len(buf)
 	}
 	// todo: maintain the file size inztead of calculating it every time with logOffsets []int64
@@ -251,19 +253,19 @@ func (rl *WALInspiredRaftLogsImpl) unsafeLoadLogs() error {
 
 			parts := bytes.Split(all, rl.delimiter)
 			for i := 1; i < len(parts)-1; i++ {
-				if logEntry, err := rl.serde.Deserialize(parts[i]); err != nil {
+				if logEntries, err := rl.serde.BatchDeserialize(parts[i]); err != nil {
 					fmt.Printf("Failed to deserialize: %v, pass this log entry\n", err)
 				} else {
-					rl.logs = append(rl.logs, logEntry)
+					rl.logs = append(rl.logs, logEntries...)
 				}
 			}
 
 			if len(all) > 0 && all[len(all)-1] == rl.delimiter[0] {
 				// Ends with delimiter, last one is complete
-				if logEntry, err := rl.serde.Deserialize(parts[len(parts)-1]); err != nil {
+				if logEntries, err := rl.serde.BatchDeserialize(parts[len(parts)-1]); err != nil {
 					fmt.Printf("Failed to deserialize: %v, pass this log entry\n", err)
 				} else {
-					rl.logs = append(rl.logs, logEntry)
+					rl.logs = append(rl.logs, logEntries...)
 				}
 				partial = nil
 			} else {
@@ -274,10 +276,10 @@ func (rl *WALInspiredRaftLogsImpl) unsafeLoadLogs() error {
 	}
 	// Final leftover
 	if len(partial) > 0 {
-		if logEntry, err := rl.serde.Deserialize(partial); err != nil {
-			fmt.Printf("Failed to deserialize final part: %v\n", err)
+		if logEntries, err := rl.serde.BatchDeserialize(partial); err != nil {
+			fmt.Printf("Failed to deserialize final part: %v, pass this log entry\n", err)
 		} else {
-			rl.logs = append(rl.logs, logEntry)
+			rl.logs = append(rl.logs, logEntries...)
 		}
 	}
 	return nil
@@ -298,7 +300,7 @@ func (rl *WALInspiredRaftLogsImpl) unsafeAppendLogsInBatch(commandList [][]byte,
 		}
 		entries[idx] = entry
 		// serialize: len#term, index, commands#
-		var buf []byte = rl.serde.Serialize(entry)
+		var buf []byte = rl.serde.LogSerialize(entry)
 		buffers.Write(buf)
 	}
 
