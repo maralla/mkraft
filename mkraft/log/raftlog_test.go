@@ -10,8 +10,7 @@ import (
 )
 
 func setupTest() (RaftLogsIface, func()) {
-	serde := NewRaftSerdeImpl()
-	raftLog := NewRaftLogsImplAndLoad("test.log", zap.NewNop(), serde)
+	raftLog := NewRaftLogsImplAndLoad("test.log", zap.NewNop(), NewRaftSerdeImpl())
 	cleanup := func() {
 		os.Remove("test.log")
 	}
@@ -202,40 +201,40 @@ func TestRaftLogs_ReadLogsInBatchFromIdx(t *testing.T) {
 	assert.NoError(t, err)
 
 	tests := []struct {
-		name          string
-		startIdx      uint64
-		wantNumLogs   int
-		wantError     bool
+		name        string
+		startIdx    uint64
+		wantNumLogs int
+		wantError   bool
 	}{
 		{
-			name:          "read from start",
-			startIdx:      1,
-			wantNumLogs:   3,
-			wantError:     false,
+			name:        "read from start",
+			startIdx:    1,
+			wantNumLogs: 3,
+			wantError:   false,
 		},
 		{
-			name:          "read from middle",
-			startIdx:      2,
-			wantNumLogs:   2,
-			wantError:     false,
+			name:        "read from middle",
+			startIdx:    2,
+			wantNumLogs: 2,
+			wantError:   false,
 		},
 		{
-			name:          "read from last",
-			startIdx:      3,
-			wantNumLogs:   1,
-			wantError:     false,
+			name:        "read from last",
+			startIdx:    3,
+			wantNumLogs: 1,
+			wantError:   false,
 		},
 		{
-			name:          "read from invalid index",
-			startIdx:      4,
-			wantNumLogs:   0,
-			wantError:     true,
+			name:        "read from invalid index",
+			startIdx:    4,
+			wantNumLogs: 0,
+			wantError:   true,
 		},
 		{
-			name:          "read from index 0",
-			startIdx:      0,
-			wantNumLogs:   0,
-			wantError:     true,
+			name:        "read from index 0",
+			startIdx:    0,
+			wantNumLogs: 0,
+			wantError:   true,
 		},
 	}
 
@@ -303,7 +302,7 @@ func setupTestRaftLog(t *testing.T) RaftLogsIface {
 	t.Cleanup(func() {
 		os.Remove(tmpFile.Name())
 	})
-	
+
 	logger, _ := zap.NewDevelopment()
 	return NewRaftLogsImplAndLoad(tmpFile.Name(), logger, nil)
 }

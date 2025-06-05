@@ -34,6 +34,9 @@ type RaftLogsIface interface {
 
 	// @return: true if the preLogIndex and term match
 	CheckPreLog(preLogIndex uint64, term uint32) bool
+
+	// Close the raft log
+	Close(ctx context.Context) error
 }
 
 type CatchupLogs struct {
@@ -91,6 +94,12 @@ type WALInspiredRaftLogsImpl struct {
 	serde          RaftSerdeIface
 	batchSeparater byte
 	batchSize      int
+}
+
+func (rl *WALInspiredRaftLogsImpl) Close(ctx context.Context) error {
+	rl.mutex.Lock()
+	defer rl.mutex.Unlock()
+	return rl.file.Close()
 }
 
 // if the index < 1, the term is 0

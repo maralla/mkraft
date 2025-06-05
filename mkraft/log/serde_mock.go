@@ -55,11 +55,12 @@ func (mr *MockRaftSerdeIfaceMockRecorder) BatchDeserialize(data any) *gomock.Cal
 }
 
 // BatchSerialize mocks base method.
-func (m *MockRaftSerdeIface) BatchSerialize(entries []*RaftLogEntry) []byte {
+func (m *MockRaftSerdeIface) BatchSerialize(entries []*RaftLogEntry) ([]byte, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "BatchSerialize", entries)
 	ret0, _ := ret[0].([]byte)
-	return ret0
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // BatchSerialize indicates an expected call of BatchSerialize.
@@ -84,11 +85,12 @@ func (mr *MockRaftSerdeIfaceMockRecorder) LogDeserialize(data any) *gomock.Call 
 }
 
 // LogSerialize mocks base method.
-func (m *MockRaftSerdeIface) LogSerialize(entry *RaftLogEntry) []byte {
+func (m *MockRaftSerdeIface) LogSerialize(entry *RaftLogEntry) ([]byte, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "LogSerialize", entry)
 	ret0, _ := ret[0].([]byte)
-	return ret0
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // LogSerialize indicates an expected call of LogSerialize.
