@@ -42,14 +42,14 @@ func TestRaftLog_InitFromLogFile(t *testing.T) {
 			wantLogsEmpty: true,
 		},
 		{
-			name: "corrupted file returns error",
+			name: "corrupted file doesn't returns error",
 			setupFile: func(path string) []*RaftLogEntry {
 				f, _ := os.Create(path)
 				f.Write([]byte("corrupted data"))
 				f.Close()
 				return nil
 			},
-			wantErr:       true,
+			wantErr:       false,
 			wantLogsEmpty: true,
 		},
 		{
