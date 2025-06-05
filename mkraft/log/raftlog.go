@@ -210,42 +210,30 @@ func (rl *WALInspiredRaftLogsImpl) CheckPreLog(preLogIndex uint64, term uint32) 
 // load the logs from the file
 // handle the corrupt partial data
 func (rl *WALInspiredRaftLogsImpl) initFromLogFile() error {
-
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 
-	// if not logs, init the file and logs
-	initLogsLength := 10_000
+	// Initialize empty logs slice
+	rl.logs = make([]*RaftLogEntry, 0)
+
+	// Get file info
 	fileInfo, err := rl.file.Stat()
-	if err != nil && err == os.ErrNotExist {
-		// create the file with 0666 permission
-		file, err := os.Create(rl.file.Name())
-		if err != nil {
-			return err
-		}
-		os.Chmod(rl.file.Name(), os.FileMode(0666))
-		rl.file = file
-		rl.logs = make([]*RaftLogEntry, 0, initLogsLength)
-		return nil
-	}
 	if err != nil {
 		return err
 	}
 
-	// seek to the start of the file
+	// Empty file is valid
+	if fileInfo.Size() == 0 {
+		return nil
+	}
+
+	// Seek to start of file
 	_, err = rl.file.Seek(0, io.SeekStart)
 	if err != nil {
 		return err
 	}
-	buf := make([]byte, fileInfo.Size())
-	readLen, err := io.ReadFull(rl.file, buf)
-	if err != nil {
-		return err
-	}
-	if readLen != int(fileInfo.Size()) {
-		return fmt.Errorf("failed to read full file: %d", readLen)
-	}
-	// load the logs
+
+	// Load and parse logs
 	return rl.unsafeLoadLogs()
 }
 
