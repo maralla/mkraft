@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/maki3cat/mkraft/common"
+	"github.com/maki3cat/mkraft/mkraft/log"
 	"github.com/maki3cat/mkraft/mkraft/peers"
 	"github.com/maki3cat/mkraft/mkraft/plugs"
 	"github.com/stretchr/testify/assert"
@@ -14,7 +15,7 @@ import (
 func TestGetCurrentState(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	mockRaftLog := log.NewMockRaftLogsIface(ctrl)
 	membership := peers.NewMockMembershipMgrIface(ctrl)
 	config := common.NewMockConfigIface(ctrl)
 	statemachine := plugs.NewMockStateMachineIface(ctrl)
@@ -30,7 +31,7 @@ func TestGetCurrentState(t *testing.T) {
 func TestSetCurrentState(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	mockRaftLog := log.NewMockRaftLogsIface(ctrl)
 	membership := peers.NewMockMembershipMgrIface(ctrl)
 	config := common.NewMockConfigIface(ctrl)
 	statemachine := plugs.NewMockStateMachineIface(ctrl)
@@ -54,7 +55,7 @@ func TestSetCurrentState(t *testing.T) {
 func TestIsLeader(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	mockRaftLog := log.NewMockRaftLogsIface(ctrl)
 	membership := peers.NewMockMembershipMgrIface(ctrl)
 	config := common.NewMockConfigIface(ctrl)
 	statemachine := plugs.NewMockStateMachineIface(ctrl)
@@ -74,7 +75,7 @@ func TestIsLeader(t *testing.T) {
 func TestIsFollower(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	mockRaftLog := log.NewMockRaftLogsIface(ctrl)
 	membership := peers.NewMockMembershipMgrIface(ctrl)
 	config := common.NewMockConfigIface(ctrl)
 	statemachine := plugs.NewMockStateMachineIface(ctrl)
@@ -94,7 +95,7 @@ func TestIsFollower(t *testing.T) {
 func TestIsCandidate(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	mockRaftLog := log.NewMockRaftLogsIface(ctrl)
 	membership := peers.NewMockMembershipMgrIface(ctrl)
 	config := common.NewMockConfigIface(ctrl)
 	statemachine := plugs.NewMockStateMachineIface(ctrl)

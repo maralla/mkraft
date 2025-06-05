@@ -1,4 +1,4 @@
-package plugs
+package log
 
 import (
 	"bytes"

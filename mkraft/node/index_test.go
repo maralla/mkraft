@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/maki3cat/mkraft/common"
+	"github.com/maki3cat/mkraft/mkraft/log"
 	"github.com/maki3cat/mkraft/mkraft/peers"
 	"github.com/maki3cat/mkraft/mkraft/plugs"
 	"github.com/stretchr/testify/assert"
@@ -45,7 +46,7 @@ func TestUnsafeSaveAndLoadIdx(t *testing.T) {
 func TestGetCommitIdxAndLastApplied(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	mockRaftLog := log.NewMockRaftLogsIface(ctrl)
 	membership := peers.NewMockMembershipMgrIface(ctrl)
 	config := common.NewMockConfigIface(ctrl)
 	statemachine := plugs.NewMockStateMachineIface(ctrl)
@@ -67,7 +68,7 @@ func TestGetCommitIdxAndLastApplied(t *testing.T) {
 func TestGetCommitIdx(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	mockRaftLog := log.NewMockRaftLogsIface(ctrl)
 	membership := peers.NewMockMembershipMgrIface(ctrl)
 	config := common.NewMockConfigIface(ctrl)
 	statemachine := plugs.NewMockStateMachineIface(ctrl)
@@ -83,7 +84,7 @@ func TestGetCommitIdx(t *testing.T) {
 func TestIncrementCommitIdx(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	mockRaftLog := log.NewMockRaftLogsIface(ctrl)
 	membership := peers.NewMockMembershipMgrIface(ctrl)
 	config := common.NewMockConfigIface(ctrl)
 	statemachine := plugs.NewMockStateMachineIface(ctrl)
@@ -102,7 +103,7 @@ func TestIncrementCommitIdx(t *testing.T) {
 func TestIncrementLastApplied(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	mockRaftLog := log.NewMockRaftLogsIface(ctrl)
 	membership := peers.NewMockMembershipMgrIface(ctrl)
 	config := common.NewMockConfigIface(ctrl)
 	statemachine := plugs.NewMockStateMachineIface(ctrl)
@@ -121,7 +122,7 @@ func TestIncrementLastApplied(t *testing.T) {
 func TestIncrementPeersNextIndexOnSuccess(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	mockRaftLog := log.NewMockRaftLogsIface(ctrl)
 	membership := peers.NewMockMembershipMgrIface(ctrl)
 	config := common.NewMockConfigIface(ctrl)
 	statemachine := plugs.NewMockStateMachineIface(ctrl)
@@ -143,7 +144,7 @@ func TestIncrementPeersNextIndexOnSuccess(t *testing.T) {
 func TestDecrementPeersNextIndexOnFailure(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	mockRaftLog := log.NewMockRaftLogsIface(ctrl)
 	membership := peers.NewMockMembershipMgrIface(ctrl)
 	config := common.NewMockConfigIface(ctrl)
 	statemachine := plugs.NewMockStateMachineIface(ctrl)
@@ -165,7 +166,7 @@ func TestGetPeersNextIndex(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	mockRaftLog := log.NewMockRaftLogsIface(ctrl)
 	mockRaftLog.EXPECT().GetLastLogIdx().Return(uint64(0))
 	membership := peers.NewMockMembershipMgrIface(ctrl)
 	config := common.NewMockConfigIface(ctrl)
@@ -188,7 +189,7 @@ func TestGetInitDefaultValuesForPeer(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	mockRaftLog := plugs.NewMockRaftLogsIface(ctrl)
+	mockRaftLog := log.NewMockRaftLogsIface(ctrl)
 	mockRaftLog.EXPECT().GetLastLogIdx().Return(uint64(0))
 	membership := peers.NewMockMembershipMgrIface(ctrl)
 	config := common.NewMockConfigIface(ctrl)

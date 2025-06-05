@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/maki3cat/mkraft/common"
-	"github.com/maki3cat/mkraft/mkraft/plugs"
+	"github.com/maki3cat/mkraft/mkraft/log"
 	"github.com/maki3cat/mkraft/mkraft/utils"
 	"github.com/maki3cat/mkraft/rpc"
 	"go.uber.org/zap"
@@ -371,8 +371,8 @@ func (n *Node) recordLeaderState() {
 }
 
 // todo: shall be refactored with "the safty feature"
-func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]plugs.CatchupLogs, error) {
-	result := make(map[string]plugs.CatchupLogs)
+func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]log.CatchupLogs, error) {
+	result := make(map[string]log.CatchupLogs)
 	for _, peerNodeID := range peerNodeIDs {
 		// todo: can be batch reading
 		nextID := n.getPeersNextIndex(peerNodeID)
@@ -387,7 +387,7 @@ func (n *Node) getLogsToCatchupForPeers(peerNodeIDs []string) (map[string]plugs.
 			n.logger.Error("failed to get term by index", zap.Error(error))
 			return nil, error
 		}
-		result[peerNodeID] = plugs.CatchupLogs{
+		result[peerNodeID] = log.CatchupLogs{
 			LastLogIndex: prevLogIndex,
 			LastLogTerm:  prevTerm,
 			Entries:      logs,
