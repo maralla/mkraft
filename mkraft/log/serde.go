@@ -32,8 +32,14 @@ type RaftSerdeImpl struct {
 	BatchSeparator byte
 }
 
-// crc[data]
+// the caller shall ensure the entries are not nil, and the entries are not nil
+// format: crc[data]
 func (rl *RaftSerdeImpl) BatchSerialize(entries []*RaftLogEntry) ([]byte, error) {
+
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no entries to serialize")
+	}
+
 	data := make([]byte, 0, 4*1024)
 	for _, entry := range entries {
 		serialized, err := rl.LogSerialize(entry)
@@ -47,16 +53,16 @@ func (rl *RaftSerdeImpl) BatchSerialize(entries []*RaftLogEntry) ([]byte, error)
 
 	// Create final buffer with space for CRC
 	total := make([]byte, 4+len(data))
-	
+
 	// Calculate CRC of just the data portion
 	crc := crc32.ChecksumIEEE(data)
-	
+
 	// Write CRC to first 4 bytes
 	binary.BigEndian.PutUint32(total[:4], crc)
-	
+
 	// Copy data after CRC
 	copy(total[4:], data)
-	
+
 	return total, nil
 }
 
@@ -97,6 +103,10 @@ func (rl *RaftSerdeImpl) BatchDeserialize(payload []byte) ([]*RaftLogEntry, erro
 
 // [4 bytes: term][4 bytes: command length][N bytes: command]
 func (rl *RaftSerdeImpl) LogSerialize(entry *RaftLogEntry) ([]byte, error) {
+	if entry == nil {
+		return nil, fmt.Errorf("nil entry")
+	}
+
 	var buf bytes.Buffer
 
 	// Write term (4 bytes)
@@ -122,6 +132,10 @@ func (rl *RaftSerdeImpl) LogSerialize(entry *RaftLogEntry) ([]byte, error) {
 }
 
 func (rl *RaftSerdeImpl) LogDeserialize(buf []byte) (*RaftLogEntry, error) {
+	if buf == nil {
+		return nil, fmt.Errorf("nil buffer")
+	}
+
 	headerLen := 8
 	if len(buf) <= headerLen { // minimum length > 4 + 4
 		return nil, fmt.Errorf("buffer too short to contain a log entry")

@@ -3,6 +3,7 @@ package log
 import (
 	"context"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,12 +11,129 @@ import (
 )
 
 func setupTest() (RaftLogsIface, func()) {
-	serde := NewRaftSerdeImpl()
-	raftLog := NewRaftLogsImplAndLoad("test.log", zap.NewNop(), serde)
+	raftLog := NewRaftLogsImplAndLoad("test.log", zap.NewNop(), NewRaftSerdeImpl())
 	cleanup := func() {
 		os.Remove("test.log")
 	}
 	return raftLog, cleanup
+}
+
+func TestRaftLog_InitFromLogFile(t *testing.T) {
+	tests := []struct {
+		name          string
+		setupFile     func(string) []*RaftLogEntry
+		wantErr       bool
+		wantLogsEmpty bool
+	}{
+		{
+			name:          "new file created if doesn't exist",
+			setupFile:     nil,
+			wantErr:       false,
+			wantLogsEmpty: true,
+		},
+		{
+			name: "existing empty file loads successfully",
+			setupFile: func(path string) []*RaftLogEntry {
+				f, _ := os.Create(path)
+				f.Close()
+				return nil
+			},
+			wantErr:       false,
+			wantLogsEmpty: true,
+		},
+		{
+			name: "corrupted file doesn't returns error",
+			setupFile: func(path string) []*RaftLogEntry {
+				f, _ := os.Create(path)
+				f.Write([]byte("corrupted data"))
+				f.Close()
+				return nil
+			},
+			wantErr:       false,
+			wantLogsEmpty: true,
+		},
+		{
+			name: "valid log entries are loaded correctly",
+			setupFile: func(path string) []*RaftLogEntry {
+				f, _ := os.Create(path)
+				defer f.Close()
+
+				// Create test log entries
+				entries := []*RaftLogEntry{
+					{Term: 1, Commands: []byte("cmd1")},
+					{Term: 1, Commands: []byte("cmd2")},
+					{Term: 2, Commands: []byte("cmd3")},
+				}
+
+				// Write entries using the same format as production code
+				serde := NewRaftSerdeImpl()
+				batchSeparator := byte('\x1D')
+
+				for _, entry := range entries {
+					// Write separator first
+					f.Write([]byte{batchSeparator})
+
+					// Serialize and write entry
+					data, _ := serde.BatchSerialize([]*RaftLogEntry{entry})
+					f.Write(data)
+				}
+
+				return entries
+			},
+			wantErr:       false,
+			wantLogsEmpty: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testFile := "test_init.log"
+			defer os.Remove(testFile)
+
+			var expectedLogs []*RaftLogEntry
+			if tt.setupFile != nil {
+				expectedLogs = tt.setupFile(testFile)
+			}
+
+			rl := &WALInspiredRaftLogsImpl{
+				file:           nil,
+				mutex:          &sync.Mutex{},
+				batchSeparater: '\x1D',
+				batchSize:      1024 * 8,
+				serde:          NewRaftSerdeImpl(),
+				logger:         zap.NewNop(),
+			}
+
+			// Open the file
+			file, err := os.OpenFile(testFile, os.O_RDWR|os.O_CREATE, 0666)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rl.file = file
+			defer file.Close()
+
+			err = rl.initFromLogFile()
+
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			if tt.wantLogsEmpty {
+				assert.Empty(t, rl.logs)
+			} else {
+				assert.NotEmpty(t, rl.logs)
+				assert.Equal(t, len(expectedLogs), len(rl.logs))
+
+				// Verify each log entry matches
+				for i, expected := range expectedLogs {
+					assert.Equal(t, expected.Term, rl.logs[i].Term)
+					assert.Equal(t, expected.Commands, rl.logs[i].Commands)
+				}
+			}
+		})
+	}
 }
 
 func TestRaftLog_AppendLogsInBatch(t *testing.T) {
@@ -119,6 +237,7 @@ func TestRaftLog_UpdateLogsInBatch(t *testing.T) {
 		})
 	}
 }
+
 func TestRaftLogs_GetTermByIndex(t *testing.T) {
 	raftLog := setupTestRaftLog(t)
 
@@ -202,40 +321,40 @@ func TestRaftLogs_ReadLogsInBatchFromIdx(t *testing.T) {
 	assert.NoError(t, err)
 
 	tests := []struct {
-		name          string
-		startIdx      uint64
-		wantNumLogs   int
-		wantError     bool
+		name        string
+		startIdx    uint64
+		wantNumLogs int
+		wantError   bool
 	}{
 		{
-			name:          "read from start",
-			startIdx:      1,
-			wantNumLogs:   3,
-			wantError:     false,
+			name:        "read from start",
+			startIdx:    1,
+			wantNumLogs: 3,
+			wantError:   false,
 		},
 		{
-			name:          "read from middle",
-			startIdx:      2,
-			wantNumLogs:   2,
-			wantError:     false,
+			name:        "read from middle",
+			startIdx:    2,
+			wantNumLogs: 2,
+			wantError:   false,
 		},
 		{
-			name:          "read from last",
-			startIdx:      3,
-			wantNumLogs:   1,
-			wantError:     false,
+			name:        "read from last",
+			startIdx:    3,
+			wantNumLogs: 1,
+			wantError:   false,
 		},
 		{
-			name:          "read from invalid index",
-			startIdx:      4,
-			wantNumLogs:   0,
-			wantError:     true,
+			name:        "read from invalid index",
+			startIdx:    4,
+			wantNumLogs: 0,
+			wantError:   true,
 		},
 		{
-			name:          "read from index 0",
-			startIdx:      0,
-			wantNumLogs:   0,
-			wantError:     true,
+			name:        "read from index 0",
+			startIdx:    0,
+			wantNumLogs: 0,
+			wantError:   true,
 		},
 	}
 
@@ -303,7 +422,7 @@ func setupTestRaftLog(t *testing.T) RaftLogsIface {
 	t.Cleanup(func() {
 		os.Remove(tmpFile.Name())
 	})
-	
+
 	logger, _ := zap.NewDevelopment()
 	return NewRaftLogsImplAndLoad(tmpFile.Name(), logger, nil)
 }
