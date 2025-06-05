@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"io"
 )
 
@@ -23,7 +24,7 @@ type RaftSerdeImpl struct {
 }
 
 // [4 bytes: length][1 byte: marker][8 bytes: term][--8 bytes: index--][N bytes: command][1 byte: marker]
-// todo: add version to this
+// todo: add crc to the serialized data
 func (rl *RaftSerdeImpl) Serialize(entry *RaftLogEntry) []byte {
 	var inner bytes.Buffer
 	var full bytes.Buffer
@@ -36,6 +37,10 @@ func (rl *RaftSerdeImpl) Serialize(entry *RaftLogEntry) []byte {
 	length := uint32(inner.Len())
 	binary.Write(&full, binary.BigEndian, length)
 	full.Write(inner.Bytes())
+
+	crc := crc32.ChecksumIEEE(full.Bytes())
+	binary.Write(&full, binary.BigEndian, crc)
+
 	return full.Bytes()
 }
 

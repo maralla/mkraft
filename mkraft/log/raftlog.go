@@ -1,9 +1,9 @@
 package log
 
 import (
+	"bufio"
 	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -45,7 +45,6 @@ func NewRaftLogsImplAndLoad(filePath string, logger *zap.Logger, serde RaftSerde
 	if serde == nil {
 		serde = NewRaftSerdeImpl()
 	}
-	initLogsLength := 5000
 	var file *os.File
 	var err error
 	if _, statErr := os.Stat(filePath); statErr == nil {
@@ -61,11 +60,12 @@ func NewRaftLogsImplAndLoad(filePath string, logger *zap.Logger, serde RaftSerde
 	}
 
 	raftLogs := &WALInspiredRaftLogsImpl{
-		logs:  make([]*RaftLogEntry, 0, initLogsLength),
-		file:  file,
-		mutex: &sync.Mutex{},
+		file:      file,
+		mutex:     &sync.Mutex{},
+		delimiter: []byte("#"),
+		batchSize: 1024 * 8, // 8KB
 	}
-	err = raftLogs.load()
+	err = raftLogs.initFromLogFile()
 	if err != nil {
 		panic(fmt.Sprintf("failed to load raft logs: %v", err))
 	}
@@ -80,11 +80,13 @@ type RaftLogEntry struct {
 // Each individual record in a WAL file is protected by a CRC-32C (32-bit) check that allows us to tell if record contents are correct.
 // The CRC value is set when we write each WAL record and checked during crash recovery, archive recovery and replication.
 type WALInspiredRaftLogsImpl struct {
-	logs   []*RaftLogEntry
-	file   *os.File
-	mutex  *sync.Mutex
-	logger *zap.Logger
-	serde  RaftSerdeIface
+	logs      []*RaftLogEntry
+	file      *os.File
+	mutex     *sync.Mutex
+	logger    *zap.Logger
+	serde     RaftSerdeIface
+	delimiter []byte
+	batchSize int
 }
 
 // if the index < 1, the term is 0
@@ -140,29 +142,6 @@ func (rl *WALInspiredRaftLogsImpl) AppendLogsInBatch(ctx context.Context, comman
 	return rl.unsafeAppendLogsInBatch(commandList, term)
 }
 
-func (rl *WALInspiredRaftLogsImpl) unsafeAppendLogsInBatch(commandList [][]byte, term uint32) error {
-	var buffers bytes.Buffer
-	entries := make([]*RaftLogEntry, len(commandList))
-
-	for idx, command := range commandList {
-		entry := &RaftLogEntry{
-			Term:     uint32(term),
-			Commands: command,
-		}
-		entries[idx] = entry
-		// serialize: len#term, index, commands#
-		var buf []byte = rl.serde.Serialize(entry)
-		buffers.Write(buf)
-	}
-
-	if _, err := rl.file.Write(buffers.Bytes()); err != nil {
-		return fmt.Errorf("failed to write to file: %w", err)
-	}
-	rl.file.Sync() // forced to sync the file to disk
-	rl.logs = append(rl.logs, entries...)
-	return nil
-}
-
 func (rl *WALInspiredRaftLogsImpl) UpdateLogsInBatch(ctx context.Context, preLogIndex uint64, commandList [][]byte, term uint32) error {
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
@@ -209,52 +188,120 @@ func (rl *WALInspiredRaftLogsImpl) CheckPreLog(preLogIndex uint64, term uint32) 
 	return preLogIndex == uint64(len(rl.logs)) && rl.logs[preLogIndex-1].Term == uint32(term)
 }
 
-func (rl *WALInspiredRaftLogsImpl) load() error {
+// load the logs from the file
+// handle the corrupt partial data
+func (rl *WALInspiredRaftLogsImpl) initFromLogFile() error {
+
 	rl.mutex.Lock()
 	defer rl.mutex.Unlock()
 
+	// if not logs, init the file and logs
+	initLogsLength := 5000
 	fileInfo, err := rl.file.Stat()
+	if err != nil && err == os.ErrNotExist {
+		// create the file with 0666 permission
+		file, err := os.Create(rl.file.Name())
+		if err != nil {
+			return err
+		}
+		os.Chmod(rl.file.Name(), os.FileMode(0666))
+		rl.file = file
+		rl.logs = make([]*RaftLogEntry, 0, initLogsLength)
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 
-	fileSize := fileInfo.Size()
-	if fileSize == 0 {
-		fmt.Println("file size is 0")
-		return nil
-	}
-
+	// seek to the start of the file
 	_, err = rl.file.Seek(0, io.SeekStart)
 	if err != nil {
 		return err
 	}
-	buf := make([]byte, fileSize)
-	_, err = io.ReadFull(rl.file, buf)
+	buf := make([]byte, fileInfo.Size())
+	readLen, err := io.ReadFull(rl.file, buf)
 	if err != nil {
 		return err
 	}
-
-	reader := bytes.NewReader(buf)
-	fmt.Println("file size", fileSize)
-	for reader.Len() > 0 {
-		lengthBuf := make([]byte, 4)
-		if err := binary.Read(reader, binary.BigEndian, &lengthBuf); err != nil {
-			return fmt.Errorf("failed to read entry length: %w", err)
-		}
-
-		length := binary.BigEndian.Uint32(lengthBuf)
-		fmt.Println("length", length)
-
-		dataBuf := make([]byte, length)
-		if _, err := io.ReadFull(reader, dataBuf); err != nil {
-			return fmt.Errorf("failed to read entry: %w", err)
-		}
-
-		entry, err := rl.serde.Deserialize(dataBuf)
-		if err != nil {
-			return fmt.Errorf("failed to deserialize entry: %w", err)
-		}
-		rl.logs = append(rl.logs, entry)
+	if readLen != int(fileInfo.Size()) {
+		return fmt.Errorf("failed to read full file: %d", readLen)
 	}
+	// load the logs
+	return rl.unsafeLoadLogs()
+}
+
+// todo: right now the load and write are not the same, "the delimiter between logs" are not involved in the serializationjk
+func (rl *WALInspiredRaftLogsImpl) unsafeLoadLogs() error {
+
+	reader := bufio.NewReaderSize(rl.file, rl.batchSize)
+	var partial []byte
+
+	for {
+		chunk := make([]byte, rl.batchSize)
+		n, err := reader.Read(chunk)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			panic(err)
+		}
+		if n > 0 {
+			chunk = chunk[:n]
+			all := append(partial, chunk...)
+
+			parts := bytes.Split(all, rl.delimiter)
+			for i := 1; i < len(parts)-1; i++ {
+				if logEntry, err := rl.serde.Deserialize(parts[i]); err != nil {
+					fmt.Printf("Failed to deserialize: %v, pass this log entry\n", err)
+				} else {
+					rl.logs = append(rl.logs, logEntry)
+				}
+			}
+
+			if len(all) > 0 && all[len(all)-1] == rl.delimiter[0] {
+				// Ends with delimiter, last one is complete
+				if logEntry, err := rl.serde.Deserialize(parts[len(parts)-1]); err != nil {
+					fmt.Printf("Failed to deserialize: %v, pass this log entry\n", err)
+				} else {
+					rl.logs = append(rl.logs, logEntry)
+				}
+				partial = nil
+			} else {
+				// Keep partial
+				partial = parts[len(parts)-1]
+			}
+		}
+	}
+	// Final leftover
+	if len(partial) > 0 {
+		if logEntry, err := rl.serde.Deserialize(partial); err != nil {
+			fmt.Printf("Failed to deserialize final part: %v\n", err)
+		} else {
+			rl.logs = append(rl.logs, logEntry)
+		}
+	}
+	return nil
+}
+
+func (rl *WALInspiredRaftLogsImpl) unsafeAppendLogsInBatch(commandList [][]byte, term uint32) error {
+	var buffers bytes.Buffer
+	entries := make([]*RaftLogEntry, len(commandList))
+
+	for idx, command := range commandList {
+		entry := &RaftLogEntry{
+			Term:     uint32(term),
+			Commands: command,
+		}
+		entries[idx] = entry
+		// serialize: len#term, index, commands#
+		var buf []byte = rl.serde.Serialize(entry)
+		buffers.Write(buf)
+	}
+
+	if _, err := rl.file.Write(buffers.Bytes()); err != nil {
+		return fmt.Errorf("failed to write to file: %w", err)
+	}
+	rl.file.Sync() // forced to sync the file to disk
+	rl.logs = append(rl.logs, entries...)
 	return nil
 }
