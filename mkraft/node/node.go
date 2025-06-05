@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/maki3cat/mkraft/common"
+	"github.com/maki3cat/mkraft/mkraft/log"
 	"github.com/maki3cat/mkraft/mkraft/peers"
 	"github.com/maki3cat/mkraft/mkraft/plugs"
 	"github.com/maki3cat/mkraft/mkraft/utils"
@@ -58,7 +59,7 @@ func NewNodeIface(
 	logger *zap.Logger,
 	membership peers.MembershipMgrIface,
 	statemachine plugs.StateMachineIface,
-	raftLog plugs.RaftLogsIface,
+	raftLog log.RaftLogsIface,
 ) NodeIface {
 	return NewNode(nodeId, cfg, logger, membership, statemachine, raftLog)
 }
@@ -69,7 +70,7 @@ func NewNode(
 	logger *zap.Logger,
 	membership peers.MembershipMgrIface,
 	statemachine plugs.StateMachineIface,
-	raftLog plugs.RaftLogsIface,
+	raftLog log.RaftLogsIface,
 ) *Node {
 	bufferSize := cfg.GetRaftNodeRequestBufferSize()
 
@@ -129,7 +130,7 @@ func NewNode(
 type Node struct {
 	membership peers.MembershipMgrIface // managed by the outside overarching server
 
-	raftLog      plugs.RaftLogsIface // required, persistent
+	raftLog      log.RaftLogsIface // required, persistent
 	cfg          common.ConfigIface
 	logger       *zap.Logger
 	statemachine plugs.StateMachineIface

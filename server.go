@@ -12,6 +12,7 @@ import (
 
 	"github.com/maki3cat/mkraft/common"
 	"github.com/maki3cat/mkraft/mkraft"
+	"github.com/maki3cat/mkraft/mkraft/log"
 	"github.com/maki3cat/mkraft/mkraft/node"
 	"github.com/maki3cat/mkraft/mkraft/peers"
 	"github.com/maki3cat/mkraft/mkraft/plugs"
@@ -29,7 +30,7 @@ func NewServer(cfg common.ConfigIface, logger *zap.Logger) (*Server, error) {
 
 	nodeID := cfg.GetMembership().CurrentNodeID
 
-	raftLogIface := plugs.NewRaftLogsImplAndLoad(cfg.GetRaftLogFilePath(), logger)
+	raftLogIface := log.NewRaftLogsImplAndLoad(cfg.GetRaftLogFilePath(), logger, nil)
 	statemachine := plugs.NewStateMachineNoOpImpl()
 	node := node.NewNodeIface(nodeID, cfg, logger, membershipMgr, statemachine, raftLogIface)
 	handlers := mkraft.NewHandlers(logger, node)

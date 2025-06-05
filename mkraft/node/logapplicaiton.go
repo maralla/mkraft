@@ -118,7 +118,7 @@ func (n *Node) applyAllLaggedCommitedLogs(ctx context.Context) error {
 
 	commitIdx, lastApplied := n.getCommitIdxAndLastApplied()
 	if commitIdx > lastApplied {
-		logs, err := n.raftLog.GetLogsFromIdxIncluded(lastApplied + 1)
+		logs, err := n.raftLog.ReadLogsInBatchFromIdx(lastApplied + 1)
 		if err != nil {
 			n.logger.Error("failed to get logs from index", zap.Error(err))
 			panic(err)
